@@ -58,6 +58,8 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	m.SetUp(true)
 	m.SetConfiguredNative(len(resolved.Native))
 	m.SetConfiguredERC20(len(resolved.ERC20))
+	m.SetConfiguredERC721Balances(len(resolved.ERC721Balances))
+	m.SetConfiguredERC721Ownership(len(resolved.ERC721Ownership))
 	m.SetConfiguredContracts(len(resolved.Contracts))
 
 	// Rebuild the client with the metrics observer now that the set exists.
@@ -94,17 +96,19 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	writer := record.NewWriter(cmd.OutOrStdout())
 
 	poller, err := balance.New(balance.Options{
-		Client:    client,
-		Emitter:   writer,
-		Metrics:   m,
-		Health:    health,
-		Logger:    logger,
-		ChainName: info.Name,
-		ChainID:   info.ID,
-		Cadence:   resolved.Cadence,
-		Native:    resolved.Native,
-		ERC20:     resolved.ERC20,
-		Contracts: resolved.Contracts,
+		Client:          client,
+		Emitter:         writer,
+		Metrics:         m,
+		Health:          health,
+		Logger:          logger,
+		ChainName:       info.Name,
+		ChainID:         info.ID,
+		Cadence:         resolved.Cadence,
+		Native:          resolved.Native,
+		ERC20:           resolved.ERC20,
+		Contracts:       resolved.Contracts,
+		ERC721Balances:  resolved.ERC721Balances,
+		ERC721Ownership: resolved.ERC721Ownership,
 	})
 	if err != nil {
 		return err

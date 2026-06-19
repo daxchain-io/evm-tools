@@ -11,17 +11,22 @@ import (
 // section, ready to hand to New. It separates config parsing/validation (offline,
 // usable by `validate`) from the running poller.
 type Resolved struct {
-	Cadence   Cadence
-	Native    []NativeTarget
-	ERC20     []ERC20Target
-	Contracts []ContractTarget
+	Cadence         Cadence
+	Native          []NativeTarget
+	ERC20           []ERC20Target
+	Contracts       []ContractTarget
+	ERC721Balances  []ERC721BalanceTarget
+	ERC721Ownership []ERC721OwnershipTarget
 }
+
+// erc721BalanceModeBalanceOf is the only supported [[balance.erc721_balances]]
+// mode: balanceOf(owner) returns the holder's token count (see docs/design.md,
+// "evm-balance"). An empty mode defaults to it; any other value is rejected.
+const erc721BalanceModeBalanceOf = "balance_of"
 
 // Resolve validates and converts a [balance] config section into the typed
 // targets the poller consumes. It enforces the interval-XOR-every_blocks rule,
 // requires at least one target, and rejects entries missing a name or address.
-// ERC-721 balance/ownership entries are accepted by config decoding but their
-// runtime is deferred (design Build Milestones), so they are not resolved here.
 func Resolve(cfg config.BalanceConfig) (Resolved, error) {
 	cad, err := resolveCadence(cfg)
 	if err != nil {
@@ -88,8 +93,53 @@ func Resolve(cfg config.BalanceConfig) (Resolved, error) {
 		})
 	}
 
-	if len(out.Native) == 0 && len(out.ERC20) == 0 && len(out.Contracts) == 0 {
-		return Resolved{}, fmt.Errorf("nothing to poll: configure [[balance.native]], [[balance.erc20]], or [[balance.contracts]]")
+	for i, b := range cfg.ERC721Balances {
+		if b.Name == "" {
+			return Resolved{}, fmt.Errorf("balance.erc721_balances[%d]: missing name", i)
+		}
+		if b.Token == "" {
+			return Resolved{}, fmt.Errorf("balance.erc721_balances %q: missing token", b.Name)
+		}
+		if b.Owner == "" {
+			return Resolved{}, fmt.Errorf("balance.erc721_balances %q: missing owner", b.Name)
+		}
+		mode := b.Mode
+		if mode == "" {
+			mode = erc721BalanceModeBalanceOf
+		}
+		if mode != erc721BalanceModeBalanceOf {
+			return Resolved{}, fmt.Errorf("balance.erc721_balances %q: unsupported mode %q (only %q)", b.Name, b.Mode, erc721BalanceModeBalanceOf)
+		}
+		out.ERC721Balances = append(out.ERC721Balances, ERC721BalanceTarget{
+			Name:  b.Name,
+			Token: b.Token,
+			Owner: b.Owner,
+		})
+	}
+
+	for i, o := range cfg.ERC721Ownership {
+		if o.Name == "" {
+			return Resolved{}, fmt.Errorf("balance.erc721_ownership[%d]: missing name", i)
+		}
+		if o.Token == "" {
+			return Resolved{}, fmt.Errorf("balance.erc721_ownership %q: missing token", o.Name)
+		}
+		if o.TokenID == "" {
+			return Resolved{}, fmt.Errorf("balance.erc721_ownership %q: missing token_id", o.Name)
+		}
+		if _, ok := parseBigInt(o.TokenID); !ok {
+			return Resolved{}, fmt.Errorf("balance.erc721_ownership %q: token_id %q is not a valid integer", o.Name, o.TokenID)
+		}
+		out.ERC721Ownership = append(out.ERC721Ownership, ERC721OwnershipTarget{
+			Name:    o.Name,
+			Token:   o.Token,
+			TokenID: o.TokenID,
+		})
+	}
+
+	if len(out.Native) == 0 && len(out.ERC20) == 0 && len(out.Contracts) == 0 &&
+		len(out.ERC721Balances) == 0 && len(out.ERC721Ownership) == 0 {
+		return Resolved{}, fmt.Errorf("nothing to poll: configure [[balance.native]], [[balance.erc20]], [[balance.erc721_balances]], [[balance.erc721_ownership]], or [[balance.contracts]]")
 	}
 
 	return out, nil

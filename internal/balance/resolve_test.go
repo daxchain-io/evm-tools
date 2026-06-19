@@ -92,6 +92,70 @@ func TestResolveRejectsEmptyAndBadEntries(t *testing.T) {
 	}
 }
 
+// TestResolveERC721 verifies ERC-721 balance and ownership entries resolve into
+// typed targets, with an empty mode defaulting to balance_of.
+func TestResolveERC721(t *testing.T) {
+	res, err := Resolve(config.BalanceConfig{
+		Interval: "1m",
+		ERC721Balances: []config.BalanceERC721Balances{
+			{Name: "vault-count", Token: "0xN", Owner: "0xO"}, // empty mode -> balance_of
+			{Name: "vault-count2", Token: "0xN2", Owner: "0xO2", Mode: "balance_of"},
+		},
+		ERC721Ownership: []config.BalanceERC721Ownership{
+			{Name: "special", Token: "0xN", TokenID: "1234"},
+			{Name: "special-hex", Token: "0xN", TokenID: "0x4d2"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ERC721Balances) != 2 {
+		t.Fatalf("want 2 erc721 balances, got %d", len(res.ERC721Balances))
+	}
+	if res.ERC721Balances[0].Token != "0xN" || res.ERC721Balances[0].Owner != "0xO" {
+		t.Errorf("erc721 balance target wrong: %+v", res.ERC721Balances[0])
+	}
+	if len(res.ERC721Ownership) != 2 {
+		t.Fatalf("want 2 erc721 ownership, got %d", len(res.ERC721Ownership))
+	}
+	if res.ERC721Ownership[0].TokenID != "1234" || res.ERC721Ownership[1].TokenID != "0x4d2" {
+		t.Errorf("erc721 ownership token ids wrong: %+v", res.ERC721Ownership)
+	}
+}
+
+// TestResolveERC721Rejects covers the ERC-721 validation failures.
+func TestResolveERC721Rejects(t *testing.T) {
+	cases := map[string]config.BalanceConfig{
+		"erc721 balance missing token": {
+			Interval:       "1m",
+			ERC721Balances: []config.BalanceERC721Balances{{Name: "b", Owner: "0xO"}},
+		},
+		"erc721 balance missing owner": {
+			Interval:       "1m",
+			ERC721Balances: []config.BalanceERC721Balances{{Name: "b", Token: "0xN"}},
+		},
+		"erc721 balance bad mode": {
+			Interval:       "1m",
+			ERC721Balances: []config.BalanceERC721Balances{{Name: "b", Token: "0xN", Owner: "0xO", Mode: "tokenOfOwnerByIndex"}},
+		},
+		"erc721 ownership missing token_id": {
+			Interval:        "1m",
+			ERC721Ownership: []config.BalanceERC721Ownership{{Name: "o", Token: "0xN"}},
+		},
+		"erc721 ownership non-numeric token_id": {
+			Interval:        "1m",
+			ERC721Ownership: []config.BalanceERC721Ownership{{Name: "o", Token: "0xN", TokenID: "abc"}},
+		},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Resolve(cfg); err == nil {
+				t.Errorf("expected error for %q", name)
+			}
+		})
+	}
+}
+
 func TestResolveContractFields(t *testing.T) {
 	d := 6
 	res, err := Resolve(config.BalanceConfig{

@@ -102,6 +102,54 @@ transfer_count_window_blocks = 1000
 	}
 }
 
+// TestBalanceValidateERC721 verifies validate passes for ERC-721 balance and
+// ownership entries (no network).
+func TestBalanceValidateERC721(t *testing.T) {
+	cfg := writeStreamConfig(t, `
+chain = "codex-chain"
+[rpc]
+url = "http://localhost:8545"
+[balance]
+interval = "1m"
+[[balance.erc721_balances]]
+name = "vault-nft-count"
+token = "0xnft"
+owner = "0xowner"
+mode = "balance_of"
+[[balance.erc721_ownership]]
+name = "special-token-owner"
+token = "0xnft"
+token_id = "1234"
+`)
+	out, err := runWithCtx(context.Background(), t, ToolBalance, "validate", "--config", cfg)
+	if err != nil {
+		t.Fatalf("validate: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "ok:") {
+		t.Errorf("expected ok message, got:\n%s", out)
+	}
+}
+
+// TestBalanceValidateERC721BadTokenID verifies a non-numeric ERC-721 token_id is
+// a validation error.
+func TestBalanceValidateERC721BadTokenID(t *testing.T) {
+	cfg := writeStreamConfig(t, `
+chain = "c"
+[rpc]
+url = "http://localhost:8545"
+[balance]
+interval = "1m"
+[[balance.erc721_ownership]]
+name = "bad"
+token = "0xnft"
+token_id = "not-a-number"
+`)
+	_, err := runWithCtx(context.Background(), t, ToolBalance, "validate", "--config", cfg)
+	if err == nil || !strings.Contains(err.Error(), "token_id") {
+		t.Fatalf("expected token_id validation error, got %v", err)
+	}
+}
+
 // TestBalanceValidateBadCadence verifies setting both interval and every_blocks
 // fails validation.
 func TestBalanceValidateBadCadence(t *testing.T) {
@@ -210,5 +258,61 @@ decimals = 6
 	// Records must carry the balance tool name and the chain envelope fields.
 	if !strings.Contains(got.out, `"tool":"evm-balance"`) {
 		t.Errorf("records missing tool name:\n%s", got.out)
+	}
+}
+
+// TestBalanceRunEmitsERC721Records drives the full run path against an httptest
+// node and verifies it emits ERC-721 balance_sample (kind erc721) and
+// ownership_sample JSONL on stdout.
+func TestBalanceRunEmitsERC721Records(t *testing.T) {
+	srv := balanceRPCServer(t)
+	cfg := writeStreamConfig(t, `
+chain = "codex-chain"
+[rpc]
+url = "`+srv.URL+`"
+[balance]
+interval = "5ms"
+[[balance.erc721_balances]]
+name = "vault-nft-count"
+token = "0xnft"
+owner = "0xowner"
+[[balance.erc721_ownership]]
+name = "special-token-owner"
+token = "0xnft"
+token_id = "1234"
+`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type result struct {
+		out string
+		err error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		out, err := runWithCtx(ctx, t, ToolBalance, "run", "--config", cfg, "--metrics-addr", ":0")
+		resCh <- result{out, err}
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	var got result
+	select {
+	case got = <-resCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("run did not shut down within 3s of context cancel")
+	}
+	if got.err != nil {
+		t.Fatalf("run returned error: %v\n%s", got.err, got.out)
+	}
+
+	if !strings.Contains(got.out, `"type":"balance_sample"`) || !strings.Contains(got.out, `"kind":"erc721"`) {
+		t.Errorf("expected an erc721 balance_sample record in stdout:\n%s", got.out)
+	}
+	if !strings.Contains(got.out, `"type":"ownership_sample"`) {
+		t.Errorf("expected an ownership_sample record in stdout:\n%s", got.out)
+	}
+	if !strings.Contains(got.out, `"token_id":"1234"`) {
+		t.Errorf("ownership record should carry the configured token_id:\n%s", got.out)
 	}
 }

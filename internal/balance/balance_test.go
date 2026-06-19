@@ -349,6 +349,115 @@ func TestERC20NoDecimalsEmitsRawOnly(t *testing.T) {
 	}
 }
 
+// TestERC721BalanceSampleAndChange verifies an ERC-721 balance entry emits a
+// balance_sample with kind erc721 and a count via balanceOf(owner), and a
+// balance_change carrying the prior count when the count moves.
+func TestERC721BalanceSampleAndChange(t *testing.T) {
+	fc := newFakeClient()
+	fc.setCall("0xnft", callDataBalanceOf("0xowner"), uint256Hex(7))
+
+	em := &captureEmitter{}
+	p, err := New(Options{
+		Client:         fc,
+		Emitter:        em,
+		ChainName:      "c",
+		ChainID:        1,
+		Cadence:        Cadence{Interval: 3 * time.Millisecond},
+		ERC721Balances: []ERC721BalanceTarget{{Name: "vault-nft", Token: "0xNFT", Owner: "0xOwner"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := runPoller(t, p)
+	waitFor(t, func() bool { return len(em.byType(record.TypeBalanceSample)) >= 1 }, time.Second)
+	fc.setCall("0xnft", callDataBalanceOf("0xowner"), uint256Hex(9))
+	waitFor(t, func() bool { return len(em.byType(record.TypeBalanceChange)) >= 1 }, time.Second)
+	stop()
+
+	s := em.byType(record.TypeBalanceSample)[0].Data.(record.BalanceData)
+	if s.Kind != record.KindERC721 || s.Count != "7" || s.Token != "0xNFT" || s.Address != "0xOwner" {
+		t.Errorf("erc721 balance sample wrong: %+v", s)
+	}
+	// ERC-721 records carry counts, not decimals or a formatted balance.
+	if s.Decimals != nil || s.Balance != "" || s.BalanceRaw != "" {
+		t.Errorf("erc721 balance sample must carry only count: %+v", s)
+	}
+	if s.PreviousCount != "" {
+		t.Errorf("sample must not carry previous_count: %+v", s)
+	}
+
+	ch := em.byType(record.TypeBalanceChange)[0].Data.(record.BalanceData)
+	if ch.Count != "9" || ch.PreviousCount != "7" {
+		t.Errorf("erc721 balance change should carry 7 -> 9, got %+v", ch)
+	}
+}
+
+// TestERC721OwnershipSampleAndChange verifies an ERC-721 ownership entry emits an
+// ownership_sample carrying the current owner via ownerOf(token_id), and an
+// ownership_change carrying the previous owner when ownership moves.
+func TestERC721OwnershipSampleAndChange(t *testing.T) {
+	fc := newFakeClient()
+	// ownerOf(1234) -> 0x...aaaa initially.
+	fc.setCall("0xnft", callDataOwnerOf("1234"), addressWord("0xaaaa"))
+
+	em := &captureEmitter{}
+	p, err := New(Options{
+		Client:          fc,
+		Emitter:         em,
+		ChainName:       "c",
+		ChainID:         1,
+		Cadence:         Cadence{Interval: 3 * time.Millisecond},
+		ERC721Ownership: []ERC721OwnershipTarget{{Name: "special", Token: "0xNFT", TokenID: "1234"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := runPoller(t, p)
+	waitFor(t, func() bool { return len(em.byType(record.TypeOwnershipSample)) >= 1 }, time.Second)
+	fc.setCall("0xnft", callDataOwnerOf("1234"), addressWord("0xbbbb"))
+	waitFor(t, func() bool { return len(em.byType(record.TypeOwnershipChange)) >= 1 }, time.Second)
+	stop()
+
+	s := em.byType(record.TypeOwnershipSample)[0].Data.(record.OwnershipData)
+	if s.Kind != record.KindERC721 || s.Token != "0xNFT" || s.TokenID != "1234" {
+		t.Errorf("ownership sample envelope wrong: %+v", s)
+	}
+	if s.Owner != "0x000000000000000000000000000000000000aaaa" {
+		t.Errorf("ownership sample owner wrong: %+v", s)
+	}
+	if s.PreviousOwner != "" {
+		t.Errorf("sample must not carry previous_owner: %+v", s)
+	}
+
+	ch := em.byType(record.TypeOwnershipChange)[0].Data.(record.OwnershipData)
+	if ch.Owner != "0x000000000000000000000000000000000000bbbb" ||
+		ch.PreviousOwner != "0x000000000000000000000000000000000000aaaa" {
+		t.Errorf("ownership change should carry aaaa -> bbbb, got %+v", ch)
+	}
+}
+
+// TestERC721OwnershipNoFalseChangeOnChecksumCase verifies a checksum-vs-lowercase
+// difference in the RPC-returned owner is not mistaken for a transfer. Since the
+// decoder always lowercases, this is asserted via ownerChanged directly.
+func TestERC721OwnershipNoFalseChangeOnChecksumCase(t *testing.T) {
+	p := &Poller{priorOwner: map[string]string{}}
+	if moved, _ := p.ownerChanged("k", "0xAbCd"); moved {
+		t.Error("first observation must not be a change")
+	}
+	if moved, _ := p.ownerChanged("k", "0xabcd"); moved {
+		t.Error("same owner in different case must not be a change")
+	}
+	if moved, prev := p.ownerChanged("k", "0xbeef"); !moved || prev != "0xabcd" {
+		t.Errorf("genuine owner move should report change with prior, got moved=%v prev=%q", moved, prev)
+	}
+}
+
+// addressWord renders a short 0x address as a 32-byte left-padded eth_call result
+// word (an ownerOf() return value). padAddress already produces a 32-byte word.
+func addressWord(addr string) string {
+	return "0x" + padAddress(addr)
+}
+
 // TestContractFields verifies a contract entry emits the native_balance,
 // token_total_supply, and transfer_count contract_sample records, with the
 // transfer count derived from the window's Transfer logs.

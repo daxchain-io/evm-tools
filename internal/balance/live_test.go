@@ -90,3 +90,52 @@ func TestLiveNativeSample(t *testing.T) {
 	}
 	t.Logf("live native balance of %s = %s wei", account, s.BalanceWei)
 }
+
+// TestLiveERC721Ownership polls ownerOf(token_id) on a real ERC-721 token and
+// asserts a well-formed ownership_sample. It needs a deployed ERC-721, so it is
+// skipped unless EVM_TOOLS_TEST_ERC721_TOKEN and EVM_TOOLS_TEST_ERC721_TOKEN_ID
+// are set (a bare anvil has no NFT to query).
+func TestLiveERC721Ownership(t *testing.T) {
+	token := os.Getenv("EVM_TOOLS_TEST_ERC721_TOKEN")
+	tokenID := os.Getenv("EVM_TOOLS_TEST_ERC721_TOKEN_ID")
+	if token == "" || tokenID == "" {
+		t.Skip("set EVM_TOOLS_TEST_ERC721_TOKEN and EVM_TOOLS_TEST_ERC721_TOKEN_ID to run")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	c := liveClient(t)
+	info, err := chain.Resolve(ctx, c, "live-test")
+	if err != nil {
+		t.Fatalf("resolve chain id: %v", err)
+	}
+
+	em := &captureEmitter{}
+	p, err := New(Options{
+		Client:          c,
+		Emitter:         em,
+		ChainName:       info.Name,
+		ChainID:         info.ID,
+		Cadence:         Cadence{Interval: 50 * time.Millisecond},
+		ERC721Ownership: []ERC721OwnershipTarget{{Name: "live-nft", Token: token, TokenID: tokenID}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- p.Run(runCtx) }()
+	waitFor(t, func() bool { return len(em.byType(record.TypeOwnershipSample)) >= 1 }, 15*time.Second)
+	runCancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	s := em.byType(record.TypeOwnershipSample)[0].Data.(record.OwnershipData)
+	if s.Kind != record.KindERC721 || s.Owner == "" || s.TokenID != tokenID {
+		t.Fatalf("malformed live ownership sample: %+v", s)
+	}
+	t.Logf("live owner of token %s of %s = %s", tokenID, token, s.Owner)
+}

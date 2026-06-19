@@ -17,6 +17,7 @@ var (
 	selDecimals    = functionSelector("decimals()")
 	selTotalSupply = functionSelector("totalSupply()")
 	selBalanceOf   = functionSelector("balanceOf(address)")
+	selOwnerOf     = functionSelector("ownerOf(uint256)")
 )
 
 // functionSelector returns the 0x-prefixed 4-byte selector for a canonical
@@ -40,8 +41,62 @@ func callDataBalanceOf(addr string) string {
 	return selBalanceOf + padAddress(addr)
 }
 
-// callDataOwnerOf is reserved for ERC-721 ownership (deferred per design); kept
-// unused-safe by not defining it until that milestone.
+// callDataOwnerOf encodes ownerOf(uint256): the selector followed by the
+// 32-byte big-endian token ID. tokenID is a decimal or 0x-hex string; a value
+// that does not parse yields a zero-padded word, and the call then returns
+// whatever the contract does for token 0 (typically a revert the caller
+// surfaces) rather than panicking.
+func callDataOwnerOf(tokenID string) string {
+	return selOwnerOf + padUint256(tokenID)
+}
+
+// padUint256 renders a token ID (decimal, or 0x-hex) as a 32-byte big-endian
+// hex word (no 0x prefix). An unparseable value yields the zero word.
+func padUint256(tokenID string) string {
+	id, ok := parseBigInt(tokenID)
+	if !ok || id.Sign() < 0 {
+		id = big.NewInt(0)
+	}
+	h := id.Text(16)
+	if len(h) > 64 {
+		h = h[len(h)-64:] // keep the low 256 bits
+	}
+	return strings.Repeat("0", 64-len(h)) + h
+}
+
+// parseBigInt parses a token ID expressed as a 0x-hex or decimal string.
+func parseBigInt(s string) (*big.Int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		return new(big.Int).SetString(s[2:], 16)
+	}
+	return new(big.Int).SetString(s, 10)
+}
+
+// decodeAddress decodes a 32-byte eth_call result word into a checksum-agnostic
+// lowercased 0x-hex address (the low 20 bytes). An empty result is an error
+// since a working ownerOf() always returns a 32-byte word.
+func decodeAddress(hexResult string) (string, error) {
+	b, err := hexBytes(hexResult)
+	if err != nil {
+		return "", fmt.Errorf("decode call result: %w", err)
+	}
+	if len(b) == 0 {
+		return "", fmt.Errorf("empty call result (function may not exist)")
+	}
+	if len(b) > 32 {
+		b = b[len(b)-32:]
+	}
+	// The address occupies the low 20 bytes of the 32-byte word.
+	addr := b
+	if len(addr) > 20 {
+		addr = addr[len(addr)-20:]
+	}
+	return "0x" + hex.EncodeToString(addr), nil
+}
 
 // padAddress renders a 20-byte address as a 32-byte left-padded hex word
 // (no 0x prefix). A malformed address yields zero padding; the call then

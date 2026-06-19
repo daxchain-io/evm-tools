@@ -16,6 +16,14 @@ func (b *Balance) SetConfiguredNative(n int) { b.configuredNative.Set(float64(n)
 // SetConfiguredERC20 records the number of configured ERC-20 accounts.
 func (b *Balance) SetConfiguredERC20(n int) { b.configuredERC20.Set(float64(n)) }
 
+// SetConfiguredERC721Balances records the number of configured ERC-721 balance
+// (balance_of) entries.
+func (b *Balance) SetConfiguredERC721Balances(n int) { b.configuredERC721Balance.Set(float64(n)) }
+
+// SetConfiguredERC721Ownership records the number of configured ERC-721 ownership
+// entries.
+func (b *Balance) SetConfiguredERC721Ownership(n int) { b.configuredERC721Owner.Set(float64(n)) }
+
 // SetConfiguredContracts records the number of configured contract-state entries.
 func (b *Balance) SetConfiguredContracts(n int) { b.configuredContract.Set(float64(n)) }
 

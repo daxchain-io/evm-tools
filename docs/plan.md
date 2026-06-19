@@ -103,7 +103,7 @@ Goal: poll account/contract state and emit samples + change records.
       `internal/rpc`; lossless backpressure + emit-blocked watchdog reused from
       M1; decimals resolved once at startup and cached per token (a token that
       omits `decimals()` with no override emits raw-only + a stderr warning).
-      ERC-721 balance/ownership runtime stays deferred per design. → evm-balance.
+      ERC-721 balance/ownership runtime landed later in M4. → evm-balance.
 - [x] Balance metrics (account/contract gauges + transfer count) on a private
       registry, mirroring the M1 stream set; shared chain/RPC histograms +
       sample/change record counters. → Balance metrics.
@@ -148,12 +148,59 @@ Goal: prove the brew/curl artifacts build before a real tag.
       from the tap after the tagged release (blocked on the real tag + tap
       token, a maintainer task).
 
+## M4 — Specified deferred producer features
+
+Goal: land the deferred *producer* features the design and record contract
+already specify and that need no open product decision — the ERC-721 ownership
+runtime above all. Scope is deliberately limited to clearly-specified work; the
+sinks and anything tied to a design Open Question stay deferred (see below).
+
+- [x] `internal/balance` ERC-721 balance runtime
+      (`[[balance.erc721_balances]]`, mode `balance_of`): `balanceOf(owner)` →
+      `balance_sample`/`balance_change` with `kind: erc721` and a `count` (no
+      decimals — ERC-721 carries counts, not decimals). Reuses the existing
+      change-detection + lossless-emit path. → evm-balance, Record Contract.
+- [x] `internal/balance` ERC-721 ownership runtime
+      (`[[balance.erc721_ownership]]`): `ownerOf(token_id)` →
+      `ownership_sample`/`ownership_change` (the latter carrying `previous_owner`).
+      Owner comparison is case-insensitive so a checksum-vs-lowercase RPC
+      difference is not mistaken for a transfer; the configured `token_id` is
+      carried verbatim. → evm-balance, Record Contract.
+- [x] `ownerOf(uint256)` selector + token-ID encoding (decimal or `0x`-hex) and
+      an address decoder added to `internal/balance/abi.go`; `Resolve` validates
+      the new sections (required token/owner/token_id, numeric token_id, and the
+      only supported `balance_of` mode) so typos/unsupported modes fail fast in
+      `validate`. → evm-balance.
+- [x] Configured-count gauges `evm_balance_configured_erc721_balances` /
+      `evm_balance_configured_erc721_ownership`; the ERC-721 token count reuses
+      the exporter-aligned `blockchain_account_token_balance_raw` gauge.
+      `token_id`/`owner` stay out of labels (high-cardinality / counterparty per
+      the metric rules). → Balance metrics.
+- [x] Tests: ABI selector/encoding/decoder units; resolve happy-path + rejection
+      cases; poller sample/change for both ERC-721 kinds (httptest + fakes);
+      CLI `validate` + end-to-end `run` emitting erc721 `balance_sample` and
+      `ownership_sample`; an env-gated `livenode` ERC-721 ownership test.
+- [x] **Acceptance:** build/vet/test/lint green offline; `evm-balance` emits
+      `balance_sample`/`balance_change` (kind erc721) and
+      `ownership_sample`/`ownership_change` for configured ERC-721 entries, with
+      the prior value carried on change; `validate` catches bad ERC-721 config.
+
+Intentionally **out of M4** (each needs a design Open Question resolved or an
+external secret, so each is recorded as a blocker rather than guessed):
+internal/trace native transfers (Open Question 3); reorg handling + the additive
+`finalized`/`removed` field and reorg re-emission (Open Question 4); config
+reload (+ metric reset); checkpointing/resume; the sinks `evm-sink-kafka` and
+`evm-sink-webhook` and the webhook sink's scope/delivery semantics (Open
+Questions 1, 2). Value interpolation (`${VAR}`/`_cmd`) also remains deferred per
+M0/M1 notes.
+
 ## Deferred (post-spine, per design)
 
-Native transfer internal/trace transfers; ERC-721 ownership runtime; config
-reload (+ metric reset); reorg handling and the additive `finalized`/`removed`
-field; checkpointing/resume; the sinks (`evm-sink-kafka`, `evm-sink-webhook`)
-and the webhook sink's scope. See design [Open Questions](design.md#open-questions).
+Native transfer internal/trace transfers; config reload (+ metric reset); reorg
+handling and the additive `finalized`/`removed` field; checkpointing/resume; the
+sinks (`evm-sink-kafka`, `evm-sink-webhook`) and the webhook sink's scope. See
+design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
+runtime is done — see M4.)
 
 Config value interpolation (`${VAR}`/`${VAR:-default}`/`$$`) and `_cmd` key
 resolution remain stubbed (M0 explicitly allowed this; not an M1 task). Until

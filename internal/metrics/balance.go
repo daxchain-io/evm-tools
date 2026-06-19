@@ -17,11 +17,13 @@ type Balance struct {
 	chainID   string
 
 	// Process gauges.
-	up                 prometheus.Gauge
-	configuredNative   prometheus.Gauge
-	configuredERC20    prometheus.Gauge
-	configuredContract prometheus.Gauge
-	workers            prometheus.Gauge
+	up                      prometheus.Gauge
+	configuredNative        prometheus.Gauge
+	configuredERC20         prometheus.Gauge
+	configuredERC721Balance prometheus.Gauge
+	configuredERC721Owner   prometheus.Gauge
+	configuredContract      prometheus.Gauge
+	workers                 prometheus.Gauge
 
 	// Chain health.
 	headBlock          prometheus.Gauge
@@ -86,6 +88,8 @@ func NewBalance(chainName, chainID string) *Balance {
 	b.up = g("evm_balance_up", "Whether the balance process is available (1) or not (0).")
 	b.configuredNative = g("evm_balance_configured_native_accounts", "Number of configured native balance accounts.")
 	b.configuredERC20 = g("evm_balance_configured_erc20_accounts", "Number of configured ERC-20 balance accounts.")
+	b.configuredERC721Balance = g("evm_balance_configured_erc721_balances", "Number of configured ERC-721 balance (balance_of) entries.")
+	b.configuredERC721Owner = g("evm_balance_configured_erc721_ownership", "Number of configured ERC-721 ownership entries.")
 	b.configuredContract = g("evm_balance_configured_contracts", "Number of configured contract-state entries.")
 	b.workers = g("evm_balance_workers", "Active poller workers/goroutines.")
 

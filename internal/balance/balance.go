@@ -101,10 +101,12 @@ type Options struct {
 	ChainName string
 	ChainID   int64
 
-	Cadence   Cadence
-	Native    []NativeTarget
-	ERC20     []ERC20Target
-	Contracts []ContractTarget
+	Cadence         Cadence
+	Native          []NativeTarget
+	ERC20           []ERC20Target
+	Contracts       []ContractTarget
+	ERC721Balances  []ERC721BalanceTarget
+	ERC721Ownership []ERC721OwnershipTarget
 
 	// Backoff parameters for transient RPC failures.
 	BackoffBase time.Duration
@@ -142,6 +144,24 @@ type ContractTarget struct {
 	Decimals                  *int // for token_total_supply formatting
 }
 
+// ERC721BalanceTarget is a resolved [[balance.erc721_balances]] entry (mode
+// balance_of): it reads balanceOf(owner) on an ERC-721 token and emits a
+// balance_sample/balance_change with kind erc721 and a token Count.
+type ERC721BalanceTarget struct {
+	Name  string
+	Token string // 0x-hex ERC-721 contract
+	Owner string // holder, 0x-hex
+}
+
+// ERC721OwnershipTarget is a resolved [[balance.erc721_ownership]] entry: it
+// reads ownerOf(tokenID) on an ERC-721 token and emits an
+// ownership_sample/ownership_change with the current owner.
+type ERC721OwnershipTarget struct {
+	Name    string
+	Token   string // 0x-hex ERC-721 contract
+	TokenID string // decimal or 0x-hex token ID, carried verbatim in the record
+}
+
 // Poller is a configured, ready-to-run state sampler.
 type Poller struct {
 	opts Options
@@ -150,6 +170,8 @@ type Poller struct {
 
 	// prior holds the last-observed value per target key for change detection.
 	prior map[string]*big.Int
+	// priorOwner holds the last-observed ERC-721 owner per ownership target key.
+	priorOwner map[string]string
 }
 
 // New builds a Poller from resolved options. It validates the derived state but
@@ -165,8 +187,9 @@ func New(opts Options) (*Poller, error) {
 	if err := validateCadence(opts.Cadence); err != nil {
 		return nil, err
 	}
-	if len(opts.Native) == 0 && len(opts.ERC20) == 0 && len(opts.Contracts) == 0 {
-		return nil, errors.New("balance: nothing to poll (no native/erc20/contract targets)")
+	if len(opts.Native) == 0 && len(opts.ERC20) == 0 && len(opts.Contracts) == 0 &&
+		len(opts.ERC721Balances) == 0 && len(opts.ERC721Ownership) == 0 {
+		return nil, errors.New("balance: nothing to poll (no native/erc20/erc721/contract targets)")
 	}
 	logger := opts.Logger
 	if logger == nil {
@@ -194,10 +217,11 @@ func New(opts Options) (*Poller, error) {
 	opts.Emitter = newBlockTrackingEmitter(opts.Emitter, opts.Metrics, opts.Health, nowFn)
 
 	return &Poller{
-		opts:  opts,
-		log:   logger,
-		now:   nowFn,
-		prior: map[string]*big.Int{},
+		opts:       opts,
+		log:        logger,
+		now:        nowFn,
+		prior:      map[string]*big.Int{},
+		priorOwner: map[string]string{},
 	}, nil
 }
 
@@ -228,6 +252,8 @@ func (p *Poller) Run(ctx context.Context) error {
 		"chain_id", p.opts.ChainID,
 		"native", len(p.opts.Native),
 		"erc20", len(p.opts.ERC20),
+		"erc721_balances", len(p.opts.ERC721Balances),
+		"erc721_ownership", len(p.opts.ERC721Ownership),
 		"contracts", len(p.opts.Contracts),
 		"cadence", p.cadenceDesc(),
 	)
@@ -383,6 +409,16 @@ func (p *Poller) sampleAll(ctx context.Context, head uint64) error {
 			return err
 		}
 	}
+	for _, b := range p.opts.ERC721Balances {
+		if err := p.sampleERC721Balance(ctx, b, head, tag, ts, blockHash); err != nil {
+			return err
+		}
+	}
+	for _, o := range p.opts.ERC721Ownership {
+		if err := p.sampleERC721Ownership(ctx, o, head, tag, ts, blockHash); err != nil {
+			return err
+		}
+	}
 	for _, c := range p.opts.Contracts {
 		if err := p.sampleContract(ctx, c, head, tag, ts, blockHash); err != nil {
 			return err
@@ -423,6 +459,24 @@ func (p *Poller) changed(key string, cur *big.Int) (bool, *big.Int) {
 		return false, nil
 	}
 	if prev.Cmp(cur) == 0 {
+		return false, prev
+	}
+	return true, prev
+}
+
+// ownerChanged reports whether an ERC-721 token's owner moved since the last
+// tick and updates the stored prior. Like changed, the first observation is
+// never a change: it returns (false, "") and seeds the prior. Owners are
+// compared case-insensitively so a checksum-vs-lowercase difference from the RPC
+// is not mistaken for a transfer. Subsequent observations return
+// (moved, previousOwner) with the previous owner in its originally observed form.
+func (p *Poller) ownerChanged(key, cur string) (bool, string) {
+	prev, ok := p.priorOwner[key]
+	p.priorOwner[key] = cur
+	if !ok {
+		return false, ""
+	}
+	if strings.EqualFold(prev, cur) {
 		return false, prev
 	}
 	return true, prev
