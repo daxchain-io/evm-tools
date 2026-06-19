@@ -1,0 +1,17 @@
+# Configuration for markdownlint-cli2 (docs + README linting).
+# See https://github.com/DavidAnson/markdownlint-cli2.
+config:
+  # Disable hard line-length wrapping: prose wraps at ~80 by convention, but
+  # tables, links, and config examples legitimately run longer.
+  MD013: false
+  # Allow inline HTML where it is occasionally needed for anchors.
+  MD033: false
+  # The first line need not be a top-level heading (badges/front-matter).
+  MD041: false
+
+globs:
+  - "**/*.md"
+
+ignores:
+  - "**/node_modules/**"
+  - "dist/**"

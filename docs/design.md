@@ -1079,4 +1079,3 @@ These are unresolved and worth deciding before or during the build:
 4. **Finality signaling.** Once reorg handling lands, decide whether to add the
    additive `finalized`/`removed` envelope field (and `evm_stream` reorg
    re-emission) so sinks can distinguish final from reorganizable records.
-```

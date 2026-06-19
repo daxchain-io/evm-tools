@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  # contents: write — create the GitHub Release and upload assets.
+  # id-token: write — keyless cosign signing via GitHub OIDC.
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: GoReleaser release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: GoReleaser release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The default GITHUB_TOKEN cannot push to the separate tap repo, so the
+          # tap update needs its own credential. Provisioning this secret is a
+          # maintainer task (see docs/plan.md M3).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

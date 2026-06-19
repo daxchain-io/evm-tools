@@ -1,0 +1,1 @@
+{"schema_version":1,"type":"native_transfer","tool":"evm-stream","name":"native","chain":"codex-chain","chain_id":4242,"block_number":19000003,"block_hash":"0xblockhash","tx_hash":"0xtxhash","timestamp":"2026-06-19T12:00:00Z","emitted_at":"2026-06-19T12:00:03Z","data":{"from":"0xfrom","value_wei":"5000000000000000000","value":"5","contract_creation":true}}

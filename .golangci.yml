@@ -1,0 +1,43 @@
+# golangci-lint v2 configuration. See https://golangci-lint.run/.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Start from the default set and add a few high-signal extras.
+  default: standard
+  enable:
+    - bodyclose
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test files may use dot-ish helpers and skip some error checks for
+      # brevity; keep the signal focused on production code.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/daxchain-io/evm-tools

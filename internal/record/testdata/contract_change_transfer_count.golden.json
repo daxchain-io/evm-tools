@@ -1,0 +1,1 @@
+{"schema_version":1,"type":"contract_change","tool":"evm-balance","name":"usdc","chain":"codex-chain","chain_id":4242,"block_number":19000090,"block_hash":"0xblockhash","timestamp":"2026-06-19T12:00:00Z","emitted_at":"2026-06-19T12:00:03Z","data":{"address":"0xcontract","field":"transfer_count","count":"150","window_blocks":1000,"previous_count":"100"}}

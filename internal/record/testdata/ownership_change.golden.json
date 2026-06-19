@@ -1,0 +1,1 @@
+{"schema_version":1,"type":"ownership_change","tool":"evm-balance","name":"special-token-owner","chain":"codex-chain","chain_id":4242,"block_number":19000070,"block_hash":"0xblockhash","timestamp":"2026-06-19T12:00:00Z","emitted_at":"2026-06-19T12:00:03Z","data":{"kind":"erc721","token":"0xtoken","token_id":"1234","owner":"0xnew","previous_owner":"0xold"}}

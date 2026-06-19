@@ -1,0 +1,1 @@
+{"schema_version":1,"type":"balance_sample","tool":"evm-balance","name":"treasury-eth","chain":"codex-chain","chain_id":4242,"block_number":19000050,"block_hash":"0xblockhash","timestamp":"2026-06-19T12:00:00Z","emitted_at":"2026-06-19T12:00:03Z","data":{"kind":"native","address":"0xaddr","balance_wei":"4200000000000000000","balance":"4.2"}}

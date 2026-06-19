@@ -27,29 +27,29 @@ Conventions:
 Goal: a compiling, CI-green skeleton with the data contract and command surface
 in place — no real RPC logic yet.
 
-- [ ] `go.mod` (module `github.com/daxchain-io/evm-tools`, Go 1.22+ `go`
+- [x] `go.mod` (module `github.com/daxchain-io/evm-tools`, Go 1.22+ `go`
       directive) and `.gitignore`.
-- [ ] Layout: `cmd/evm-stream`, `cmd/evm-balance`;
+- [x] Layout: `cmd/evm-stream`, `cmd/evm-balance`;
       `internal/{config,rpc,record,metrics,chain,buildinfo,stream,balance}`.
-- [ ] **`internal/record` built for real** — envelope + all 8 record types + a
+- [x] **`internal/record` built for real** — envelope + all 8 record types + a
       single synchronized, line-atomic, per-line-flushing encoder; amounts
       string-encoded. → Record Contract, Output discipline.
-- [ ] Golden-file tests for `record` (envelope fields, RFC 3339, omit-empty,
+- [x] Golden-file tests for `record` (envelope fields, RFC 3339, omit-empty,
       string amounts, `schema_version`). → Testing.
-- [ ] `internal/buildinfo` — version/commit/date vars; `version` command prints
+- [x] `internal/buildinfo` — version/commit/date vars; `version` command prints
       them (+ `--json`); `-ldflags -X` wiring. → Version stamping.
-- [ ] `internal/config` — typed structs for shared + `[stream]`/`[balance]`;
+- [x] `internal/config` — typed structs for shared + `[stream]`/`[balance]`;
       Viper load skeleton (precedence, per-tool strict decode of own subtree,
       `EVM_TOOLS_` prefix + key replacer); interpolation/`_cmd` may start
       stubbed. → Configuration.
-- [ ] Cobra trees for both CLIs — `run`, `validate`, `check rpc`, `version` with
+- [x] Cobra trees for both CLIs — `run`, `validate`, `check rpc`, `version` with
       the full shared flag set (`--config`, `--rpc-*`, `--metrics*`,
       `--log-level/-format`, `--allow-exec`); unimplemented paths return a clear
       "not implemented" error. → Command shape.
-- [ ] `--log-level`/`--log-format` wired to `log/slog` on stderr. → Logging.
-- [ ] Tooling: `.github/workflows/ci.yml` + `release.yml`, `.goreleaser.yaml`,
+- [x] `--log-level`/`--log-format` wired to `log/slog` on stderr. → Logging.
+- [x] Tooling: `.github/workflows/ci.yml` + `release.yml`, `.goreleaser.yaml`,
       `.golangci.yml`, markdownlint config. → Quality and CI, Release.
-- [ ] **Acceptance:** build/vet/test/lint green; `goreleaser check` passes;
+- [x] **Acceptance:** build/vet/test/lint green; `goreleaser check` passes;
       `--help` and `version` work for both binaries; record golden tests pass.
 
 ## M1 — evm-stream vertical slice

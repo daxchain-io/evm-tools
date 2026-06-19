@@ -1,0 +1,26 @@
+# Build output
+/dist/
+/bin/
+*.test
+*.out
+
+# Coverage
+coverage.txt
+coverage.html
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Local env / secrets — never commit
+*.local
+.env
+*.pem
+*.key
+*.crt
+!testdata/**/*.pem
+!testdata/**/*.key
+!testdata/**/*.crt

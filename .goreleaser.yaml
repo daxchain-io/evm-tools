@@ -1,0 +1,139 @@
+# GoReleaser configuration for the evm-tools suite.
+# Validate with `goreleaser check`; dry-run with
+# `goreleaser release --snapshot --clean`.
+version: 2
+
+project_name: evm-tools
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: evm-stream
+    main: ./cmd/evm-stream
+    binary: evm-stream
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
+  - id: evm-balance
+    main: ./cmd/evm-balance
+    binary: evm-balance
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
+archives:
+  - id: evm-stream
+    ids:
+      - evm-stream
+    name_template: "evm-stream_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+  - id: evm-balance
+    ids:
+      - evm-balance
+    name_template: "evm-balance_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Keyless cosign signing of the checksums file via GitHub OIDC. The release
+# workflow grants id-token: write so this needs no stored key.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+# Publish the universal installer as a release asset so the
+# releases/latest/download/install.sh URL resolves.
+release:
+  github:
+    owner: daxchain-io
+    name: evm-tools
+  extra_files:
+    - glob: ./install.sh
+
+# The Daxchain tap standardizes on Homebrew casks for pre-compiled binaries,
+# which is GoReleaser's supported path (the old "brews" formula generator is
+# deprecated). See docs/design.md "Release and Distribution" — formulae "unless
+# the tap standardizes on casks for all Daxchain tools".
+homebrew_casks:
+  - name: evm-stream
+    ids:
+      - evm-stream
+    repository:
+      owner: daxchain-io
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/daxchain-io/evm-tools"
+    description: "Stream live EVM contract events and native transfers as JSONL"
+    binaries:
+      - evm-stream
+  - name: evm-balance
+    ids:
+      - evm-balance
+    repository:
+      owner: daxchain-io
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/daxchain-io/evm-tools"
+    description: "Poll EVM balances and contract state and emit JSONL samples"
+    binaries:
+      - evm-balance
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
