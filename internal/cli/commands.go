@@ -12,12 +12,6 @@ import (
 	"github.com/daxchain-io/evm-tools/internal/logging"
 )
 
-// errNotImplemented is the clear, uniform error the scaffolded run/validate/
-// check paths return until M1/M2 fill them in.
-func errNotImplemented(tool Tool, what string) error {
-	return fmt.Errorf("%s: %s is not implemented yet (scaffolded in M0; see docs/plan.md)", tool, what)
-}
-
 // allowExec resolves the effective --allow-exec value, honoring the
 // EVM_TOOLS_ALLOW_EXEC=1 environment fallback.
 func (f *sharedFlags) allowExecEnabled() bool {
@@ -43,25 +37,6 @@ func (f *sharedFlags) loadConfig(cmd *cobra.Command) (*config.Loader, error) {
 	})
 }
 
-// decodeFor loads and strict-decodes the config for the given tool, returning
-// an error rather than the typed struct (M0 callers only need it to succeed).
-// In M1/M2 this is where validate inspects the decoded config.
-func (f *sharedFlags) decodeFor(cmd *cobra.Command, tool Tool) error {
-	loader, err := f.loadConfig(cmd)
-	if err != nil {
-		return err
-	}
-	switch tool {
-	case ToolStream:
-		_, err = loader.DecodeStream(f.allowExecEnabled())
-	case ToolBalance:
-		_, err = loader.DecodeBalance(f.allowExecEnabled())
-	default:
-		return fmt.Errorf("unknown tool %q", tool)
-	}
-	return err
-}
-
 func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
@@ -81,10 +56,7 @@ func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			case ToolStream:
 				return streamRun(cmd, f)
 			case ToolBalance:
-				if err := f.decodeFor(cmd, tool); err != nil {
-					return err
-				}
-				return errNotImplemented(tool, "run")
+				return balanceRun(cmd, f)
 			default:
 				return fmt.Errorf("unknown tool %q", tool)
 			}
@@ -105,12 +77,7 @@ func newValidateCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			case ToolStream:
 				return streamValidate(cmd, f)
 			case ToolBalance:
-				// Config loading + strict decode works; the balance-specific
-				// mTLS/ABI checks arrive in M2.
-				if err := f.decodeFor(cmd, tool); err != nil {
-					return err
-				}
-				return errNotImplemented(tool, "validate (mTLS/ABI checks)")
+				return balanceValidate(cmd, f)
 			default:
 				return fmt.Errorf("unknown tool %q", tool)
 			}
@@ -139,10 +106,7 @@ func newCheckCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			case ToolStream:
 				return streamCheckRPC(cmd, f)
 			case ToolBalance:
-				if err := f.decodeFor(cmd, tool); err != nil {
-					return err
-				}
-				return errNotImplemented(tool, "check rpc")
+				return balanceCheckRPC(cmd, f)
 			default:
 				return fmt.Errorf("unknown tool %q", tool)
 			}

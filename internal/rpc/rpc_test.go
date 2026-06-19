@@ -114,6 +114,44 @@ func TestClientGetLogs(t *testing.T) {
 	}
 }
 
+// TestClientBalanceAt verifies eth_getBalance decodes a 256-bit wei value beyond
+// the float64 safe range.
+func TestClientBalanceAt(t *testing.T) {
+	b := genCerts(t)
+	// 0xde0b6b3a7640000 = 1e18 wei (1 ETH).
+	srv := rpcServer(t, b, map[string]func() (any, *rpcError){
+		OpGetBalance: func() (any, *rpcError) { return "0xde0b6b3a7640000", nil },
+	})
+	c := mtlsClient(t, b, srv.URL)
+	v, err := c.BalanceAt(context.Background(), "0xabc", "latest")
+	if err != nil {
+		t.Fatalf("BalanceAt: %v", err)
+	}
+	if v.String() != "1000000000000000000" {
+		t.Errorf("balance = %s, want 1000000000000000000", v.String())
+	}
+}
+
+// TestClientCall verifies eth_call passes the {to,data} message and returns the
+// raw 0x-hex result for the caller to decode.
+func TestClientCall(t *testing.T) {
+	b := genCerts(t)
+	srv := rpcServer(t, b, map[string]func() (any, *rpcError){
+		OpCall: func() (any, *rpcError) {
+			// decimals() == 18
+			return "0x0000000000000000000000000000000000000000000000000000000000000012", nil
+		},
+	})
+	c := mtlsClient(t, b, srv.URL)
+	res, err := c.Call(context.Background(), CallMsg{To: "0xtoken", Data: "0x313ce567"}, "latest")
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if !strings.HasSuffix(res, "12") {
+		t.Errorf("call result = %q, want trailing 12 (18 decimal)", res)
+	}
+}
+
 func TestClientRPCError(t *testing.T) {
 	b := genCerts(t)
 	srv := rpcServer(t, b, map[string]func() (any, *rpcError){

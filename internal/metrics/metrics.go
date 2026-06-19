@@ -28,6 +28,10 @@ const (
 	labelContractName = "contract_name"
 	labelContractAddr = "contract_address"
 	labelEventName    = "event_name"
+	labelAccountName  = "account_name"
+	labelAccountAddr  = "account_address"
+	labelTokenName    = "token_name"
+	labelTokenAddr    = "token_address"
 )
 
 // rpcDurationBuckets cover sub-millisecond health checks through multi-second

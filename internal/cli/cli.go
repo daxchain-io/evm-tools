@@ -6,9 +6,9 @@
 // constructs that tree parameterized by tool so the two cmd/ entrypoints stay
 // thin and identical in shape.
 //
-// In M0 the run/validate/check paths are wired through to a clear
-// "not implemented" error; the real logic arrives in M1 (evm-stream) and M2
-// (evm-balance). version and --help are fully functional now.
+// The run/validate/check paths are fully implemented for both producers:
+// evm-stream landed in M1 and evm-balance in M2. version and --help are
+// likewise functional.
 package cli
 
 import (

@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
@@ -117,5 +118,47 @@ func TestMetricsEndpointServesStreamSet(t *testing.T) {
 	// Counters end in _total, gauges do not carry it.
 	if strings.Contains(body, "evm_stream_lag_blocks_total") {
 		t.Error("lag gauge should not have _total suffix")
+	}
+}
+
+func TestMetricsEndpointServesBalanceSet(t *testing.T) {
+	b := NewBalance("codex-chain", "4242")
+	b.SetUp(true)
+	b.SetConfiguredNative(2)
+	b.SetConfiguredContracts(1)
+	b.SetAccountBalanceWei("treasury", "0xabc", big.NewInt(4_200_000))
+	b.SetAccountBalanceEth("treasury", "0xabc", 4.2)
+	b.SetAccountTokenBalanceRaw("usdc", "0xabc", "usdc", "0xtok", big.NewInt(1_000_000))
+	b.SetContractTokenTotalSupply("usdc", "0xtok", 50_000_000)
+	b.SetContractTransferCount("usdc", "0xtok", 3)
+	b.IncSampleRecord()
+	b.IncChangeRecord()
+	b.RPCObserver()("eth_call", time.Millisecond, "")
+
+	h := NewHealth(0, 0)
+	srv := newTestServer(t, true, h, b.Registry())
+	code, body := get(t, "http://"+srv.Addr()+"/metrics")
+	if code != http.StatusOK {
+		t.Fatalf("/metrics = %d", code)
+	}
+	for _, want := range []string{
+		`evm_balance_up{blockchain="codex-chain",chain_id="4242"} 1`,
+		`evm_balance_configured_native_accounts{blockchain="codex-chain",chain_id="4242"} 2`,
+		"evm_balance_records_emitted_total",
+		"evm_balance_sample_records_emitted_total",
+		"evm_balance_change_records_emitted_total",
+		`blockchain_account_balance_wei{`,
+		`blockchain_account_token_balance_raw{`,
+		`blockchain_contract_token_total_supply{`,
+		`blockchain_contract_transfer_count{`,
+		"blockchain_rpc_call_duration_seconds",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q", want)
+		}
+	}
+	// Gauges must not carry a _total suffix.
+	if strings.Contains(body, "blockchain_contract_transfer_count_total") {
+		t.Error("transfer count gauge should not have _total suffix")
 	}
 }

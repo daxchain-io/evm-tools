@@ -95,16 +95,24 @@ events and native transfers as JSONL, expose metrics.
 
 Goal: poll account/contract state and emit samples + change records.
 
-- [ ] `internal/balance` — poll native + ERC-20 balances; contract state
+- [x] `internal/balance` — poll native + ERC-20 balances; contract state
       (`native_balance`, `token_total_supply`, `transfer_count` window);
       decimals resolution (`eth_call decimals()` cached + config override);
       sampling cadence (`interval` xor `every_blocks`); change detection; emit
-      `balance_*` and `contract_*` records. → evm-balance.
-- [ ] Balance metrics (account/contract gauges + transfer count). → Balance
-      metrics.
-- [ ] Tests as in M1.
-- [ ] **Acceptance:** emits `*_sample` every tick and `*_change` on movement;
-      metrics reflect configured entries; `validate`/`check rpc` work.
+      `balance_*` and `contract_*` records. Added `eth_call`/`eth_getBalance` to
+      `internal/rpc`; lossless backpressure + emit-blocked watchdog reused from
+      M1; decimals resolved once at startup and cached per token (a token that
+      omits `decimals()` with no override emits raw-only + a stderr warning).
+      ERC-721 balance/ownership runtime stays deferred per design. → evm-balance.
+- [x] Balance metrics (account/contract gauges + transfer count) on a private
+      registry, mirroring the M1 stream set; shared chain/RPC histograms +
+      sample/change record counters. → Balance metrics.
+- [x] Tests as in M1: unit (fakes + httptest end-to-end run) in the default run;
+      live-node (`anvil`/`geth --dev`) behind the `livenode` build tag.
+- [x] **Acceptance:** emits `*_sample` every tick and `*_change` on movement
+      (with the prior value carried); metrics reflect configured entries;
+      `validate` (cadence XOR, target/decimals checks, mTLS) and `check rpc`
+      work.
 
 ## M3 — Release dry-run and install paths
 

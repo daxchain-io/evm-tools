@@ -14,6 +14,8 @@ const (
 	OpGetBlockByNumber   = "eth_getBlockByNumber"
 	OpGetLogs            = "eth_getLogs"
 	OpGetTransactionRcpt = "eth_getTransactionReceipt"
+	OpGetBalance         = "eth_getBalance"
+	OpCall               = "eth_call"
 )
 
 // hexUint parses a 0x-prefixed hex quantity into a uint64.
@@ -190,4 +192,40 @@ func (c *Client) TransactionReceipt(ctx context.Context, txHash string) (*Receip
 		return nil, err
 	}
 	return r, nil
+}
+
+// BalanceAt returns the native (wei) balance of an account at the given block
+// tag ("latest" or a 0x-hex block number) via eth_getBalance.
+func (c *Client) BalanceAt(ctx context.Context, address, blockTag string) (*big.Int, error) {
+	var hex string
+	if err := c.call(ctx, OpGetBalance, &hex, address, blockTag); err != nil {
+		return nil, err
+	}
+	v, err := hexBig(hex)
+	if err != nil {
+		return nil, &decodeError{op: OpGetBalance, err: err}
+	}
+	return v, nil
+}
+
+// CallMsg is the subset of an eth_call message the balance poller needs: a
+// destination contract and ABI-encoded call data.
+type CallMsg struct {
+	To   string // contract address (0x-hex)
+	Data string // ABI-encoded calldata (0x-hex)
+}
+
+func (m CallMsg) toParam() map[string]any {
+	return map[string]any{"to": m.To, "data": m.Data}
+}
+
+// Call performs a read-only eth_call against a contract at the given block tag
+// ("latest" or a 0x-hex block number) and returns the raw 0x-hex result. The
+// caller ABI-decodes the result.
+func (c *Client) Call(ctx context.Context, msg CallMsg, blockTag string) (string, error) {
+	var hex string
+	if err := c.call(ctx, OpCall, &hex, msg.toParam(), blockTag); err != nil {
+		return "", err
+	}
+	return hex, nil
 }

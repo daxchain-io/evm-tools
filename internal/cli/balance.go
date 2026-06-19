@@ -1,0 +1,190 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/daxchain-io/evm-tools/internal/balance"
+	"github.com/daxchain-io/evm-tools/internal/chain"
+	"github.com/daxchain-io/evm-tools/internal/config"
+	"github.com/daxchain-io/evm-tools/internal/metrics"
+	"github.com/daxchain-io/evm-tools/internal/record"
+	"github.com/daxchain-io/evm-tools/internal/rpc"
+)
+
+// balanceRun implements `evm-balance run`: load config, resolve mTLS material
+// and targets, connect, then sample balances/contract state on the configured
+// cadence, emitting JSONL until a signal arrives.
+func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
+	cfg, err := f.decodeBalance(cmd)
+	if err != nil {
+		return err
+	}
+	resolved, err := validateBalance(cfg)
+	if err != nil {
+		return err
+	}
+
+	logger := slog.Default()
+	rpc.SetKeyPermWarner(func(path string, mode os.FileMode) {
+		logger.Warn("rpc client_key is group/world-readable; tighten its mode",
+			"path", path, "mode", fmt.Sprintf("%#o", mode))
+	})
+
+	// Connect first to resolve chain ID, so the metric set's chain_id const
+	// label is stable for the process lifetime.
+	client, err := rpc.New(rpc.Options{
+		URL: cfg.RPC.URL,
+		TLS: rpcTLSFromConfig(cfg.RPC),
+	})
+	if err != nil {
+		return err
+	}
+
+	rootCtx := cmd.Context()
+	resolveCtx, cancelResolve := context.WithTimeout(rootCtx, 20*time.Second)
+	info, err := chain.Resolve(resolveCtx, client, cfg.Chain)
+	cancelResolve()
+	if err != nil {
+		return fmt.Errorf("resolve chain id: %w", err)
+	}
+
+	m := metrics.NewBalance(info.Name, fmt.Sprintf("%d", info.ID))
+	m.SetUp(true)
+	m.SetConfiguredNative(len(resolved.Native))
+	m.SetConfiguredERC20(len(resolved.ERC20))
+	m.SetConfiguredContracts(len(resolved.Contracts))
+
+	// Rebuild the client with the metrics observer now that the set exists.
+	client, err = rpc.New(rpc.Options{
+		URL:      cfg.RPC.URL,
+		TLS:      rpcTLSFromConfig(cfg.RPC),
+		Observer: m.RPCObserver(),
+	})
+	if err != nil {
+		return err
+	}
+
+	health := metrics.NewHealth(readyEmitBlockedThreshold, readyLagThreshold)
+	health.SetRPCReachable(true)
+
+	mc := f.balanceMetricsConfig(cmd, cfg)
+	srv, err := metrics.NewServer(metrics.ServerOptions{
+		Addr:           mc.Addr,
+		MetricsEnabled: mc.Enabled,
+		MetricsPath:    mc.Path,
+		Registry:       m.Registry(),
+		Health:         health,
+	})
+	if err != nil {
+		return err
+	}
+	go func() {
+		if serveErr := srv.Serve(); serveErr != nil {
+			logger.Error("metrics server stopped", "error", serveErr)
+		}
+	}()
+	logger.Info("health/metrics server listening", "addr", srv.Addr(), "metrics_enabled", mc.Enabled)
+
+	writer := record.NewWriter(cmd.OutOrStdout())
+
+	poller, err := balance.New(balance.Options{
+		Client:    client,
+		Emitter:   writer,
+		Metrics:   m,
+		Health:    health,
+		Logger:    logger,
+		ChainName: info.Name,
+		ChainID:   info.ID,
+		Cadence:   resolved.Cadence,
+		Native:    resolved.Native,
+		ERC20:     resolved.ERC20,
+		Contracts: resolved.Contracts,
+	})
+	if err != nil {
+		return err
+	}
+
+	m.SetWorkers(1)
+	runErr := poller.Run(rootCtx)
+
+	m.SetWorkers(0)
+	m.SetUp(false)
+	shutCtx, cancelShut := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancelShut()
+	if shutErr := srv.Shutdown(shutCtx); shutErr != nil {
+		logger.Warn("metrics server shutdown", "error", shutErr)
+	}
+	if flushErr := writer.Flush(); flushErr != nil {
+		logger.Warn("final stdout flush", "error", flushErr)
+	}
+	return runErr
+}
+
+// balanceValidate implements `evm-balance validate`: load+decode config,
+// validate mTLS material (without connecting), and resolve all configured
+// targets and the sampling cadence.
+func balanceValidate(cmd *cobra.Command, f *sharedFlags) error {
+	cfg, err := f.decodeBalance(cmd)
+	if err != nil {
+		return err
+	}
+	if _, err := validateBalance(cfg); err != nil {
+		return err
+	}
+
+	// mTLS material check: building the client validates the certs/key for an
+	// HTTPS URL without performing any network I/O.
+	if _, err := rpc.New(rpc.Options{URL: cfg.RPC.URL, TLS: rpcTLSFromConfig(cfg.RPC)}); err != nil {
+		return fmt.Errorf("rpc transport: %w", err)
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "ok: config, mTLS material, and balance targets validated")
+	return nil
+}
+
+// balanceCheckRPC implements `evm-balance check rpc`.
+func balanceCheckRPC(cmd *cobra.Command, f *sharedFlags) error {
+	cfg, err := f.decodeBalance(cmd)
+	if err != nil {
+		return err
+	}
+	return runCheckRPC(cmd, rpcMaterial{URL: cfg.RPC.URL, TLS: rpcTLSFromConfig(cfg.RPC)})
+}
+
+// validateBalance applies the cross-field invariants strict decoding cannot
+// express, returning the resolved targets so callers (run) can reuse them.
+func validateBalance(cfg *config.BalanceFull) (balance.Resolved, error) {
+	if cfg.RPC.URL == "" {
+		return balance.Resolved{}, fmt.Errorf("rpc.url is required")
+	}
+	resolved, err := balance.Resolve(cfg.Balance)
+	if err != nil {
+		return balance.Resolved{}, fmt.Errorf("resolve balance config: %w", err)
+	}
+	return resolved, nil
+}
+
+// decodeBalance loads and strict-decodes the evm-balance config.
+func (f *sharedFlags) decodeBalance(cmd *cobra.Command) (*config.BalanceFull, error) {
+	loader, err := f.loadConfig(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return loader.DecodeBalance(f.allowExecEnabled())
+}
+
+// balanceMetricsConfig resolves the metrics endpoint config for evm-balance.
+func (f *sharedFlags) balanceMetricsConfig(cmd *cobra.Command, cfg *config.BalanceFull) resolvedMetrics {
+	cf := commandFlags{
+		metricsChanged:     cmd.Flags().Changed("metrics"),
+		metricsAddrChanged: cmd.Flags().Changed("metrics-addr"),
+		metricsPathChanged: cmd.Flags().Changed("metrics-path"),
+	}
+	return f.resolveMetrics(cf, cfg.Metrics, cfg.Balance.Metrics, ":9001")
+}

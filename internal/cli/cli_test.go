@@ -81,27 +81,16 @@ func TestHelpListsSharedFlags(t *testing.T) {
 	}
 }
 
-// TestRunNotImplemented verifies the still-scaffolded balance run path returns a
-// clear not-implemented error (after successfully loading defaults config).
-// evm-stream's run path is implemented in M1, so this exercises evm-balance,
-// which lands in M2.
-func TestRunNotImplemented(t *testing.T) {
-	_, err := run(t, ToolBalance, "run", "--config", writeTempConfig(t))
+// TestBalanceRunRequiresRPCURL verifies the M2 balance run path validates config
+// before connecting: a config with no rpc.url fails fast and clearly (the
+// scaffolded "not implemented" path is gone in M2).
+func TestBalanceRunRequiresRPCURL(t *testing.T) {
+	out, err := run(t, ToolBalance, "run", "--config", writeTempConfig(t))
 	if err == nil {
-		t.Fatal("expected not-implemented error from run")
+		t.Fatalf("expected a config error from run\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("error should be clearly not-implemented, got: %v", err)
-	}
-}
-
-func TestCheckRPCNotImplemented(t *testing.T) {
-	_, err := run(t, ToolBalance, "check", "rpc", "--config", writeTempConfig(t))
-	if err == nil {
-		t.Fatal("expected not-implemented error from check rpc")
-	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("error should be clearly not-implemented, got: %v", err)
+	if !strings.Contains(err.Error(), "rpc.url is required") {
+		t.Errorf("error should name the missing rpc.url, got: %v", err)
 	}
 }
 
