@@ -191,8 +191,8 @@ internal/trace native transfers (Open Question 3); reorg handling + the additive
 `finalized`/`removed` field and reorg re-emission (Open Question 4); config
 reload (+ metric reset); checkpointing/resume; the sinks `evm-sink-kafka` and
 `evm-sink-webhook` and the webhook sink's scope/delivery semantics (Open
-Questions 1, 2). Value interpolation (`${VAR}`/`_cmd`) also remains deferred per
-M0/M1 notes.
+Questions 1, 2). Value interpolation (`${VAR}`/`_cmd`) is now implemented — see
+Post-M4 follow-ups below.
 
 ## Deferred (post-spine, per design)
 
@@ -202,10 +202,15 @@ sinks (`evm-sink-kafka`, `evm-sink-webhook`) and the webhook sink's scope. See
 design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
 runtime is done — see M4.)
 
-Config value interpolation (`${VAR}`/`${VAR:-default}`/`$$`) and `_cmd` key
-resolution remain stubbed (M0 explicitly allowed this; not an M1 task). Until
-they land, a `_cmd` key is still rejected fatally by strict decode (`ErrorUnused`
-"invalid keys"), so a secret-fetching key is never silently dropped or run with a
-wrong value; the design's *specific* messages ("`_cmd` requires `--allow-exec`",
-"both `<field>` and `<field>_cmd` set") arrive with the interpolation/`_cmd`
-implementation per design [Secret Handling](design.md#secret-handling).
+## Post-M4 follow-ups
+
+- [x] **Config value interpolation + `_cmd` execution** (`internal/config/resolve.go`):
+  `${VAR}`, `${VAR:-default}`, and `$$` expand on file-sourced values; `<field>_cmd`
+  keys run via `sh -c` (trimmed stdout), opt-in behind `--allow-exec` /
+  `EVM_TOOLS_ALLOW_EXEC`. A `_cmd` while exec is disabled is fatal; setting both
+  `<field>` and `<field>_cmd` is an error; a flag/env binding short-circuits a
+  `_cmd` (a built-in default does not); a non-zero exit is fatal with the
+  command's stderr surfaced; a missing `sh` is fatal. Interpolation applies to
+  file-sourced values only — binding values are left literal. Covered by
+  `resolve_test.go`. Implements design [Configuration](design.md#configuration)
+  and [Secret Handling](design.md#secret-handling).

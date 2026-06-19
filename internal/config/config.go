@@ -9,10 +9,9 @@
 //
 // Precedence (highest wins): flags > env (EVM_TOOLS_ prefix) > TOML > defaults.
 //
-// NOTE (M0): value interpolation (${VAR}) and command execution (_cmd) are
-// specified in docs/design.md but are deferred to a later milestone; this
-// package wires the skeleton and exposes the AllowExec flag without yet
-// resolving those forms.
+// Value interpolation (${VAR}, ${VAR:-default}, $$) and command execution
+// (_cmd keys, gated by AllowExec) are resolved during decoding — see resolve.go
+// and docs/design.md "Value interpolation".
 package config
 
 // MetricsConfig is the shared/per-tool Prometheus endpoint configuration.

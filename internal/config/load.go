@@ -29,6 +29,11 @@ const configBaseName = "evm-tools"
 // It is shared by both CLIs; each then strict-decodes its own subtree.
 type Loader struct {
 	v *viper.Viper
+	// flagKeys is the set of dotted config keys overridden by a flag the user
+	// actually changed. Together with the environment, it identifies values that
+	// outrank the file — the only ones that short-circuit a _cmd or are exempt
+	// from ${...} interpolation (which applies to file-sourced values only).
+	flagKeys map[string]bool
 }
 
 // Options controls how the config is sourced.
@@ -75,13 +80,14 @@ func New(opts Options) (*Loader, error) {
 
 	// Flags sit at the top of precedence. Bind only flags the user changed so
 	// a flag's zero default never silently overrides file/env values.
+	flagKeys := map[string]bool{}
 	if opts.Flags != nil {
-		if err := bindChangedFlags(v, opts.Flags); err != nil {
+		if err := bindChangedFlags(v, opts.Flags, flagKeys); err != nil {
 			return nil, err
 		}
 	}
 
-	return &Loader{v: v}, nil
+	return &Loader{v: v, flagKeys: flagKeys}, nil
 }
 
 // readConfigFile loads an explicit file or searches the default paths. A
@@ -128,8 +134,10 @@ func bindEnvKeys(v *viper.Viper) {
 	}
 }
 
-// bindChangedFlags binds every flag the user explicitly set to its dotted key.
-func bindChangedFlags(v *viper.Viper, fs *pflag.FlagSet) error {
+// bindChangedFlags binds every flag the user explicitly set to its dotted key
+// and records that key in flagKeys so later resolution can tell a flag override
+// apart from a built-in default.
+func bindChangedFlags(v *viper.Viper, fs *pflag.FlagSet, flagKeys map[string]bool) error {
 	var bindErr error
 	fs.Visit(func(f *pflag.Flag) {
 		if bindErr != nil {
@@ -141,7 +149,9 @@ func bindChangedFlags(v *viper.Viper, fs *pflag.FlagSet) error {
 		}
 		if err := v.BindPFlag(key, f); err != nil {
 			bindErr = fmt.Errorf("bind flag --%s: %w", f.Name, err)
+			return
 		}
+		flagKeys[key] = true
 	})
 	return bindErr
 }

@@ -35,7 +35,7 @@ type balanceTarget struct {
 // [balance] section is ignored.
 func (l *Loader) DecodeStream(allowExec bool) (*StreamFull, error) {
 	var t streamTarget
-	if err := l.strictDecode("stream", &t); err != nil {
+	if err := l.strictDecode("stream", &t, allowExec); err != nil {
 		return nil, err
 	}
 	t.AllowExec = allowExec
@@ -47,7 +47,7 @@ func (l *Loader) DecodeStream(allowExec bool) (*StreamFull, error) {
 // [stream] section is ignored.
 func (l *Loader) DecodeBalance(allowExec bool) (*BalanceFull, error) {
 	var t balanceTarget
-	if err := l.strictDecode("balance", &t); err != nil {
+	if err := l.strictDecode("balance", &t, allowExec); err != nil {
 		return nil, err
 	}
 	t.AllowExec = allowExec
@@ -58,13 +58,19 @@ func (l *Loader) DecodeBalance(allowExec bool) (*BalanceFull, error) {
 // named tool subtree, then decodes it with ErrorUnused so a typo in the tool's
 // own section (or a shared section) fails fast. Sibling-tool sections never
 // enter the map, so they are silently ignored as required.
-func (l *Loader) strictDecode(toolKey string, target any) error {
+func (l *Loader) strictDecode(toolKey string, target any, allowExec bool) error {
 	all := l.v.AllSettings()
 	subset := make(map[string]any, len(all))
 	for k, val := range all {
 		if sharedKeys[k] || k == toolKey {
 			subset[k] = val
 		}
+	}
+
+	// Resolve ${...} interpolation and _cmd execution on the subset before
+	// strict decoding, so consumers see only final values.
+	if err := l.resolve(subset, allowExec); err != nil {
+		return err
 	}
 
 	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
