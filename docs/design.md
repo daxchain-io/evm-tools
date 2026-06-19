@@ -34,6 +34,7 @@ makes the suite composable.
 - [Quality and CI](#quality-and-ci)
 - [Release and Distribution](#release-and-distribution)
 - [Naming Conventions](#naming-conventions)
+- [Governance](#governance)
 - [License](#license)
 - [Open Questions](#open-questions)
 
@@ -1040,10 +1041,27 @@ category-like name. Downstream sinks share an `evm-sink-<destination>` family so
 they group together — `evm-sink-kafka`, `evm-sink-webhook` — keeping the
 producer names (`evm-stream`, `evm-balance`) free to describe what they observe.
 
+## Governance
+
+This is an internally maintained Daxchain project. The repository is public so
+the tools can be installed via Homebrew and the `curl` installer and so the code
+is readable — not as an invitation to contribute. The repo is **closed to
+outside contributions**:
+
+- `CONTRIBUTING.md` states the policy: forks are welcome under Apache-2.0, but
+  external pull requests are not reviewed or merged and public issues are not
+  tracked.
+- `SECURITY.md` defines **private** vulnerability reporting through GitHub
+  security advisories (private vulnerability reporting is enabled on the repo);
+  security issues are never filed as public issues or PRs.
+- Write access is held only by Daxchain maintainers. The org's default member
+  permission is read-only, and there are no outside collaborators, so a public
+  fork is the most anyone outside the org can do.
+
 ## License
 
-The repository is licensed under Apache-2.0. The `LICENSE` file is added when
-the repo is scaffolded.
+The repository is licensed under Apache-2.0; the full text is in the `LICENSE`
+file at the repo root.
 
 ## Open Questions
 
