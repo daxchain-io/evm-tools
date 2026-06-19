@@ -73,17 +73,23 @@ checksum:
   algorithm: sha256
 
 # Keyless cosign signing of the checksums file via GitHub OIDC. The release
-# workflow grants id-token: write so this needs no stored key.
+# workflow grants id-token: write so this needs no stored key. The signing is
+# delegated to scripts/cosign-sign.sh, which signs only when a keyless OIDC
+# identity (GitHub Actions) or a COSIGN_PRIVATE_KEY fallback is present and
+# otherwise skips with a clear message — so a local `goreleaser release
+# --snapshot --clean` dry-run stays offline-safe while real tagged releases in
+# CI still sign. (GoReleaser's `signs` block has no per-snapshot skip, so the
+# conditional lives in the wrapper.)
 signs:
-  - cmd: cosign
+  - id: cosign-keyless
+    cmd: sh
     signature: "${artifact}.sig"
     certificate: "${artifact}.pem"
     args:
-      - sign-blob
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - scripts/cosign-sign.sh
       - "${artifact}"
-      - "--yes"
+      - "${signature}"
+      - "${certificate}"
     artifacts: checksum
     output: true
 

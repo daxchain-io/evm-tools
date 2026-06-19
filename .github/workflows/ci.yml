@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck install.sh
+        run: shellcheck install.sh scripts/cosign-sign.sh
 
   goreleaser:
     name: GoReleaser check + snapshot
@@ -93,8 +93,11 @@ jobs:
           version: "~> v2"
           args: check
 
+      # No --skip=sign needed: scripts/cosign-sign.sh detects the absence of a
+      # keyless OIDC identity in this non-release job and skips signing, so the
+      # packaging dry-run stays green without touching Sigstore.
       - name: GoReleaser snapshot (packaging dry-run)
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --snapshot --clean --skip=sign
+          args: release --snapshot --clean

@@ -987,11 +987,20 @@ curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/ins
 ```
 
 The installer establishes trust in the checksum independently of the artifact:
-the signed checksums file is verified against a public key shipped pinned in
-`install.sh`, so a compromised release channel cannot swap both the artifact and
-its checksum. Downloads are HTTPS and fail closed. Because `curl | sh` runs
-`install.sh` before any verification, a download-inspect-run alternative is
-documented for high-assurance environments. The installer lets the caller select
+the checksums file is signed keylessly with cosign in CI, and `install.sh`
+verifies that signature with `cosign verify-blob` against a pinned signer
+identity — the release workflow's certificate identity regexp and the GitHub
+Actions OIDC issuer, both hard-coded in `install.sh` (the keyless equivalent of
+a pinned public key). Only after the checksums file's signature verifies does
+the installer compare the archive's SHA-256 against it, so a compromised release
+channel cannot swap both the artifact and its checksum: forging the checksums
+signature would also require this repo's GitHub Actions OIDC identity. If
+`cosign` is not installed the installer fails closed with guidance to install
+it; `EVM_TOOLS_SKIP_SIGNATURE=1` is an explicit, loudly warned opt-out that
+downgrades to an unauthenticated same-channel SHA-256 check. Downloads are HTTPS
+and fail closed. Because `curl | sh` runs `install.sh` before any verification,
+a download-inspect-run alternative is documented for high-assurance
+environments. The installer lets the caller select
 a binary and install directory, so the same release path installs `evm-stream`
 first and the other tools later.
 

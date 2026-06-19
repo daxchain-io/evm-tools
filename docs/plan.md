@@ -118,14 +118,35 @@ Goal: poll account/contract state and emit samples + change records.
 
 Goal: prove the brew/curl artifacts build before a real tag.
 
-- [ ] `goreleaser release --snapshot --clean` builds the full OS/arch matrix.
-- [ ] Verify archives, `checksums.txt`, cosign config, rendered Homebrew
-      formulae, and `install.sh` (OS/arch detection, checksum verify). → Release
-      and Distribution.
+- [x] `goreleaser release --snapshot --clean` builds the full OS/arch matrix
+      (linux/darwin × amd64/arm64 for both `evm-stream` and `evm-balance`).
+      Keyless cosign signing is delegated to `scripts/cosign-sign.sh`, which
+      signs only when a GitHub OIDC identity (or a `COSIGN_PRIVATE_KEY` fallback)
+      is present and otherwise skips with a clear message, so the bare snapshot
+      command stays offline-safe while real tagged releases in CI still sign.
+      → Release and Distribution.
+- [x] Verify archives, `checksums.txt`, cosign config, rendered Homebrew casks
+      (the tap standardizes on casks for pre-compiled binaries; GoReleaser's
+      `brews` formula generator is deprecated), and `install.sh` (OS/arch
+      detection, signed-checksums verify). `install.sh` was exercised end-to-end
+      against the snapshot artifacts over a local mirror (`EVM_TOOLS_BASE_URL`):
+      it detects OS/arch, downloads the matching archive, verifies the
+      `checksums.txt` cosign signature against the pinned release identity/issuer
+      with `cosign verify-blob` (failing closed if `cosign` is absent unless
+      `EVM_TOOLS_SKIP_SIGNATURE=1` is set), verifies the SHA-256 from the now
+      trusted `checksums.txt`, installs the binary, and fails closed on checksum
+      mismatch / signature mismatch / unsupported binary / unsupported arch. The
+      `cosign-sign.sh` skip branches write empty placeholders for the registered
+      `signs.output` paths so a signing-skipped release never references a
+      missing `checksums.txt.sig`/`.pem` upload asset. → Release and
+      Distribution.
 - [ ] First real tag `v0.1.0` once the org adds `HOMEBREW_TAP_GITHUB_TOKEN` +
-      cosign secrets (maintainer task). → Release automation.
-- [ ] **Acceptance:** snapshot succeeds; `install.sh` resolves the matching
-      artifact; `brew install` works from the tap after the tagged release.
+      cosign secrets (maintainer task — needs an external secret). → Release
+      automation.
+- [ ] **Acceptance:** snapshot succeeds (done); `install.sh` resolves the
+      matching artifact (verified against the snapshot); `brew install` works
+      from the tap after the tagged release (blocked on the real tag + tap
+      token, a maintainer task).
 
 ## Deferred (post-spine, per design)
 

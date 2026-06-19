@@ -4,8 +4,10 @@
 #   curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh
 #
 # It detects the OS and CPU architecture, downloads the matching release
-# archive, verifies its SHA-256 checksum against the signed checksums file, and
-# installs the requested binary. Downloads are HTTPS and the script fails closed.
+# archive, establishes trust in the checksums file by verifying its cosign
+# signature against a pinned identity, then verifies the archive's SHA-256
+# against that trusted checksums file and installs the requested binary.
+# Downloads are HTTPS and the script fails closed.
 #
 # For high-assurance environments, download and inspect this script before
 # running it instead of piping it straight into a shell.
@@ -14,12 +16,31 @@
 #   EVM_TOOLS_BIN      binary to install: evm-stream | evm-balance (default evm-stream)
 #   EVM_TOOLS_VERSION  version tag to install (default: latest)
 #   EVM_TOOLS_INSTALL_DIR  install directory (default: /usr/local/bin)
+#   EVM_TOOLS_BASE_URL     base "releases" URL (default the GitHub repo); set
+#                          this to install from a mirror or to test against a
+#                          local snapshot. "latest" resolution needs the real
+#                          GitHub redirect, so pin EVM_TOOLS_VERSION when using
+#                          a base URL that has no /latest redirect.
+#   EVM_TOOLS_SKIP_SIGNATURE  set to 1 to skip cosign signature verification of
+#                          the checksums file (NOT recommended; downgrades the
+#                          trust model to a plain same-channel SHA-256 check).
 set -eu
 
 REPO="daxchain-io/evm-tools"
 BIN="${EVM_TOOLS_BIN:-evm-stream}"
 VERSION="${EVM_TOOLS_VERSION:-latest}"
 INSTALL_DIR="${EVM_TOOLS_INSTALL_DIR:-/usr/local/bin}"
+BASE_URL="${EVM_TOOLS_BASE_URL:-https://github.com/${REPO}/releases}"
+
+# Pinned cosign identity for the keyless-signed checksums file. The release
+# workflow (.github/workflows/release.yml) signs checksums.txt with GitHub OIDC,
+# so the signing certificate's identity is the release workflow's ref under this
+# repo and its issuer is the GitHub Actions OIDC provider. Pinning both here is
+# the keyless equivalent of shipping a pinned public key: a compromised release
+# channel cannot forge a checksums signature without also controlling this
+# repo's GitHub Actions identity.
+COSIGN_IDENTITY_REGEXP="${EVM_TOOLS_COSIGN_IDENTITY_REGEXP:-^https://github.com/${REPO}/\.github/workflows/.+@refs/tags/v}"
+COSIGN_OIDC_ISSUER="${EVM_TOOLS_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 err() {
   echo "install.sh: error: $*" >&2
@@ -66,7 +87,7 @@ case "$arch" in
   *) err "unsupported architecture '$arch' (supported: amd64, arm64)" ;;
 esac
 
-base_url="https://github.com/${REPO}/releases"
+base_url="$BASE_URL"
 if [ "$VERSION" = "latest" ]; then
   dl="${base_url}/latest/download"
 else
@@ -97,8 +118,44 @@ echo "Downloading ${archive} ..." >&2
 download "${dl}/${archive}" "${tmp}/${archive}"
 download "${dl}/checksums.txt" "${tmp}/checksums.txt"
 
-# Verify checksum. Establish trust in the checksum independently of the
-# artifact by verifying the signed checksums file when cosign is available.
+# Establish trust in the checksums file independently of the artifact channel
+# BEFORE trusting any hash it contains. The release pipeline signs checksums.txt
+# keylessly with cosign (GitHub OIDC), publishing checksums.txt.sig and
+# checksums.txt.pem. We verify that signature against the pinned identity/issuer
+# above, so a compromised release host cannot swap the archive AND rewrite a
+# matching checksum: forging the signature would also require this repo's GitHub
+# Actions OIDC identity.
+verify_checksums_signature() {
+  download "${dl}/checksums.txt.sig" "${tmp}/checksums.txt.sig" ||
+    err "could not download checksums.txt.sig; cannot verify signature (set EVM_TOOLS_SKIP_SIGNATURE=1 to bypass at your own risk)"
+  download "${dl}/checksums.txt.pem" "${tmp}/checksums.txt.pem" ||
+    err "could not download checksums.txt.pem; cannot verify signature (set EVM_TOOLS_SKIP_SIGNATURE=1 to bypass at your own risk)"
+
+  echo "Verifying checksums.txt signature (cosign) ..." >&2
+  cosign verify-blob \
+    --certificate "${tmp}/checksums.txt.pem" \
+    --signature "${tmp}/checksums.txt.sig" \
+    --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+    "${tmp}/checksums.txt" >&2 ||
+    err "cosign signature verification of checksums.txt failed; refusing to install"
+}
+
+if [ "${EVM_TOOLS_SKIP_SIGNATURE:-0}" = "1" ]; then
+  echo "install.sh: WARNING: EVM_TOOLS_SKIP_SIGNATURE=1 set; skipping cosign" >&2
+  echo "install.sh: WARNING: signature verification. Checksum trust is NOT" >&2
+  echo "install.sh: WARNING: independent of the download channel." >&2
+elif command -v cosign >/dev/null 2>&1; then
+  verify_checksums_signature
+else
+  err "cosign not found: checksums.txt signature cannot be verified. Install
+cosign (https://docs.sigstore.dev/cosign/installation) so the signed checksums
+file can be verified against the pinned release identity, or re-run with
+EVM_TOOLS_SKIP_SIGNATURE=1 to accept an unauthenticated same-channel SHA-256
+check at your own risk."
+fi
+
+# Verify the archive's SHA-256 against the (now trusted) checksums file.
 echo "Verifying checksum ..." >&2
 expected="$(grep " ${archive}\$" "${tmp}/checksums.txt" | awk '{print $1}')"
 [ -n "$expected" ] || err "no checksum entry for ${archive}"
