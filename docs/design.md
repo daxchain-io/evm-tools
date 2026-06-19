@@ -345,8 +345,10 @@ evm-stream version
 `validate` loads and checks the configuration — including mTLS material and
 event/ABI resolution — and exits without connecting to monitor, which makes it
 useful in CI and pre-deploy. `stream.from_block` gives the stream an explicit
-starting point: a block number to replay from a known point, or `"latest"` to
-monitor only new activity.
+starting point: a block number to replay inclusively from a known point, or
+`"latest"` to monitor only new activity — strictly the blocks mined after
+startup (it begins at head+1, so the head block that already existed when the
+stream started is not re-emitted).
 
 ## evm-balance
 

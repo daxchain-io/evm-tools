@@ -18,10 +18,23 @@ package config
 // MetricsConfig is the shared/per-tool Prometheus endpoint configuration.
 // Tool-specific sections ([stream.metrics], [balance.metrics]) override the
 // shared [metrics] defaults.
+//
+// Enabled is a *bool so an unset tool-specific section (nil) is distinguishable
+// from one that is present and explicitly false. That distinction lets a
+// tool-specific [stream.metrics]/[balance.metrics] truly *override* the shared
+// [metrics] section — including disabling an endpoint the shared section enabled
+// — rather than only being able to turn it on. See [MetricsConfig.IsEnabled].
 type MetricsConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
+	Enabled *bool  `mapstructure:"enabled"`
 	Addr    string `mapstructure:"addr"`
 	Path    string `mapstructure:"path"`
+}
+
+// IsEnabled reports whether the section explicitly enables the endpoint. An
+// unset section (nil) reports false; callers that need to distinguish unset from
+// explicitly-false read the Enabled pointer directly.
+func (m MetricsConfig) IsEnabled() bool {
+	return m.Enabled != nil && *m.Enabled
 }
 
 // RPCConfig holds the shared HTTPS+mTLS RPC transport settings. The same

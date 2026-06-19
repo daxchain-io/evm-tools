@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -69,10 +71,23 @@ func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			if err := f.setupLogging(); err != nil {
 				return err
 			}
-			if err := f.decodeFor(cmd, tool); err != nil {
-				return err
+			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
+			// shutdown (finish the in-flight line, flush, stop the server).
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			cmd.SetContext(ctx)
+
+			switch tool {
+			case ToolStream:
+				return streamRun(cmd, f)
+			case ToolBalance:
+				if err := f.decodeFor(cmd, tool); err != nil {
+					return err
+				}
+				return errNotImplemented(tool, "run")
+			default:
+				return fmt.Errorf("unknown tool %q", tool)
 			}
-			return errNotImplemented(tool, "run")
 		},
 	}
 }
@@ -86,13 +101,19 @@ func newValidateCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			if err := f.setupLogging(); err != nil {
 				return err
 			}
-			// Config loading + strict decode already works in M0, so a typo in
-			// the tool's own section fails here. mTLS material and ABI
-			// resolution checks arrive with the transport in M1.
-			if err := f.decodeFor(cmd, tool); err != nil {
-				return err
+			switch tool {
+			case ToolStream:
+				return streamValidate(cmd, f)
+			case ToolBalance:
+				// Config loading + strict decode works; the balance-specific
+				// mTLS/ABI checks arrive in M2.
+				if err := f.decodeFor(cmd, tool); err != nil {
+					return err
+				}
+				return errNotImplemented(tool, "validate (mTLS/ABI checks)")
+			default:
+				return fmt.Errorf("unknown tool %q", tool)
 			}
-			return errNotImplemented(tool, "validate (mTLS/ABI checks)")
 		},
 	}
 }
@@ -114,10 +135,17 @@ func newCheckCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			if err := f.setupLogging(); err != nil {
 				return err
 			}
-			if err := f.decodeFor(cmd, tool); err != nil {
-				return err
+			switch tool {
+			case ToolStream:
+				return streamCheckRPC(cmd, f)
+			case ToolBalance:
+				if err := f.decodeFor(cmd, tool); err != nil {
+					return err
+				}
+				return errNotImplemented(tool, "check rpc")
+			default:
+				return fmt.Errorf("unknown tool %q", tool)
 			}
-			return errNotImplemented(tool, "check rpc")
 		},
 	})
 	return check

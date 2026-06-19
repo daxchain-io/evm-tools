@@ -57,25 +57,37 @@ in place — no real RPC logic yet.
 Goal: real monitoring end to end — connect, follow the head, emit decoded
 events and native transfers as JSONL, expose metrics.
 
-- [ ] `internal/rpc` — mTLS transport + JSON-RPC client (`eth_chainId`,
-      `eth_blockNumber`, `eth_getBlockByNumber`, `eth_getLogs`); fail-fast mTLS
-      validation; URL redaction on errors. → RPC Transport Security, Secret
-      Handling.
-- [ ] `internal/chain` — chain ID resolution, block/header helpers. → chain.
-- [ ] `internal/metrics` — registry + HTTP server; the stream metric set;
+- [x] `internal/rpc` — mTLS transport + JSON-RPC client (`eth_chainId`,
+      `eth_blockNumber`, `eth_getBlockByNumber`, `eth_getLogs`,
+      `eth_getTransactionReceipt`); fail-fast mTLS validation; URL redaction on
+      errors; coarse `error_type` classification. URL redaction preserves the
+      wrapped error chain (`redactedError` keeps `Unwrap`) so a token-bearing
+      transport failure still classifies as `connection_error` rather than
+      `unknown`; covered by an end-to-end refused-connection test. → RPC
+      Transport Security, Secret Handling.
+- [x] `internal/chain` — chain ID resolution (with JSON safe-integer guard),
+      block/header helpers. → chain.
+- [x] `internal/metrics` — registry + HTTP server; the stream metric set
+      (chain-health head-timestamp/age gauges wired from the head header each
+      poll; `blockchain_chain_finalized_block_number` is reserved and stays 0
+      until finality signaling lands — design Open Question 4);
       `/healthz` + `/readyz` (RPC + emit-blocked + lag), independent of scraping.
       → Metrics, RPC Health Checks.
-- [ ] `internal/stream` — event resolution (built-in ERC-20/721/1155 ABIs +
-      per-contract `abi`/`signatures` override), `topic0` match + ABI decode to
-      `params`; HTTP poll loop at `poll_interval`; chunked `eth_getLogs` backfill
-      (`log_chunk_blocks`) with gap-free handoff to head-following; native
-      transfer detection (status==1, contract-creation, optional from/to
-      allowlist); emit via `record`; lossless backpressure + `emit_blocked`
-      gauge; exponential-backoff retry; graceful shutdown. → evm-stream.
-- [ ] `check rpc` implemented (one-shot, exit codes). → RPC Health Checks.
-- [ ] Tests: unit (httptest + generated certs) in default run; live-node
-      (`anvil`/`geth --dev`) behind a build tag. → Testing.
-- [ ] **Acceptance:** against a local node, emits decoded events + native
+- [x] `internal/stream` — event resolution (built-in ERC-20/721/1155 ABIs +
+      per-contract `abi`/`abi_file`/`signatures` override), `topic0` match + ABI
+      decode to `params`; HTTP poll loop at `poll_interval`; chunked
+      `eth_getLogs` backfill (`log_chunk_blocks`) with gap-free handoff to
+      head-following; native transfer detection (status==1, contract-creation,
+      optional from/to allowlist); emit via `record`; lossless backpressure +
+      `emit_blocked` gauge updated by a concurrent watchdog so an in-flight
+      wedge (not just a completed write) grows the gauge and trips `/readyz`;
+      `from_block = "latest"` resolves to head+1 (strictly-new blocks);
+      exponential-backoff retry with jitter; graceful shutdown. → evm-stream.
+- [x] `check rpc` implemented (one-shot, redacted JSON status, exit codes). →
+      RPC Health Checks.
+- [x] Tests: unit (httptest + generated certs) in default run; live-node
+      (`anvil`/`geth --dev`) behind the `livenode` build tag. → Testing.
+- [x] **Acceptance:** against a local node, emits decoded events + native
       transfers as JSONL; metrics show progress/lag; `check rpc` exits correctly;
       `validate` catches bad config/ABIs.
 
@@ -113,3 +125,11 @@ Native transfer internal/trace transfers; ERC-721 ownership runtime; config
 reload (+ metric reset); reorg handling and the additive `finalized`/`removed`
 field; checkpointing/resume; the sinks (`evm-sink-kafka`, `evm-sink-webhook`)
 and the webhook sink's scope. See design [Open Questions](design.md#open-questions).
+
+Config value interpolation (`${VAR}`/`${VAR:-default}`/`$$`) and `_cmd` key
+resolution remain stubbed (M0 explicitly allowed this; not an M1 task). Until
+they land, a `_cmd` key is still rejected fatally by strict decode (`ErrorUnused`
+"invalid keys"), so a secret-fetching key is never silently dropped or run with a
+wrong value; the design's *specific* messages ("`_cmd` requires `--allow-exec`",
+"both `<field>` and `<field>_cmd` set") arrive with the interpolation/`_cmd`
+implementation per design [Secret Handling](design.md#secret-handling).

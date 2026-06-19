@@ -81,10 +81,12 @@ func TestHelpListsSharedFlags(t *testing.T) {
 	}
 }
 
-// TestRunNotImplemented verifies the scaffolded run path returns a clear
-// not-implemented error (after successfully loading defaults config).
+// TestRunNotImplemented verifies the still-scaffolded balance run path returns a
+// clear not-implemented error (after successfully loading defaults config).
+// evm-stream's run path is implemented in M1, so this exercises evm-balance,
+// which lands in M2.
 func TestRunNotImplemented(t *testing.T) {
-	_, err := run(t, ToolStream, "run", "--config", writeTempConfig(t))
+	_, err := run(t, ToolBalance, "run", "--config", writeTempConfig(t))
 	if err == nil {
 		t.Fatal("expected not-implemented error from run")
 	}

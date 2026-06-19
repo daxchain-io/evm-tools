@@ -89,7 +89,7 @@ func TestDecodeStream(t *testing.T) {
 	if got := cfg.Stream.Contracts[0].Events; len(got) != 2 || got[0] != "Transfer" {
 		t.Errorf("events = %v", got)
 	}
-	if !cfg.Stream.Metrics.Enabled || cfg.Stream.Metrics.Addr != ":9000" {
+	if !cfg.Stream.Metrics.IsEnabled() || cfg.Stream.Metrics.Addr != ":9000" {
 		t.Errorf("stream.metrics = %+v", cfg.Stream.Metrics)
 	}
 	if !cfg.Stream.NativeTransfers.Enabled {
