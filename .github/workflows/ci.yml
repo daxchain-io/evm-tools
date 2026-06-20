@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck install.sh scripts/cosign-sign.sh
+        run: shellcheck install.sh scripts/cosign-sign.sh scripts/brew-cask-smoke.sh
 
   goreleaser:
     name: GoReleaser check + snapshot
