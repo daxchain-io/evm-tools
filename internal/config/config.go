@@ -36,14 +36,19 @@ func (m MetricsConfig) IsEnabled() bool {
 	return m.Enabled != nil && *m.Enabled
 }
 
-// RPCConfig holds the shared HTTPS+mTLS RPC transport settings. The same
-// transport serves normal runs, balance polling, backfills, and health checks.
+// RPCConfig holds the shared HTTPS RPC transport settings. The same transport
+// serves normal runs, balance polling, backfills, and health checks. HTTPS uses
+// server-authenticated TLS by default; a client cert/key upgrades to mutual TLS
+// and RequireMTLS makes a missing client cert fail fast for private endpoints.
 type RPCConfig struct {
 	URL        string `mapstructure:"url"`
 	ClientCert string `mapstructure:"client_cert"`
 	ClientKey  string `mapstructure:"client_key"`
 	CACert     string `mapstructure:"ca_cert"`
 	ServerName string `mapstructure:"server_name"`
+	// RequireMTLS demands a client certificate/key for HTTPS endpoints (off by
+	// default). Set it for private nodes that mandate client authentication.
+	RequireMTLS bool `mapstructure:"require_mtls"`
 }
 
 // LogConfig controls the slog diagnostics emitted on stderr.

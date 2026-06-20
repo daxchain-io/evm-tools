@@ -8,10 +8,11 @@ import (
 // rpcTLSFromConfig maps the shared [rpc] config onto the transport's TLS config.
 func rpcTLSFromConfig(c config.RPCConfig) rpc.TLSConfig {
 	return rpc.TLSConfig{
-		ClientCert: c.ClientCert,
-		ClientKey:  c.ClientKey,
-		CACert:     c.CACert,
-		ServerName: c.ServerName,
+		ClientCert:  c.ClientCert,
+		ClientKey:   c.ClientKey,
+		CACert:      c.CACert,
+		ServerName:  c.ServerName,
+		RequireMTLS: c.RequireMTLS,
 	}
 }
 

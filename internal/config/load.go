@@ -51,13 +51,14 @@ type Options struct {
 // the explicit wiring the design calls for: env/flag binding to nested keys is
 // never automatic.
 var flagBindings = map[string]string{
-	"rpc-url":         "rpc.url",
-	"rpc-client-cert": "rpc.client_cert",
-	"rpc-client-key":  "rpc.client_key",
-	"rpc-ca-cert":     "rpc.ca_cert",
-	"rpc-server-name": "rpc.server_name",
-	"log-level":       "log.level",
-	"log-format":      "log.format",
+	"rpc-url":          "rpc.url",
+	"rpc-client-cert":  "rpc.client_cert",
+	"rpc-client-key":   "rpc.client_key",
+	"rpc-ca-cert":      "rpc.ca_cert",
+	"rpc-server-name":  "rpc.server_name",
+	"rpc-require-mtls": "rpc.require_mtls",
+	"log-level":        "log.level",
+	"log-format":       "log.format",
 
 	// evm-sink-kafka flags.
 	"brokers": "kafka.brokers",
@@ -130,6 +131,7 @@ func bindEnvKeys(v *viper.Viper) {
 	keys := []string{
 		"chain",
 		"rpc.url", "rpc.client_cert", "rpc.client_key", "rpc.ca_cert", "rpc.server_name",
+		"rpc.require_mtls",
 		"metrics.enabled", "metrics.addr", "metrics.path",
 		"log.level", "log.format",
 		"stream.metrics.enabled", "stream.metrics.addr", "stream.metrics.path",

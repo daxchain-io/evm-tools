@@ -167,10 +167,10 @@ func TestClientRPCError(t *testing.T) {
 	}
 }
 
-// TestMTLSRequiredFailFast verifies an HTTPS URL with no client cert/key fails
-// fast at construction.
-func TestMTLSRequiredFailFast(t *testing.T) {
-	_, err := New(Options{URL: "https://rpc.example.com:8545"})
+// TestRequireMTLSFailFast verifies that with RequireMTLS set, an HTTPS URL with
+// no client cert/key fails fast at construction.
+func TestRequireMTLSFailFast(t *testing.T) {
+	_, err := New(Options{URL: "https://rpc.example.com:8545", TLS: TLSConfig{RequireMTLS: true}})
 	if err == nil {
 		t.Fatal("expected mTLS-required error")
 	}
@@ -179,10 +179,72 @@ func TestMTLSRequiredFailFast(t *testing.T) {
 	}
 }
 
+// TestHTTPSAllowedWithoutMTLSByDefault verifies that a public HTTPS endpoint with
+// no client cert is accepted at construction (server-authenticated TLS) when
+// RequireMTLS is unset — the default that lets providers like Alchemy work.
+func TestHTTPSAllowedWithoutMTLSByDefault(t *testing.T) {
+	if _, err := New(Options{URL: "https://eth-mainnet.g.alchemy.example/v2/key"}); err != nil {
+		t.Fatalf("public https should not require mTLS by default: %v", err)
+	}
+}
+
+// TestPartialMTLSMaterialFailFast verifies that supplying only one half of the
+// client cert/key pair is a clear fail-fast error naming the missing side,
+// regardless of RequireMTLS.
+func TestPartialMTLSMaterialFailFast(t *testing.T) {
+	_, err := New(Options{URL: "https://rpc.example.com:8545", TLS: TLSConfig{ClientCert: "/some.crt"}})
+	if err == nil {
+		t.Fatal("expected error for missing client_key")
+	}
+	if !strings.Contains(err.Error(), "client_key is missing") {
+		t.Errorf("want client_key-missing error, got %v", err)
+	}
+}
+
 // TestHTTPAllowedWithoutMTLS verifies plain HTTP needs no certs (local dev).
 func TestHTTPAllowedWithoutMTLS(t *testing.T) {
 	if _, err := New(Options{URL: "http://localhost:8545"}); err != nil {
 		t.Fatalf("plain http should not require mTLS: %v", err)
+	}
+}
+
+// TestServerAuthHTTPSConnectsWithoutClientCert exercises the default server-auth
+// path over the wire: a TLS server that does NOT request a client certificate is
+// reached by a client carrying only the CA bundle and server-name override — no
+// client cert. This pins the public-provider path (and that CACert/ServerName
+// apply without mTLS material).
+func TestServerAuthHTTPSConnectsWithoutClientCert(t *testing.T) {
+	b := genCerts(t)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req rpcRequest
+		_ = json.Unmarshal(body, &req)
+		raw, _ := json.Marshal("0x1")
+		_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: raw})
+	}))
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{b.serverCert},
+		MinVersion:   tls.VersionTLS12,
+		// No ClientAuth: the server does not request a client certificate, like
+		// a public provider.
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	c, err := New(Options{
+		URL:     srv.URL,
+		TLS:     TLSConfig{CACert: b.caCertPath, ServerName: b.serverName},
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New (server-auth, no client cert): %v", err)
+	}
+	id, err := c.ChainID(context.Background())
+	if err != nil {
+		t.Fatalf("ChainID over server-auth TLS: %v", err)
+	}
+	if id != 1 {
+		t.Errorf("chain id = %d, want 1", id)
 	}
 }
 

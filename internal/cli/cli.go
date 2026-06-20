@@ -30,11 +30,12 @@ const (
 type sharedFlags struct {
 	configFile string
 
-	rpcURL        string
-	rpcClientCert string
-	rpcClientKey  string
-	rpcCACert     string
-	rpcServerName string
+	rpcURL         string
+	rpcClientCert  string
+	rpcClientKey   string
+	rpcCACert      string
+	rpcServerName  string
+	rpcRequireMTLS bool
 
 	metricsEnabled bool
 	metricsAddr    string
@@ -97,6 +98,7 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 	pf.StringVar(&f.rpcClientKey, "rpc-client-key", "", "path to the mTLS client private key")
 	pf.StringVar(&f.rpcCACert, "rpc-ca-cert", "", "path to a custom CA certificate bundle")
 	pf.StringVar(&f.rpcServerName, "rpc-server-name", "", "optional TLS server name override")
+	pf.BoolVar(&f.rpcRequireMTLS, "rpc-require-mtls", false, "require an mTLS client cert/key for HTTPS (off by default; public providers need none)")
 
 	pf.BoolVar(&f.metricsEnabled, "metrics", false, "enable the Prometheus metrics endpoint")
 	pf.StringVar(&f.metricsAddr, "metrics-addr", "", "metrics bind address, e.g. :9000")

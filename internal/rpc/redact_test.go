@@ -41,8 +41,13 @@ func TestRedactURL(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"strips query token", "https://rpc.example.com:8545?token=secret", "https://rpc.example.com:8545"},
-		{"strips userinfo", "https://user:pass@rpc.example.com:8545/path", "https://rpc.example.com:8545/path"},
-		{"keeps scheme host port path", "https://rpc.example.com:8545/v1/rpc", "https://rpc.example.com:8545/v1/rpc"},
+		{"strips userinfo and path", "https://user:pass@rpc.example.com:8545/path", "https://rpc.example.com:8545/[redacted]"},
+		{"redacts non-root path", "https://rpc.example.com:8545/v1/rpc", "https://rpc.example.com:8545/[redacted]"},
+		{"keeps bare host", "https://rpc.internal.example.com:8545", "https://rpc.internal.example.com:8545"},
+		{"keeps root path", "https://rpc.internal.example.com:8545/", "https://rpc.internal.example.com:8545/"},
+		{"redacts alchemy path key", "https://eth-mainnet.g.alchemy.com/v2/SUPERSECRETKEY", "https://eth-mainnet.g.alchemy.com/[redacted]"},
+		{"redacts infura path id", "https://mainnet.infura.io/v3/PROJECTSECRET", "https://mainnet.infura.io/[redacted]"},
+		{"redacts quicknode leading key", "https://x.quiknode.pro/QUICKSECRET/", "https://x.quiknode.pro/[redacted]"},
 		{"http allowed", "http://localhost:8545", "http://localhost:8545"},
 		{"unparseable", "://bad url with spaces and \x00", "[unparseable-url]"},
 	}

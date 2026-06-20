@@ -1,13 +1,15 @@
-// Package rpc provides the shared HTTPS+mTLS JSON-RPC transport and client used
-// by every tool in the suite: normal runs, balance polling, event backfills, and
+// Package rpc provides the shared HTTPS JSON-RPC transport and client used by
+// every tool in the suite: normal runs, balance polling, event backfills, and
 // one-shot health checks.
 //
-// mTLS is required for HTTPS endpoints and validated fail-fast at construction
-// (see [ErrMTLSRequired]); plain HTTP is allowed for local development. Every
-// diagnostic that names the endpoint runs it through [RedactURL] so a token in
-// rpc.url never reaches logs, errors, or metrics. RPC failures are reduced to
-// the coarse [ErrorType] categories so raw provider error text is never used as
-// a metric label.
+// HTTPS uses ordinary server-authenticated TLS, so public providers work with no
+// extra material; configuring a client cert/key upgrades the connection to mutual
+// TLS for private endpoints, and RequireMTLS makes a missing client cert fail
+// fast at construction (see [ErrMTLSRequired]). Plain HTTP is allowed for local
+// development. Every diagnostic that names the endpoint runs it through
+// [RedactURL] so a token in rpc.url never reaches logs, errors, or metrics. RPC
+// failures are reduced to the coarse [ErrorType] categories so raw provider error
+// text is never used as a metric label.
 package rpc
 
 import (
@@ -51,7 +53,7 @@ const (
 // ignored. The observer must not retain or log secret-bearing values.
 type CallObserver func(operation string, dur time.Duration, et ErrorType)
 
-// Client is a minimal Ethereum JSON-RPC client over the shared mTLS transport.
+// Client is a minimal Ethereum JSON-RPC client over the shared TLS transport.
 // It is safe for concurrent use.
 type Client struct {
 	url    string // raw URL (carries any token); never logged directly
@@ -69,7 +71,8 @@ type Options struct {
 	Observer CallObserver  // optional metrics hook
 }
 
-// New builds a Client, performing fail-fast mTLS validation for HTTPS URLs.
+// New builds a Client, validating the TLS material for HTTPS URLs fail-fast
+// (loading any client cert/key, honoring RequireMTLS).
 func New(opts Options) (*Client, error) {
 	if opts.URL == "" {
 		return nil, errors.New("rpc: url is required")
