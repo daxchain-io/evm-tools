@@ -70,13 +70,9 @@ RUBY
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_INSTALL_CLEANUP=1
 export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
-export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-evm-tools CI}"
-export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-ci@daxchain.io}"
-export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-evm-tools CI}"
-export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-ci@daxchain.io}"
 
 brew untap "$TAP_NAME" >/dev/null 2>&1 || true
-brew tap-new "$TAP_NAME" >/dev/null
+brew tap-new --no-git "$TAP_NAME" >/dev/null
 tapped=1
 
 tap_dir="$(brew --repo "$TAP_NAME")"
