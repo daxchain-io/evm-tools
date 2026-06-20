@@ -62,6 +62,10 @@ func (s *Stream) IncEventRecord(contractName, contractAddr, eventName string) {
 	s.contractEventRecords.WithLabelValues(contractName, contractAddr, eventName).Inc()
 }
 
+// IncSkippedLog counts one filter-matched log that could not be decoded to the
+// configured event ABI (skipped, not emitted).
+func (s *Stream) IncSkippedLog() { s.skippedLogs.Inc() }
+
 // IncNativeTransferRecord counts one emitted native transfer record.
 func (s *Stream) IncNativeTransferRecord() {
 	s.recordsEmitted.Inc()

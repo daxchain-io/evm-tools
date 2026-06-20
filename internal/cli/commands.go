@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +12,32 @@ import (
 	"github.com/daxchain-io/evm-tools/internal/config"
 	"github.com/daxchain-io/evm-tools/internal/logging"
 )
+
+// signalContext returns a context cancelled on the first SIGINT/SIGTERM (which
+// drives graceful shutdown) and forces an immediate os.Exit(1) on a SECOND
+// signal — an escape hatch so a wedged graceful shutdown can be stopped without
+// resorting to SIGKILL. The returned stop releases the handler; on a clean
+// completion (no signal) the watcher goroutine exits via ctx cancellation
+// without leaking.
+func signalContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Cancelled without a signal (clean completion); stop listening.
+		case <-sigCh:
+			cancel() // first signal: begin graceful shutdown
+			<-sigCh  // second signal: hard exit
+			os.Exit(1)
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(sigCh)
+		cancel()
+	}
+}
 
 // allowExec resolves the effective --allow-exec value, honoring the
 // EVM_TOOLS_ALLOW_EXEC=1 environment fallback.
@@ -53,8 +80,9 @@ func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			// and bypassing graceful shutdown / the final flush.
 			signal.Ignore(syscall.SIGPIPE)
 			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
-			// shutdown (finish the in-flight line, flush, stop the server).
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			// shutdown (finish the in-flight line, flush, stop the server); a
+			// second signal force-exits a wedged shutdown.
+			ctx, stop := signalContext(cmd.Context())
 			defer stop()
 			cmd.SetContext(ctx)
 

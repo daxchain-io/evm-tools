@@ -3,8 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -145,8 +143,9 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return err
 			}
 			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
-			// shutdown (stop reading, flush/close the writer, stop the server).
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			// shutdown (stop reading, flush/close the writer, stop the server); a
+			// second signal force-exits a wedged shutdown.
+			ctx, stop := signalContext(cmd.Context())
 			defer stop()
 			cmd.SetContext(ctx)
 

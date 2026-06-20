@@ -46,6 +46,7 @@ type Metrics interface {
 	SetEmitBlockedSeconds(sec float64)
 	IncEventRecord(contractName, contractAddr, eventName string)
 	IncNativeTransferRecord()
+	IncSkippedLog()
 	IncReconnects()
 	ObserveLoop(d time.Duration)
 	SetConsecutiveFailures(n int)
@@ -114,6 +115,11 @@ type Stream struct {
 	// backward step (an RPC endpoint serving a stale/load-balanced lagging node).
 	// Accessed only from the single Run goroutine.
 	lastHead uint64
+
+	// skippedSeen tracks (contract|event) pairs already warned about for an
+	// undecodable log, so the warning is logged once per pair (then debug) rather
+	// than flooding stderr on every matched log. Single-goroutine access.
+	skippedSeen map[string]bool
 }
 
 // New builds a Stream from resolved options. It validates the derived state but
@@ -161,6 +167,7 @@ func New(opts Options) (*Stream, error) {
 		log:         logger,
 		now:         nowFn,
 		byAddrTopic: map[string]map[string]eventABI{},
+		skippedSeen: map[string]bool{},
 	}
 	topicSeen := map[string]bool{}
 	for _, c := range opts.Contracts {
@@ -448,12 +455,24 @@ func (s *Stream) emitLog(l rpc.Log) error {
 
 	params, err := decodeLog(ev, l)
 	if err != nil {
-		s.log.Warn("skipping undecodable log",
-			"contract", l.Address,
-			"event", ev.Name,
-			"block", l.BlockNumber,
-			"error", err.Error(),
-		)
+		// Count every skip so the condition is observable without log volume, then
+		// warn only once per (contract,event) — a busy contract whose on-chain logs
+		// don't match the configured ABI would otherwise flood stderr at one line
+		// per matched log. Subsequent occurrences drop to debug.
+		s.opts.Metrics.IncSkippedLog()
+		key := strings.ToLower(l.Address) + "|" + ev.Name
+		if !s.skippedSeen[key] {
+			s.skippedSeen[key] = true
+			s.log.Warn("skipping undecodable log (further occurrences for this contract+event are logged at debug)",
+				"contract", l.Address,
+				"event", ev.Name,
+				"block", l.BlockNumber,
+				"error", err.Error(),
+			)
+		} else {
+			s.log.Debug("skipping undecodable log",
+				"contract", l.Address, "event", ev.Name, "block", l.BlockNumber)
+		}
 		return nil // a single bad log must not stall the stream
 	}
 

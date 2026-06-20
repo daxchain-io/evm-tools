@@ -75,6 +75,7 @@ type Stream struct {
 	eventRecordsEmitted   prometheus.Counter
 	contractEventRecords  *prometheus.CounterVec
 	nativeTransferRecords prometheus.Counter
+	skippedLogs           prometheus.Counter
 	reorgsDetected        prometheus.Counter
 	reconnects            prometheus.Counter
 
@@ -140,6 +141,7 @@ func NewStream(chainName, chainID string) *Stream {
 	s.recordsEmitted = c("evm_stream_records_emitted_total", "Total JSONL records emitted.")
 	s.eventRecordsEmitted = c("evm_stream_event_records_emitted_total", "Contract event records emitted.")
 	s.nativeTransferRecords = c("evm_stream_native_transfer_records_emitted_total", "Native transfer records emitted.")
+	s.skippedLogs = c("evm_stream_logs_skipped_total", "Logs matched by the filter but not decodable to the configured event ABI (skipped, not emitted) — a signal of an ABI/config mismatch.")
 	s.reorgsDetected = c("evm_stream_reorgs_detected_total", "Detected chain reorganizations.")
 	s.reconnects = c("evm_stream_reconnects_total", "RPC reconnects after transport errors.")
 

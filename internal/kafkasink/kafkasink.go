@@ -251,12 +251,18 @@ func (s *Sink) Run(ctx context.Context) (err error) {
 		if ctx.Err() != nil {
 			return nil
 		}
-		env, err := s.opts.Reader.Next()
+		// NextCtx makes the blocking read cancellable so a signal stops an idle
+		// sink promptly (rather than blocking until stdin closes); it returns a
+		// private copy of the raw bytes, valid across the retry/backoff below.
+		env, value, err := s.opts.Reader.NextCtx(ctx)
 		if errors.Is(err, io.EOF) {
 			s.log.Info("stdin closed; all records published")
 			return nil
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil // signal during a blocked read: clean stop
+			}
 			// A malformed line or unsupported schema is permanent: the stream is
 			// the contract, so we fail fast rather than skip a record.
 			return fmt.Errorf("read record: %w", err)
@@ -268,9 +274,6 @@ func (s *Sink) Run(ctx context.Context) (err error) {
 			return rerr
 		}
 
-		// Copy the raw bytes: Reader.Raw is valid only until the next Next, and a
-		// retry loop holds it across backoff sleeps.
-		value := append([]byte(nil), s.opts.Reader.Raw()...)
 		msg := Message{Topic: topic, Key: key, Value: value}
 
 		published, err := s.publishWithRetry(ctx, msg)

@@ -2,6 +2,7 @@ package record
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,19 @@ type Reader struct {
 	// sink that forwards the original payload verbatim) can reuse them without
 	// re-encoding.
 	raw []byte
+
+	// reqCh/resCh drive the single background reader goroutine that NextCtx uses
+	// to make a blocking read cancellable. Lazily created on first NextCtx use.
+	reqCh chan struct{}
+	resCh chan readResult
+}
+
+// readResult is one cancellable-read outcome: the decoded envelope, a private
+// copy of its raw bytes, and any error.
+type readResult struct {
+	env Envelope
+	raw []byte
+	err error
 }
 
 // maxLineBytes bounds a single JSONL line. Records are descriptive but bounded;
@@ -107,6 +121,52 @@ func (r *Reader) Next() (Envelope, error) {
 // POST the original payload byte-for-byte rather than a re-encoding that might
 // reorder fields.
 func (r *Reader) Raw() []byte { return r.raw }
+
+// NextCtx behaves like Next but returns ctx.Err() promptly if ctx is cancelled
+// while a read is blocked, so a signal stops an idle sink instead of waiting for
+// stdin to close. It returns the decoded envelope and a private copy of its raw
+// bytes (valid independently of any later call). The blocking read runs in a
+// single background goroutine started on first use; a blocked OS read cannot be
+// interrupted, so on cancellation that goroutine is abandoned and exits when the
+// underlying stream finally yields a line or closes. NextCtx must be called from
+// a single goroutine (like Next); do not mix Next and NextCtx on one Reader.
+func (r *Reader) NextCtx(ctx context.Context) (Envelope, []byte, error) {
+	if r.reqCh == nil {
+		r.reqCh = make(chan struct{})
+		r.resCh = make(chan readResult, 1) // buffered so an abandoned read can finish
+		go r.readLoop()
+	}
+	select {
+	case <-ctx.Done():
+		return Envelope{}, nil, ctx.Err()
+	case r.reqCh <- struct{}{}:
+	}
+	select {
+	case <-ctx.Done():
+		return Envelope{}, nil, ctx.Err()
+	case res := <-r.resCh:
+		// res.raw is a private copy; callers use it directly (not Raw()), so only
+		// the reader goroutine ever touches r.raw — no cross-goroutine access.
+		return res.env, res.raw, res.err
+	}
+}
+
+// readLoop serves NextCtx requests: one blocking Next per request, returning the
+// result on resCh with a private copy of the raw bytes. It exits after the first
+// EOF/error (no further reads are possible).
+func (r *Reader) readLoop() {
+	for range r.reqCh {
+		env, err := r.Next()
+		var raw []byte
+		if err == nil {
+			raw = append([]byte(nil), r.raw...)
+		}
+		r.resCh <- readResult{env: env, raw: raw, err: err}
+		if err != nil {
+			return
+		}
+	}
+}
 
 // trimSpace trims ASCII whitespace from both ends of b without allocating.
 func trimSpace(b []byte) []byte {

@@ -116,6 +116,7 @@ func (noopMetrics) SetLastEmittedBlock(uint64)            {}
 func (noopMetrics) SetLagBlocks(uint64)                   {}
 func (noopMetrics) SetEmitBlockedSeconds(float64)         {}
 func (noopMetrics) IncEventRecord(string, string, string) {}
+func (noopMetrics) IncSkippedLog()                        {}
 func (noopMetrics) IncNativeTransferRecord()              {}
 func (noopMetrics) IncReconnects()                        {}
 func (noopMetrics) ObserveLoop(time.Duration)             {}
