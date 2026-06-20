@@ -135,6 +135,7 @@ func bindEnvKeys(v *viper.Viper) {
 		"stream.metrics.enabled", "stream.metrics.addr", "stream.metrics.path",
 		"balance.metrics.enabled", "balance.metrics.addr", "balance.metrics.path",
 		"kafka.brokers", "kafka.topic", "kafka.partition_key", "kafka.required_acks",
+		"kafka.readiness_probe_interval",
 		"kafka.sasl.mechanism", "kafka.sasl.username", "kafka.sasl.password",
 		"kafka.tls.enabled", "kafka.tls.ca_cert", "kafka.tls.client_cert",
 		"kafka.tls.client_key", "kafka.tls.server_name",
@@ -193,6 +194,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kafka.backoff_base", "500ms")
 	v.SetDefault("kafka.backoff_max", "30s")
 	v.SetDefault("kafka.batch_timeout", "200ms")
+	v.SetDefault("kafka.readiness_probe_interval", "15s")
 	v.SetDefault("kafka.metrics.path", "/metrics")
 	v.SetDefault("kafka.metrics.addr", ":9002")
 

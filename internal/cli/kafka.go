@@ -76,14 +76,15 @@ func kafkaRun(cmd *cobra.Command, f *sinkFlags) error {
 
 	reader := record.NewReader(cmd.InOrStdin())
 	sink, err := kafkasink.New(kafkasink.Options{
-		Reader:      reader,
-		Publisher:   pub,
-		Router:      resolved.Router,
-		Metrics:     m,
-		Health:      health,
-		Logger:      logger,
-		BackoffBase: resolved.BackoffBase,
-		BackoffMax:  resolved.BackoffMax,
+		Reader:        reader,
+		Publisher:     pub,
+		Router:        resolved.Router,
+		Metrics:       m,
+		Health:        health,
+		Logger:        logger,
+		BackoffBase:   resolved.BackoffBase,
+		BackoffMax:    resolved.BackoffMax,
+		ProbeInterval: resolved.ProbeInterval,
 	})
 	if err != nil {
 		return err
@@ -134,10 +135,11 @@ func kafkaValidate(cmd *cobra.Command, f *sinkFlags) error {
 
 // resolvedKafka is the validated, ready-to-run kafka sink configuration.
 type resolvedKafka struct {
-	Router      *kafkasink.Router
-	Writer      kafkasink.WriterConfig
-	BackoffBase time.Duration
-	BackoffMax  time.Duration
+	Router        *kafkasink.Router
+	Writer        kafkasink.WriterConfig
+	BackoffBase   time.Duration
+	BackoffMax    time.Duration
+	ProbeInterval time.Duration
 }
 
 // validateKafka applies the cross-field invariants strict decoding cannot
@@ -174,6 +176,10 @@ func validateKafka(cfg *config.KafkaFull) (resolvedKafka, error) {
 	if err != nil {
 		return resolvedKafka{}, err
 	}
+	probeInterval, err := parseProbeInterval(k.ReadinessProbeInterval, 15*time.Second, "kafka.readiness_probe_interval")
+	if err != nil {
+		return resolvedKafka{}, err
+	}
 
 	// SASL must run over TLS; default TLS on when a mechanism is set unless the
 	// operator explicitly turned it off (a deliberate, flagged decision).
@@ -197,13 +203,15 @@ func validateKafka(cfg *config.KafkaFull) (resolvedKafka, error) {
 		TLSServerName:         k.TLS.ServerName,
 		TLSInsecureSkipVerify: k.TLS.InsecureSkipVerify,
 		DialTimeout:           10 * time.Second,
+		Topics:                topicSet(k.Topic, k.TopicByType),
 	}
 
 	return resolvedKafka{
-		Router:      router,
-		Writer:      wc,
-		BackoffBase: backoffBase,
-		BackoffMax:  backoffMax,
+		Router:        router,
+		Writer:        wc,
+		BackoffBase:   backoffBase,
+		BackoffMax:    backoffMax,
+		ProbeInterval: probeInterval,
 	}, nil
 }
 
@@ -271,4 +279,45 @@ func parseDurationDefault(s string, def time.Duration, name string) (time.Durati
 		return 0, fmt.Errorf("%s: duration must be positive, got %q", name, s)
 	}
 	return d, nil
+}
+
+// parseProbeInterval parses the readiness-probe interval. Empty uses def;
+// "0"/"0s"/"off"/"none"/"disabled" returns 0 (probe disabled); anything else
+// must be a positive duration.
+func parseProbeInterval(s string, def time.Duration, name string) (time.Duration, error) {
+	t := strings.ToLower(strings.TrimSpace(s))
+	switch t {
+	case "":
+		return def, nil
+	case "0", "0s", "off", "none", "disabled":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(t)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", name, s, err)
+	}
+	if d <= 0 {
+		return 0, nil
+	}
+	return d, nil
+}
+
+// topicSet returns the deduped, non-empty set of topics the sink may write to:
+// the default topic plus every per-type override. Used to scope the readiness
+// probe's metadata request to exactly what the sink produces to.
+func topicSet(defaultTopic string, byType map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	add(defaultTopic)
+	for _, t := range byType {
+		add(t)
+	}
+	return out
 }

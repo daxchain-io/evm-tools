@@ -195,6 +195,11 @@ type KafkaConfig struct {
 	// BatchTimeout bounds how long the writer waits to fill a batch before
 	// flushing; kept small so a low-volume stream still confirms promptly.
 	BatchTimeout string `mapstructure:"batch_timeout"`
+	// ReadinessProbeInterval is how often an active broker-reachability probe
+	// refreshes /readyz while idle (no records flowing). A duration like "15s"
+	// (the default); "0" or "off" disables it, after which readiness follows
+	// publish outcomes only.
+	ReadinessProbeInterval string `mapstructure:"readiness_probe_interval"`
 
 	SASL    KafkaSASLConfig `mapstructure:"sasl"`
 	TLS     KafkaTLSConfig  `mapstructure:"tls"`

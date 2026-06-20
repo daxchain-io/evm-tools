@@ -26,6 +26,11 @@ type fakePublisher struct {
 	failErr   error
 	// calls counts every Publish invocation (including failures).
 	calls int
+
+	// reachableErr is returned by Reachable (nil = broker reachable); probes
+	// counts how many times the active probe called it.
+	reachableErr error
+	probes       int
 }
 
 func (f *fakePublisher) Publish(_ context.Context, msg Message) error {
@@ -47,6 +52,19 @@ func (f *fakePublisher) Close() error {
 	defer f.mu.Unlock()
 	f.closed = true
 	return nil
+}
+
+func (f *fakePublisher) Reachable(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probes++
+	return f.reachableErr
+}
+
+func (f *fakePublisher) probeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.probes
 }
 
 func (f *fakePublisher) snapshot() []Message {
@@ -331,7 +349,8 @@ func (b *blockingPublisher) Publish(ctx context.Context, _ Message) error {
 	b.mu.Unlock()
 	return nil
 }
-func (b *blockingPublisher) Close() error { return nil }
+func (b *blockingPublisher) Close() error                    { return nil }
+func (b *blockingPublisher) Reachable(context.Context) error { return nil }
 func (b *blockingPublisher) inflight() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -341,6 +360,120 @@ func (b *blockingPublisher) completed() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.done
+}
+
+// probeHealth captures readiness updates for the active-probe tests.
+type probeHealth struct {
+	mu        sync.Mutex
+	reachable bool
+	sets      int
+}
+
+func (h *probeHealth) SetPublishBlocked(time.Duration) {}
+func (h *probeHealth) SetBrokerReachable(v bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reachable = v
+	h.sets++
+}
+func (h *probeHealth) lastReachable() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reachable
+}
+func (h *probeHealth) setCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sets
+}
+
+func newProbeSink(t *testing.T, pub Publisher, h Healther) *Sink {
+	t.Helper()
+	s, err := New(Options{
+		Reader:        record.NewReader(strings.NewReader("")),
+		Publisher:     pub,
+		Router:        newRouterOrFatal(t, "evm.events", nil, PartitionIdentity),
+		Health:        h,
+		ProbeInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return s
+}
+
+// TestProbeOnceSetsReachable verifies a single active probe maps a healthy/failed
+// broker check to readiness, independent of any publish.
+func TestProbeOnceSetsReachable(t *testing.T) {
+	h := &probeHealth{}
+	pub := &fakePublisher{}
+	s := newProbeSink(t, pub, h)
+
+	s.probeOnce(context.Background())
+	if !h.lastReachable() {
+		t.Error("a healthy broker probe should set reachable=true")
+	}
+	if pub.probeCount() != 1 {
+		t.Errorf("expected 1 probe call, got %d", pub.probeCount())
+	}
+
+	pub.reachableErr = errors.New("dial tcp: connection refused")
+	s.probeOnce(context.Background())
+	if h.lastReachable() {
+		t.Error("an unreachable broker probe should set reachable=false")
+	}
+}
+
+// TestProbeLoopImmediateAndStops verifies the loop probes once immediately (so
+// startup readiness is live without waiting a tick) and exits on cancel.
+func TestProbeLoopImmediateAndStops(t *testing.T) {
+	h := &probeHealth{}
+	pub := &fakePublisher{}
+	s := newProbeSink(t, pub, h)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.probeLoop(ctx); close(done) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for h.setCount() < 1 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if h.setCount() < 1 {
+		t.Fatal("probeLoop did not perform the immediate probe")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probeLoop did not stop on cancel")
+	}
+}
+
+// TestRunWithProbeEnabled verifies Run cleanly starts and joins the probe
+// goroutine (no hang/leak) while still publishing, and that the probe ran.
+func TestRunWithProbeEnabled(t *testing.T) {
+	h := &probeHealth{}
+	pub := &fakePublisher{}
+	s, err := New(Options{
+		Reader:        record.NewReader(strings.NewReader(streamFrom(t, eventEnv("0x1", 0)))),
+		Publisher:     pub,
+		Router:        newRouterOrFatal(t, "evm.events", nil, PartitionIdentity),
+		Health:        h,
+		ProbeInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := len(pub.snapshot()); got != 1 {
+		t.Errorf("expected 1 published record, got %d", got)
+	}
+	if pub.probeCount() < 1 {
+		t.Errorf("expected the active probe to run at least once, got %d", pub.probeCount())
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {

@@ -45,7 +45,8 @@ func (f *cliFakePublisher) Publish(_ context.Context, msg kafkasink.Message) err
 	})
 	return nil
 }
-func (f *cliFakePublisher) Close() error { return nil }
+func (f *cliFakePublisher) Close() error                    { return nil }
+func (f *cliFakePublisher) Reachable(context.Context) error { return nil }
 func (f *cliFakePublisher) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

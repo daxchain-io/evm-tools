@@ -41,6 +41,12 @@ type WriterConfig struct {
 	// DialTimeout bounds connection establishment (TLS handshake + SASL). Zero
 	// uses the kafka-go default.
 	DialTimeout time.Duration
+
+	// Topics the sink may write to (the default topic plus per-type overrides).
+	// The readiness probe requests metadata for exactly these, so it verifies the
+	// brokers and that the sink's own topics are reachable/authorized; an empty
+	// set asks for all-cluster metadata.
+	Topics []string
 }
 
 // kafkaWriter is the real Publisher backed by a segmentio/kafka-go *Writer with
@@ -48,7 +54,8 @@ type WriterConfig struct {
 // write, which is what gives the sink its at-least-once confirm-before-advance
 // guarantee.
 type kafkaWriter struct {
-	w *kafka.Writer
+	w      *kafka.Writer
+	topics []string
 }
 
 // NewKafkaPublisher builds the real kafka-go-backed Publisher. It validates and
@@ -104,7 +111,18 @@ func NewKafkaPublisher(cfg WriterConfig) (Publisher, error) {
 		// the configured topic routing.
 		AllowAutoTopicCreation: false,
 	}
-	return &kafkaWriter{w: w}, nil
+	return &kafkaWriter{w: w, topics: cfg.Topics}, nil
+}
+
+// Reachable issues a metadata request to confirm the broker cluster answers
+// (TCP + TLS + SASL handshake + a metadata response). It is read-only and used
+// by the sink's active readiness probe; a nil error means the cluster is
+// reachable. Metadata is scoped to the configured topics so an ACL-restricted
+// cluster still answers; an empty topic set asks for all-cluster metadata.
+func (k *kafkaWriter) Reachable(ctx context.Context) error {
+	client := &kafka.Client{Addr: k.w.Addr, Transport: k.w.Transport}
+	_, err := client.Metadata(ctx, &kafka.MetadataRequest{Topics: k.topics})
+	return err
 }
 
 // Publish writes one message and blocks until the broker acknowledges it (or the
