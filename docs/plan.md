@@ -346,13 +346,51 @@ product decisions.
       passes; `Dockerfile` builds and all four binaries run in the image;
       `hadolint` clean; docs render and lint.
 
+## S4 — evm-sink-file
+
+Goal: a local-file sink — read the suite's JSONL contract on stdin and append each
+record to a rotating file with at-least-once durability. Earns its place over a
+shell `> file` redirect with rotation, gzip compression, retention, filters, and
+the suite's health/metrics surface. Reuses the shared JSONL `record.Reader` and
+the sink command tree from S1/S2.
+
+- [x] **`internal/filesink` core** — a rotating `Writer` (`writer.go`:
+      size+age rotation, line-atomic single-syscall appends, optional per-line
+      fsync, best-effort gzip of rotated segments via temp-file rename, `max_backups`
+      pruning, parent-dir creation, append-on-resume); a type/name `Filter`
+      (`filter.go`); and the `Sink` run loop (`filesink.go`) with at-least-once
+      delivery — confirm-before-advance, blocking backoff on a transient full disk
+      (`ENOSPC`/`EDQUOT`), fail-fast on any other (permanent) write error.
+- [x] **`internal/metrics` File set** (`file.go`, `file_setters.go`): records
+      consumed/filtered/written/failed, write-duration histogram, retry/backoff/
+      blocked gauges, a rotations counter, current-file-size gauge, and a
+      `FileHealth` adapter mapping writability/write-blocked onto the shared
+      `/readyz`.
+- [x] **`cmd/evm-sink-file` + sink CLI** (`internal/cli/file.go`, reusing
+      `internal/cli/sink.go`): the same sink-shaped command tree (run, validate,
+      version) with a `--path` flag; `[file]` config (`config.go`/`decode.go`/
+      `load.go`, flag+env bindings, `:9004` metrics default).
+- [x] **Tests**: writer rotation (size/age), gzip+integrity, max_backups prune,
+      empty/oversize-line guards, resume; filter type/name; sink run loop
+      (write/filter, clean EOF, malformed/unsupported-schema fail-fast, permanent
+      fail-fast, transient retry, context-cancel clean stop); CLI version/help/
+      validate/run (real temp dir) + filter run. Verified `-race`.
+- [x] **Release**: `evm-sink-file` build + archive + Homebrew cask in
+      `.goreleaser.yaml`; `install.sh` and README/`docs/design.md` updated to the
+      five-CLI suite. → Tool Suite, Configuration, Release and Distribution.
+- [x] **Acceptance:** build/vet/test/lint green; `goreleaser check` passes;
+      `evm-sink-file --help`/`version` work; validate catches a missing path / bad
+      rotation interval; real-binary rotation+gzip+prune verified against a >1 MB
+      stream.
+
 ## Deferred (post-spine, per design)
 
 Native transfer internal/trace transfers; config reload (+ metric reset); reorg
 handling and the additive `finalized`/`removed` field; checkpointing/resume. See
 design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
 runtime is done — see M4; the `evm-sink-kafka` sink is done — see S1; the
-`evm-sink-webhook` sink is done — see S2.)
+`evm-sink-webhook` sink is done — see S2; the `evm-sink-file` sink is done — see
+S4.)
 
 ## Post-M4 follow-ups
 

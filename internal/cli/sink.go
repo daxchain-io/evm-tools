@@ -23,6 +23,7 @@ type SinkTool string
 const (
 	ToolSinkKafka   SinkTool = "evm-sink-kafka"
 	ToolSinkWebhook SinkTool = "evm-sink-webhook"
+	ToolSinkFile    SinkTool = "evm-sink-file"
 )
 
 // sinkFlags holds the values bound to a sink's persistent flag set: the shared
@@ -46,6 +47,9 @@ type sinkFlags struct {
 
 	// Webhook-specific.
 	url string
+
+	// File-specific.
+	path string
 }
 
 // sinkShortDesc returns the one-line description for a sink.
@@ -55,6 +59,8 @@ func (t SinkTool) sinkShortDesc() string {
 		return "Publish JSONL records from stdin to Kafka topics (at-least-once)"
 	case ToolSinkWebhook:
 		return "Forward JSONL records from stdin to an HTTP endpoint (at-least-once, optional filters)"
+	case ToolSinkFile:
+		return "Append JSONL records from stdin to a rotating local file (at-least-once, optional filters)"
 	default:
 		return "An evm-tools sink"
 	}
@@ -81,6 +87,8 @@ func NewSinkRootCommand(tool SinkTool) *cobra.Command {
 		bindKafkaFlags(root, flags)
 	case ToolSinkWebhook:
 		bindWebhookFlags(root, flags)
+	case ToolSinkFile:
+		bindFileFlags(root, flags)
 	}
 
 	root.AddCommand(
@@ -121,6 +129,12 @@ func bindWebhookFlags(root *cobra.Command, f *sinkFlags) {
 	pf.StringVar(&f.url, "url", "", "webhook URL to POST each record to, e.g. https://hooks.example.com/evm")
 }
 
+// bindFileFlags installs the evm-sink-file-specific flags.
+func bindFileFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringVar(&f.path, "path", "", "output file path, e.g. /var/log/evm-tools/events.jsonl")
+}
+
 func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
@@ -141,6 +155,8 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return kafkaRun(cmd, f)
 			case ToolSinkWebhook:
 				return webhookRun(cmd, f)
+			case ToolSinkFile:
+				return fileRun(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
@@ -162,6 +178,8 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return kafkaValidate(cmd, f)
 			case ToolSinkWebhook:
 				return webhookValidate(cmd, f)
+			case ToolSinkFile:
+				return fileValidate(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}

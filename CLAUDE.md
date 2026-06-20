@@ -8,9 +8,9 @@ is the short version of how to work here.
 
 `evm-tools` is a Go monorepo of composable CLIs for observing EVM chains.
 Producers (`evm-stream`, `evm-balance`) emit newline-delimited
-JSON to stdout; downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`, roadmap)
-consume it. Module path: `github.com/daxchain-io/evm-tools`. Go 1.22+ (toolchain
-pinned in `go.mod`).
+JSON to stdout; downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`,
+`evm-sink-file`) consume it. Module path: `github.com/daxchain-io/evm-tools`.
+Go 1.22+ (toolchain pinned in `go.mod`).
 
 ## Commands
 
@@ -28,16 +28,20 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 
 ## Layout
 
-- `cmd/<tool>/` — thin entrypoints (`evm-stream`, `evm-balance`).
+- `cmd/<tool>/` — thin entrypoints (`evm-stream`, `evm-balance`,
+  `evm-sink-kafka`, `evm-sink-webhook`, `evm-sink-file`).
 - `internal/record` — the JSONL contract: envelope + record types + the
-  synchronized encoder. **Source of truth.**
+  synchronized encoder/reader. **Source of truth.**
 - `internal/config` — Viper/TOML load, precedence, interpolation/`_cmd`,
   per-tool decode.
-- `internal/rpc` — mTLS RPC transport + client.
+- `internal/rpc` — TLS RPC transport + client (server-auth by default, optional mTLS).
 - `internal/metrics` — Prometheus registry + HTTP server + health endpoints.
 - `internal/chain` — chain metadata + block helpers.
 - `internal/buildinfo` — version stamped via `-ldflags`.
-- `internal/stream`, `internal/balance` — per-tool core logic.
+- `internal/cli` — shared Cobra command trees for producers and sinks.
+- `internal/stream`, `internal/balance` — producer core logic.
+- `internal/kafkasink`, `internal/webhooksink`, `internal/filesink` — sink core
+  logic (`filesink` = rotating writer + filter + at-least-once run loop).
 
 ## Load-bearing conventions
 
@@ -48,9 +52,12 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
   to stdout directly from a monitor goroutine.
 - **stdout is data, stderr is humans.** Diagnostics use `log/slog` on stderr
   (`--log-level`, `--log-format`). Never print logs to stdout.
-- **mTLS is required** for HTTPS RPC; fail fast on missing/invalid material.
-  **Never log secrets** — redact RPC URLs (strip query/userinfo), don't echo
-  `${VAR}`/`_cmd` values, and keep secrets out of metric labels.
+- **TLS for HTTPS RPC; mTLS when configured.** Public endpoints use server-auth
+  TLS (no client cert); a `client_cert`/`client_key` pair upgrades to mTLS, and
+  `require_mtls` (or `--rpc-require-mtls`) makes a missing client cert fail fast
+  for private nodes. Fail fast on invalid/partial material. **Never log secrets**
+  — redact RPC URLs (strip query/userinfo), don't echo `${VAR}`/`_cmd` values,
+  and keep secrets out of metric labels.
 - **Lossless backpressure.** When stdout blocks, propagate it upstream; never
   drop records or buffer unbounded.
 - **Metric naming:** counters end `_total`, gauges are bare, durations are

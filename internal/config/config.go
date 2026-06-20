@@ -278,6 +278,51 @@ type WebhookConfig struct {
 	Metrics MetricsConfig     `mapstructure:"metrics"`
 }
 
+// FileFilters scopes which records the file sink writes. By default every record
+// is written; these optional allow/deny lists narrow that by record type and
+// name. The file sink keeps filters to type/name only (no field condition — use
+// evm-sink-webhook for a field filter). IncludeTypes/IncludeNames are allowlists
+// (when non-empty, a record must match to be written); ExcludeTypes/ExcludeNames
+// are denylists (a match drops the record). All configured filters must pass.
+type FileFilters struct {
+	IncludeTypes []string `mapstructure:"include_types"`
+	ExcludeTypes []string `mapstructure:"exclude_types"`
+	IncludeNames []string `mapstructure:"include_names"`
+	ExcludeNames []string `mapstructure:"exclude_names"`
+}
+
+// FileConfig is the [file] section for evm-sink-file. Path is the minimum; the
+// sink appends each record's verbatim JSONL line to Path and rotates the active
+// file by size and/or age, optionally gzip-compressing rotated segments and
+// pruning them to MaxBackups.
+type FileConfig struct {
+	// Path is the active output file (e.g. "/var/log/evm-tools/events.jsonl").
+	Path string `mapstructure:"path"`
+	// MaxSizeMB rotates the active file once it reaches this size in MiB. 0 (the
+	// default) disables size-based rotation.
+	MaxSizeMB int `mapstructure:"max_size_mb"`
+	// RotationInterval rotates the active file once it reaches this age. A
+	// duration like "24h"; "" / "0" / "off" disables time-based rotation. Age is
+	// measured from when the sink opened the active file.
+	RotationInterval string `mapstructure:"rotation_interval"`
+	// MaxBackups caps how many rotated segments are retained (oldest pruned
+	// first). 0 (the default) keeps all of them.
+	MaxBackups int `mapstructure:"max_backups"`
+	// Compress gzips each rotated segment (events-<ts>.jsonl -> .jsonl.gz).
+	Compress bool `mapstructure:"compress"`
+	// Fsync flushes each line to stable storage before the cursor advances —
+	// stronger durability at a throughput cost. Off by default.
+	Fsync bool `mapstructure:"fsync"`
+	// BackoffBase / BackoffMax bound the blocking exponential-backoff retry on a
+	// transient write failure (a full disk: ENOSPC/EDQUOT). Strings so "500ms" /
+	// "30s" parse; empty falls back to built-in defaults.
+	BackoffBase string `mapstructure:"backoff_base"`
+	BackoffMax  string `mapstructure:"backoff_max"`
+
+	Filters FileFilters   `mapstructure:"filters"`
+	Metrics MetricsConfig `mapstructure:"metrics"`
+}
+
 // StreamFull is the fully decoded configuration for evm-stream: shared keys
 // plus the [stream] subtree.
 type StreamFull struct {
@@ -299,6 +344,14 @@ type KafkaFull struct {
 type WebhookFull struct {
 	Shared
 	Webhook WebhookConfig
+}
+
+// FileFull is the fully decoded configuration for evm-sink-file: shared keys
+// plus the [file] subtree. Like the other sinks it reads stdin JSONL, not RPC,
+// so only the shared [metrics]/[log] plus [file] are required.
+type FileFull struct {
+	Shared
+	File FileConfig
 }
 
 // BalanceFull is the fully decoded configuration for evm-balance: shared keys

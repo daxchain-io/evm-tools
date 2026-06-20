@@ -44,6 +44,13 @@ type webhookTarget struct {
 	Webhook WebhookConfig `mapstructure:"webhook"`
 }
 
+// fileTarget is the decode shape for evm-sink-file: shared keys squashed onto
+// the top level plus the [file] subtree.
+type fileTarget struct {
+	Shared `mapstructure:",squash"`
+	File   FileConfig `mapstructure:"file"`
+}
+
 // DecodeStream strict-decodes the shared keys plus the [stream] subtree into a
 // StreamFull. Unknown keys within those sections are a fatal error; the
 // [balance] section is ignored.
@@ -93,6 +100,19 @@ func (l *Loader) DecodeWebhook(allowExec bool) (*WebhookFull, error) {
 	}
 	t.AllowExec = allowExec
 	return &WebhookFull{Shared: t.Shared, Webhook: t.Webhook}, nil
+}
+
+// DecodeFile strict-decodes the shared keys plus the [file] subtree into a
+// FileFull. Unknown keys within those sections are a fatal error; sibling-tool
+// sections ([stream]/[balance]/[kafka]/[webhook]) are ignored. A sink needs the
+// shared [metrics]/[log] plus its own [file] section, not [rpc]/[chain].
+func (l *Loader) DecodeFile(allowExec bool) (*FileFull, error) {
+	var t fileTarget
+	if err := l.strictDecode("file", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &FileFull{Shared: t.Shared, File: t.File}, nil
 }
 
 // strictDecode builds a settings map containing only the shared keys and the

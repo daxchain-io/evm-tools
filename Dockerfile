@@ -1,6 +1,6 @@
-# Multi-stage build for the evm-tools suite. The final image contains all four
-# binaries (evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook) so one
-# image serves every tool in a producer | sink pipeline.
+# Multi-stage build for the evm-tools suite. The final image contains all five
+# binaries (evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook,
+# evm-sink-file) so one image serves every tool in a producer | sink pipeline.
 #
 # Base image choice: the runtime stage uses alpine — an image WITH a shell —
 # on purpose. Config `_cmd` keys run via `sh -c` (see docs/design.md
@@ -41,7 +41,7 @@ RUN set -eux; \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version=${VERSION} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit=${COMMIT} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date=${DATE}"; \
-    for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook; do \
+    for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file; do \
       go build -trimpath -ldflags "${ldflags}" -o "/out/${tool}" "./cmd/${tool}"; \
     done
 
@@ -57,7 +57,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates dumb-init \
     && adduser -D -H -u 10001 evmtools
 
-COPY --from=build /out/evm-stream /out/evm-balance /out/evm-sink-kafka /out/evm-sink-webhook /usr/local/bin/
+COPY --from=build /out/evm-stream /out/evm-balance /out/evm-sink-kafka /out/evm-sink-webhook /out/evm-sink-file /usr/local/bin/
 
 # Run as a non-root user; the tools need no privileges.
 USER evmtools

@@ -66,6 +66,9 @@ var flagBindings = map[string]string{
 
 	// evm-sink-webhook flags.
 	"url": "webhook.url",
+
+	// evm-sink-file flags.
+	"path": "file.path",
 }
 
 // New builds a Loader, reading the config file (if any) and wiring env binding.
@@ -147,6 +150,9 @@ func bindEnvKeys(v *viper.Viper) {
 		"webhook.health_url", "webhook.readiness_probe_interval",
 		"webhook.auth.header", "webhook.auth.value",
 		"webhook.metrics.enabled", "webhook.metrics.addr", "webhook.metrics.path",
+		"file.path", "file.max_size_mb", "file.rotation_interval", "file.max_backups",
+		"file.compress", "file.fsync", "file.backoff_base", "file.backoff_max",
+		"file.metrics.enabled", "file.metrics.addr", "file.metrics.path",
 	}
 	for _, k := range keys {
 		// Error only occurs with an empty key; ignore safely.
@@ -209,6 +215,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("webhook.backoff_max", "30s")
 	v.SetDefault("webhook.metrics.path", "/metrics")
 	v.SetDefault("webhook.metrics.addr", ":9003")
+
+	v.SetDefault("file.backoff_base", "500ms")
+	v.SetDefault("file.backoff_max", "30s")
+	v.SetDefault("file.metrics.path", "/metrics")
+	v.SetDefault("file.metrics.addr", ":9004")
 }
 
 // userConfigDir returns the user-level config directory, defaulting to

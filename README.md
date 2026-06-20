@@ -11,18 +11,20 @@ together cleanly.
 - `evm-sink-kafka` — publish each record to Kafka topics, at-least-once.
 - `evm-sink-webhook` — forward each record over HTTP, at-least-once, with optional
   filters.
+- `evm-sink-file` — append each record to a rotating local file, at-least-once,
+  with optional gzip compression and filters.
 
-All four live in this repository and share one configuration namespace.
+All five live in this repository and share one configuration namespace.
 
 ## Install
 
-One command installs the whole suite (all four CLIs):
+One command installs the whole suite (all five CLIs):
 
 ```sh
 # Homebrew (macOS / Linux)
 brew install --cask daxchain-io/tap/evm-tools
 
-# Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all four:
+# Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all five:
 curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh
 ```
 
@@ -52,6 +54,10 @@ evm-stream run -c ~/.config/evm-tools/my-chain.toml \
 evm-balance run -c ~/.config/evm-tools/my-chain.toml \
   | evm-sink-webhook --url https://hooks.internal.example.com/evm
 
+# Record the stream to a rotating, gzip-compressed local file.
+evm-stream run -c ~/.config/evm-tools/my-chain.toml \
+  | evm-sink-file --path /var/log/evm-tools/events.jsonl
+
 # Or just inspect the stream locally.
 evm-stream run -c ~/.config/evm-tools/my-chain.toml | jq
 ```
@@ -64,8 +70,8 @@ not merge stderr into it (`2>&1` would corrupt the JSONL).
 
 Every tool reads one shared `evm-tools` config file. Producers read the shared
 `[rpc]`/`[metrics]`/`[log]` settings plus their `[stream]`/`[balance]` section;
-sinks read the shared `[metrics]`/`[log]` settings plus their `[kafka]` or
-`[webhook]` section, and ignore the producer-only sections.
+sinks read the shared `[metrics]`/`[log]` settings plus their `[kafka]`,
+`[webhook]`, or `[file]` section, and ignore the producer-only sections.
 
 ```toml
 # evm-sink-kafka
@@ -101,6 +107,18 @@ include_types = ["balance_change", "native_transfer"]
 field = "balance"
 op = "gt"
 value = "1000"
+
+# evm-sink-file — append each record to a rotating local file.
+[file]
+path = "/var/log/evm-tools/events.jsonl"
+max_size_mb = 100              # rotate at this size; 0 disables size rotation
+rotation_interval = "24h"      # also rotate at this age; "off" disables
+max_backups = 7                # keep this many rotated segments; 0 keeps all
+compress = true                # gzip rotated segments (.jsonl.gz)
+fsync = false                  # fsync each line (durability vs throughput)
+
+[file.filters]                 # type/name allow/deny lists (no field condition)
+include_types = ["event", "native_transfer"]
 ```
 
 Secrets (the Kafka SASL password, the webhook auth value) are sourced through
@@ -109,7 +127,7 @@ the logs.
 
 ## Container image
 
-A multi-stage `Dockerfile` builds an `alpine`-based image with all four binaries.
+A multi-stage `Dockerfile` builds an `alpine`-based image with all five binaries.
 The base ships a shell on purpose so config `_cmd` keys keep working; a
 distroless/scratch base has no shell, so use `${VAR}` interpolation or mounted
 secrets there instead.

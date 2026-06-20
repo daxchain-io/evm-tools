@@ -62,9 +62,9 @@ These principles apply to every tool in the repo.
    downstream sink stalls, backpressure propagates upstream (see
    [Output discipline](#output-discipline-and-backpressure)) rather than
    discarding data.
-7. **Fail fast and clearly.** Misconfiguration — especially missing or invalid
-   mTLS material — is reported with an explicit error before work starts, not
-   midway through a run.
+7. **Fail fast and clearly.** Misconfiguration — invalid TLS material, or a
+   client certificate that `require_mtls` demands but that is absent — is
+   reported with an explicit error before work starts, not midway through a run.
 
 ## Tool Suite
 
@@ -78,6 +78,7 @@ A single binary release and a single shared config file cover the whole suite.
 | `evm-balance` | Producer — native/ERC-20/ERC-721 balance and contract-state polling | Building first |
 | `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics | Built (S1) |
 | `evm-sink-webhook` | Sink — forward records over HTTP with optional filters | Built (S2) |
+| `evm-sink-file` | Sink — append records to a rotating local file (gzip, retention) | Built (S3) |
 
 The pipeline shape is always the same: a producer writes JSONL to stdout, and a
 sink reads it from stdin.
@@ -497,9 +498,9 @@ token_id = "1234"
 
 The sinks read from the same shared file. They use the shared `[metrics]`/`[log]`
 defaults and their own namespaced section — `[kafka]` for `evm-sink-kafka`,
-`[webhook]` for `evm-sink-webhook` — and ignore the producer-only `[rpc]`,
-`[stream]`, and `[balance]` sections. Both source their secrets (the Kafka SASL
-password, the webhook auth-header value) through the same
+`[webhook]` for `evm-sink-webhook`, `[file]` for `evm-sink-file` — and ignore the
+producer-only `[rpc]`, `[stream]`, and `[balance]` sections. Each sources its
+secrets (the Kafka SASL password, the webhook auth-header value) through the same
 [value interpolation](#value-interpolation) / `_cmd` machinery as the producers,
 so nothing secret lands in the file.
 
@@ -562,6 +563,27 @@ value = "1000"
 [webhook.metrics]
 enabled = true
 addr = ":9003"
+
+# evm-sink-file — append each stdin record to a rotating local file, at-least-once.
+[file]
+path = "/var/log/evm-tools/events.jsonl"  # --path overrides; parent dirs created
+max_size_mb = 100                         # rotate at this size; 0 disables size rotation
+rotation_interval = "24h"                 # also rotate at this age; "off"/"0" disables
+max_backups = 7                           # retain this many rotated segments; 0 keeps all
+compress = true                           # gzip rotated segments (events-<ts>.jsonl.gz)
+fsync = false                             # fsync each line before advancing (durability vs throughput)
+# backoff_base = "500ms"                  # blocking retry bounds on a full disk (ENOSPC/EDQUOT)
+# backoff_max  = "30s"
+
+# Optional filters — type/name allow/deny lists only (no field condition; use the
+# webhook sink for that). All configured filters must pass for a record to be written.
+[file.filters]
+include_types = ["event", "native_transfer"]
+# exclude_names = ["noisy-token"]
+
+[file.metrics]
+enabled = true
+addr = ":9004"
 ```
 
 ### evm-sink-kafka
@@ -624,6 +646,57 @@ cadence.
 `evm-sink-kafka validate` decodes the config and validates the broker list, SASL
 mechanism, and TLS material — building the publisher loads the keypair and CA
 without any network I/O — so a bad config is caught before the sink connects.
+
+### evm-sink-file
+
+`evm-sink-file` reads the suite's JSONL contract on stdin and appends each record
+to a rotating local file with **at-least-once** durability. It reads the shared
+`[metrics]`/`[log]` keys plus its own `[file]` section and ignores the
+producer-only `[rpc]`, `[stream]`, and `[balance]` sections. It earns its place
+over a shell `> file` redirect by adding rotation, compression, retention,
+filtering, and the suite's health/metrics surface.
+
+- `path` (required) — the active output file; `--path` and `EVM_TOOLS_FILE_PATH`
+  override it. Parent directories are created on startup. Each record's verbatim
+  JSONL line is appended as a single write (a line is never torn) followed by a
+  newline.
+- `max_size_mb` — rotate the active file once it reaches this size (MiB). `0` (the
+  default) disables size-based rotation. A single line larger than the limit is
+  still written whole (to its own segment), never split.
+- `rotation_interval` — also rotate once the active file reaches this age (a
+  duration like `"24h"`); `""`/`"0"`/`"off"` disables time-based rotation. Age is
+  measured from when the sink opened the active file, so a restart resets it.
+- `max_backups` — retain at most this many rotated segments, pruning the oldest
+  first. `0` (the default) keeps all of them.
+- `compress` — gzip each rotated segment to `events-<timestamp>.jsonl.gz` (the
+  active file is always plain text). Compression is best-effort: a failure keeps
+  the uncompressed segment rather than losing data.
+- `fsync` — flush each line to stable storage before the cursor advances, trading
+  throughput for durability. Off by default (the OS flushes on its own schedule
+  and on clean shutdown).
+- `backoff_base` / `backoff_max` — the blocking retry-backoff bounds applied when
+  a write fails on a **full disk** (`ENOSPC`/`EDQUOT`), which is treated as
+  transient: the sink blocks and retries (propagating backpressure up the pipe)
+  rather than dropping records. Any other write error is permanent and fails fast.
+
+**`[file.filters]`** (optional) — type/name allow- and deny-lists
+(`include_types`/`exclude_types`/`include_names`/`exclude_names`) narrow which
+records are written; all configured filters must pass. The file sink has **no
+field condition** (unlike the webhook sink) — keep the recorded stream complete
+and filter downstream, or forward through `evm-sink-webhook` for a field filter.
+
+**`[file.metrics]`** — the standard per-tool metrics endpoint (see
+[Metrics](#metrics)); the sink binds `:9004` by default so it runs alongside the
+other sinks' `:9002`/`:9003`. The set covers records consumed/filtered/written/
+failed, a write-duration histogram, retry/backoff/blocked gauges, a rotations
+counter, and the active file's current size, plus `/healthz` and `/readyz` — the
+latter flips to not-ready while a write has been blocked on a failing disk beyond
+its threshold. It starts optimistically writable (there is no active disk probe);
+a failed write flips readiness.
+
+`evm-sink-file validate` decodes the config and validates the path, rotation
+settings, and filters without creating the file or directory (validate performs
+no filesystem writes), so a bad config is caught before the sink runs.
 
 ### Value interpolation
 
@@ -693,9 +766,12 @@ Rules:
 
 ## RPC Transport Security
 
-RPC access requires mTLS. Every CLI in this repo uses an RPC transport that can
-present a client certificate, use the matching client private key, and trust an
-optional custom CA certificate bundle. This is shared transport configuration
+RPC access uses TLS, and mTLS is supported but not mandatory. HTTPS endpoints
+connect with ordinary server-authenticated TLS by default, so public providers
+(Alchemy, Infura, a public node) work with no extra material. Configuring a
+client certificate and key upgrades the connection to mutual TLS for private
+endpoints that require client authentication; an optional custom CA bundle and
+server-name override apply in either mode. This is shared transport configuration
 used for normal runs, balance polling, event backfills, RPC health checks, and
 any metrics collection that reaches out to RPC.
 
@@ -710,12 +786,18 @@ rather than WebSocket subscriptions, this one HTTPS endpoint serves both
 backfill and live following.
 
 ```toml
+# Public provider (server-authenticated TLS — no client cert needed):
+[rpc]
+url = "https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}"
+
+# Private node requiring mutual TLS:
 [rpc]
 url = "https://rpc.internal.example.com:8545"
 client_cert = "/path/to/client.crt"
 client_key = "/path/to/client.key"
 ca_cert = "/path/to/ca.crt"
 server_name = "rpc.internal.example.com"
+require_mtls = true            # fail fast if the client cert/key are absent
 ```
 
 Flags:
@@ -725,15 +807,18 @@ Flags:
 - `--rpc-client-key`: path to the mTLS client private key.
 - `--rpc-ca-cert`: path to a custom CA certificate bundle.
 - `--rpc-server-name`: optional TLS server name override.
+- `--rpc-require-mtls`: require a client cert/key for HTTPS (off by default).
 
 The names stay explicit instead of bare `--cert`/`--key`, because these apply to
 the outbound RPC client connection and may not be the only TLS options the tools
 eventually support.
 
-The tools fail fast with a clear error when the configured RPC URL uses HTTPS
-and the required mTLS files are missing, unreadable, mismatched, or invalid.
-Plain HTTP is allowed for local development, but production EVM RPC
-access is treated as HTTPS plus mTLS.
+The tools fail fast with a clear error when a configured client certificate or
+key is unreadable, mismatched, or invalid, when only one half of the pair is
+given, or when `require_mtls` is set on an HTTPS endpoint with no client material.
+Plain HTTP is allowed for local development. Operators of private,
+mTLS-fronted nodes set `require_mtls` (or `--rpc-require-mtls`) so a missing
+client certificate is rejected rather than silently downgraded to server-auth TLS.
 
 ## Secret Handling
 
@@ -967,17 +1052,22 @@ evm-tools/
   cmd/
     evm-stream/            # thin entrypoint
     evm-balance/           # thin entrypoint
-    evm-sink-kafka/        # roadmap sink
-    evm-sink-webhook/      # roadmap sink
+    evm-sink-kafka/        # thin entrypoint
+    evm-sink-webhook/      # thin entrypoint
+    evm-sink-file/         # thin entrypoint
   internal/
     config/                # shared loading, precedence, interpolation, per-tool decoding
-    rpc/                   # mTLS RPC transport + client
-    record/                # versioned JSONL envelope types + synchronized encoder (the contract)
+    rpc/                   # TLS RPC transport + client (server-auth by default, optional mTLS)
+    record/                # versioned JSONL envelope types + synchronized encoder/reader (the contract)
     metrics/               # Prometheus registry + HTTP server
     chain/                 # chain metadata + block helpers
     buildinfo/             # version/commit/date stamped via -ldflags
+    cli/                   # shared Cobra command trees (producers + sinks)
     stream/                # evm-stream core logic
     balance/               # evm-balance core logic
+    kafkasink/             # evm-sink-kafka core logic
+    webhooksink/           # evm-sink-webhook core logic
+    filesink/              # evm-sink-file core logic (rotating writer + filter + run loop)
   docs/
   .github/workflows/
 ```
