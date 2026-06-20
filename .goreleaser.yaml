@@ -69,6 +69,27 @@ builds:
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
 
+  # evm-sink-webhook forwards JSONL over HTTP using only net/http, so CGO stays
+  # disabled and the binary cross-compiles statically like the rest of the suite.
+  - id: evm-sink-webhook
+    main: ./cmd/evm-sink-webhook
+    binary: evm-sink-webhook
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
 archives:
   - id: evm-stream
     ids:
@@ -92,6 +113,15 @@ archives:
     ids:
       - evm-sink-kafka
     name_template: "evm-sink-kafka_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+  - id: evm-sink-webhook
+    ids:
+      - evm-sink-webhook
+    name_template: "evm-sink-webhook_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     files:
@@ -170,6 +200,17 @@ homebrew_casks:
     description: "Publish JSONL records from stdin to Kafka topics (at-least-once)"
     binaries:
       - evm-sink-kafka
+  - name: evm-sink-webhook
+    ids:
+      - evm-sink-webhook
+    repository:
+      owner: daxchain-io
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/daxchain-io/evm-tools"
+    description: "Forward JSONL records from stdin to an HTTP endpoint (at-least-once, optional filters)"
+    binaries:
+      - evm-sink-webhook
 
 changelog:
   sort: asc

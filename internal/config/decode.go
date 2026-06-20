@@ -37,6 +37,13 @@ type kafkaTarget struct {
 	Kafka  KafkaConfig `mapstructure:"kafka"`
 }
 
+// webhookTarget is the decode shape for evm-sink-webhook: shared keys squashed
+// onto the top level plus the [webhook] subtree.
+type webhookTarget struct {
+	Shared  `mapstructure:",squash"`
+	Webhook WebhookConfig `mapstructure:"webhook"`
+}
+
 // DecodeStream strict-decodes the shared keys plus the [stream] subtree into a
 // StreamFull. Unknown keys within those sections are a fatal error; the
 // [balance] section is ignored.
@@ -73,6 +80,19 @@ func (l *Loader) DecodeKafka(allowExec bool) (*KafkaFull, error) {
 	}
 	t.AllowExec = allowExec
 	return &KafkaFull{Shared: t.Shared, Kafka: t.Kafka}, nil
+}
+
+// DecodeWebhook strict-decodes the shared keys plus the [webhook] subtree into a
+// WebhookFull. Unknown keys within those sections are a fatal error; sibling-tool
+// sections ([stream]/[balance]/[kafka]) are ignored. A sink needs the shared
+// [metrics]/[log] plus its own [webhook] section, not [rpc]/[chain].
+func (l *Loader) DecodeWebhook(allowExec bool) (*WebhookFull, error) {
+	var t webhookTarget
+	if err := l.strictDecode("webhook", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &WebhookFull{Shared: t.Shared, Webhook: t.Webhook}, nil
 }
 
 // strictDecode builds a settings map containing only the shared keys and the

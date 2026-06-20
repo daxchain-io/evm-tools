@@ -77,7 +77,7 @@ A single binary release and a single shared config file cover the whole suite.
 | `evm-stream` | Producer — live contract events and native ETH transfers | Building first |
 | `evm-balance` | Producer — native/ERC-20/ERC-721 balance and contract-state polling | Building first |
 | `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics | Built (S1) |
-| `evm-sink-webhook` | Sink — forward records over HTTP and fire alerts on matching records | Roadmap |
+| `evm-sink-webhook` | Sink — forward records over HTTP with optional filters | Built (S2) |
 
 The pipeline shape is always the same: a producer writes JSONL to stdout, and a
 sink reads it from stdin.
@@ -1078,9 +1078,13 @@ file at the repo root.
 
 These are unresolved and worth deciding before or during the build:
 
-1. **Webhook sink scope and shape.** Is `evm-sink-webhook` a thin HTTP
-   forwarder, a rule-based alerter, or both? Does alerting need its own config
-   grammar (match conditions, throttling)?
+1. ~~**Webhook sink scope and shape.**~~ **Settled (S2).** `evm-sink-webhook` is
+   a FORWARDER with OPTIONAL FILTERS: it POSTs every record by default, with an
+   optional include/exclude by record type and name plus a single simple field
+   condition (`eq`/`gt`/`lt` on one named data field) — deliberately not a full
+   rule DSL. Delivery is at-least-once (confirm-before-advance, blocking retry on
+   transient errors, fail-fast on a permanent HTTP 4xx). See `[webhook]` config
+   and the S2 milestone in [docs/plan.md](plan.md).
 2. **Sink delivery semantics.** Producers stream best-effort; how much
    delivery/resume responsibility belongs to sinks (at-least-once, ordering)
    versus a future checkpointing/resume feature in the producers?

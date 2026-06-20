@@ -201,6 +201,66 @@ type KafkaConfig struct {
 	Metrics MetricsConfig   `mapstructure:"metrics"`
 }
 
+// WebhookAuthConfig holds the optional auth header for the webhook sink. Header
+// names the request header (e.g. "Authorization"); Value is the secret payload
+// (e.g. "Bearer <token>") and is sourced through the shared env-interpolation /
+// _cmd machinery (value_cmd) so it never lands in the file and is never logged.
+type WebhookAuthConfig struct {
+	Header string `mapstructure:"header"`
+	Value  string `mapstructure:"value"`
+}
+
+// WebhookFieldCondition is the single simple field condition the webhook sink
+// supports — NOT a full rule DSL. It compares one named field inside a record's
+// data payload against a value with a comparison operator. Op is "eq", "gt", or
+// "lt"; Field is the data-field name (e.g. "balance"); Value is the comparand.
+// Numeric fields (the contract's string-encoded amounts and JSON numbers)
+// compare numerically for gt/lt; eq falls back to a string compare when the
+// operands are not both numeric.
+type WebhookFieldCondition struct {
+	Field string `mapstructure:"field"`
+	Op    string `mapstructure:"op"`
+	Value string `mapstructure:"value"`
+}
+
+// WebhookFilters scopes which records are forwarded. By default every record is
+// POSTed; these optional filters narrow that. IncludeTypes/IncludeNames are
+// allowlists (when non-empty, a record must match to be forwarded);
+// ExcludeTypes/ExcludeNames are denylists (a match drops the record). Field is
+// the single optional field condition. All configured filters must pass for a
+// record to be forwarded.
+type WebhookFilters struct {
+	IncludeTypes []string               `mapstructure:"include_types"`
+	ExcludeTypes []string               `mapstructure:"exclude_types"`
+	IncludeNames []string               `mapstructure:"include_names"`
+	ExcludeNames []string               `mapstructure:"exclude_names"`
+	Field        *WebhookFieldCondition `mapstructure:"field"`
+}
+
+// WebhookConfig is the [webhook] section for evm-sink-webhook. URL is the
+// minimum; the sink POSTs each record's verbatim JSONL payload as
+// application/json. Method defaults to POST. Headers are static request headers;
+// Auth carries the optional secret auth header. Filters optionally scope which
+// records are forwarded.
+type WebhookConfig struct {
+	URL    string `mapstructure:"url"`
+	Method string `mapstructure:"method"`
+	// Headers are static, non-secret request headers added to every request.
+	Headers map[string]string `mapstructure:"headers"`
+	// Timeout bounds a single HTTP request; empty falls back to a built-in
+	// default. A string so a duration like "10s" parses.
+	Timeout string `mapstructure:"timeout"`
+	// BackoffBase / BackoffMax bound the blocking exponential-backoff retry on a
+	// transient POST failure (network/timeout/5xx). Strings so "500ms" / "30s"
+	// parse; empty falls back to built-in defaults.
+	BackoffBase string `mapstructure:"backoff_base"`
+	BackoffMax  string `mapstructure:"backoff_max"`
+
+	Auth    WebhookAuthConfig `mapstructure:"auth"`
+	Filters WebhookFilters    `mapstructure:"filters"`
+	Metrics MetricsConfig     `mapstructure:"metrics"`
+}
+
 // StreamFull is the fully decoded configuration for evm-stream: shared keys
 // plus the [stream] subtree.
 type StreamFull struct {
@@ -214,6 +274,14 @@ type StreamFull struct {
 type KafkaFull struct {
 	Shared
 	Kafka KafkaConfig
+}
+
+// WebhookFull is the fully decoded configuration for evm-sink-webhook: shared
+// keys plus the [webhook] subtree. Like the kafka sink it reads stdin JSONL, not
+// RPC, so only the shared [metrics]/[log] plus [webhook] are required.
+type WebhookFull struct {
+	Shared
+	Webhook WebhookConfig
 }
 
 // BalanceFull is the fully decoded configuration for evm-balance: shared keys

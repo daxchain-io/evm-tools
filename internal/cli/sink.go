@@ -21,7 +21,8 @@ type SinkTool string
 
 // Supported sinks.
 const (
-	ToolSinkKafka SinkTool = "evm-sink-kafka"
+	ToolSinkKafka   SinkTool = "evm-sink-kafka"
+	ToolSinkWebhook SinkTool = "evm-sink-webhook"
 )
 
 // sinkFlags holds the values bound to a sink's persistent flag set: the shared
@@ -42,6 +43,9 @@ type sinkFlags struct {
 	// Kafka-specific.
 	brokers []string
 	topic   string
+
+	// Webhook-specific.
+	url string
 }
 
 // sinkShortDesc returns the one-line description for a sink.
@@ -49,6 +53,8 @@ func (t SinkTool) sinkShortDesc() string {
 	switch t {
 	case ToolSinkKafka:
 		return "Publish JSONL records from stdin to Kafka topics (at-least-once)"
+	case ToolSinkWebhook:
+		return "Forward JSONL records from stdin to an HTTP endpoint (at-least-once, optional filters)"
 	default:
 		return "An evm-tools sink"
 	}
@@ -70,8 +76,11 @@ func NewSinkRootCommand(tool SinkTool) *cobra.Command {
 	}
 
 	bindSinkSharedFlags(root, flags)
-	if tool == ToolSinkKafka {
+	switch tool {
+	case ToolSinkKafka:
 		bindKafkaFlags(root, flags)
+	case ToolSinkWebhook:
+		bindWebhookFlags(root, flags)
 	}
 
 	root.AddCommand(
@@ -106,10 +115,16 @@ func bindKafkaFlags(root *cobra.Command, f *sinkFlags) {
 	pf.StringVar(&f.topic, "topic", "", "default Kafka topic to publish records to")
 }
 
+// bindWebhookFlags installs the evm-sink-webhook-specific flags.
+func bindWebhookFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringVar(&f.url, "url", "", "webhook URL to POST each record to, e.g. https://hooks.example.com/evm")
+}
+
 func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
-		Short: "Read JSONL from stdin and publish each record downstream",
+		Short: "Read JSONL from stdin and deliver each record downstream (at-least-once)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := f.setupLogging(); err != nil {
@@ -124,6 +139,8 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 			switch tool {
 			case ToolSinkKafka:
 				return kafkaRun(cmd, f)
+			case ToolSinkWebhook:
+				return webhookRun(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
@@ -134,7 +151,7 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
-		Short: "Validate config (and broker/auth material) without connecting",
+		Short: "Validate config (and destination/auth material) without connecting",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := f.setupLogging(); err != nil {
@@ -143,6 +160,8 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 			switch tool {
 			case ToolSinkKafka:
 				return kafkaValidate(cmd, f)
+			case ToolSinkWebhook:
+				return webhookValidate(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}

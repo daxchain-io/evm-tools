@@ -13,7 +13,7 @@
 # running it instead of piping it straight into a shell.
 #
 # Environment overrides:
-#   EVM_TOOLS_BIN      binary to install: evm-stream | evm-balance | evm-sink-kafka (default evm-stream)
+#   EVM_TOOLS_BIN      binary to install: evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook (default evm-stream)
 #   EVM_TOOLS_VERSION  version tag to install (default: latest)
 #   EVM_TOOLS_INSTALL_DIR  install directory (default: /usr/local/bin)
 #   EVM_TOOLS_BASE_URL     base "releases" URL (default the GitHub repo); set
@@ -52,8 +52,8 @@ need() {
 }
 
 case "$BIN" in
-  evm-stream | evm-balance | evm-sink-kafka) ;;
-  *) err "unsupported binary '$BIN' (want evm-stream, evm-balance, or evm-sink-kafka)" ;;
+  evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook) ;;
+  *) err "unsupported binary '$BIN' (want evm-stream, evm-balance, evm-sink-kafka, or evm-sink-webhook)" ;;
 esac
 
 need uname

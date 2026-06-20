@@ -62,6 +62,9 @@ var flagBindings = map[string]string{
 	// evm-sink-kafka flags.
 	"brokers": "kafka.brokers",
 	"topic":   "kafka.topic",
+
+	// evm-sink-webhook flags.
+	"url": "webhook.url",
 }
 
 // New builds a Loader, reading the config file (if any) and wiring env binding.
@@ -136,6 +139,10 @@ func bindEnvKeys(v *viper.Viper) {
 		"kafka.tls.enabled", "kafka.tls.ca_cert", "kafka.tls.client_cert",
 		"kafka.tls.client_key", "kafka.tls.server_name",
 		"kafka.metrics.enabled", "kafka.metrics.addr", "kafka.metrics.path",
+		"webhook.url", "webhook.method", "webhook.timeout",
+		"webhook.backoff_base", "webhook.backoff_max",
+		"webhook.auth.header", "webhook.auth.value",
+		"webhook.metrics.enabled", "webhook.metrics.addr", "webhook.metrics.path",
 	}
 	for _, k := range keys {
 		// Error only occurs with an empty key; ignore safely.
@@ -188,6 +195,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kafka.batch_timeout", "200ms")
 	v.SetDefault("kafka.metrics.path", "/metrics")
 	v.SetDefault("kafka.metrics.addr", ":9002")
+
+	v.SetDefault("webhook.method", "POST")
+	v.SetDefault("webhook.timeout", "10s")
+	v.SetDefault("webhook.backoff_base", "500ms")
+	v.SetDefault("webhook.backoff_max", "30s")
+	v.SetDefault("webhook.metrics.path", "/metrics")
+	v.SetDefault("webhook.metrics.addr", ":9003")
 }
 
 // userConfigDir returns the user-level config directory, defaulting to

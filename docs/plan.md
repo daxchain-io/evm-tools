@@ -252,13 +252,70 @@ the static cross-compiled release binaries are unaffected.
       SASL-without-TLS); run publishes every stdin record at-least-once and blocks
       (never drops) on a stalled broker.
 
+## S2 — evm-sink-webhook
+
+Goal: the second sink — read the suite's JSONL contract on stdin and forward each
+record over HTTP with at-least-once delivery, settling design Open Question 1
+(webhook scope) for this build: a FORWARDER with OPTIONAL FILTERS, not a rule
+DSL. Reuses the shared JSONL `record.Reader` and the sink command tree from S1.
+
+- [x] **`internal/webhooksink` core** (`webhooksink.go`): read JSONL via
+      `record.Reader`, forward each record (that passes the filter) over HTTP;
+      at-least-once loop (confirm-before-advance, blocking exponential backoff +
+      full jitter on transient failure, fail-fast on a permanent failure, never
+      drop a record). The actual HTTP delivery is behind a `Poster` interface so
+      default tests use `net/http/httptest` (no external endpoint). → Sink
+      delivery semantics.
+- [x] **HTTP poster** (`poster.go`): real `net/http`-backed `Poster` — POST
+      (default; PUT/PATCH allowed) the verbatim JSONL payload as
+      `application/json`; 2xx is success; a transient error (network/timeout/HTTP
+      5xx) surfaces for retry; a permanent HTTP 4xx is wrapped in
+      `*PermanentError` so the sink fails fast (exit non-zero) rather than
+      silently dropping (preserves losslessness). URL redaction (query/userinfo
+      stripped) for safe logging. → Secret Handling.
+- [x] **Forwarder filters** (`filter.go`): forward all by default; optional
+      include/exclude by record type and name plus a single simple field
+      condition (`eq`/`gt`/`lt` on one named data field, numeric/range-safe via
+      `big.Float`). AND semantics; an unsupported op / empty field name fails
+      fast in `validate`. → design Open Question 1 (settled).
+- [x] **Optional auth header**: a configurable request header (e.g.
+      `Authorization: Bearer …`) whose value is sourced through the existing
+      env-interpolation/`_cmd` machinery (`value_cmd`), never hardcoded or
+      logged. → Auth, Secret Handling.
+- [x] **`[webhook]` config + flags**: `config.DecodeWebhook` (shared keys +
+      `[webhook]`, strict, sibling sections ignored) with `url`, `method`,
+      `headers`, `timeout`, backoff tuning, `[webhook.auth]`,
+      `[webhook.filters]` (+ `[webhook.filters.field]`), `[webhook.metrics]`; env
+      binding (`EVM_TOOLS_WEBHOOK_*`) and a `--url` flag. → Configuration.
+- [x] **`cmd/evm-sink-webhook` + sink CLI** (`internal/cli/webhook.go`, reusing
+      `internal/cli/sink.go`): the same sink-shaped command tree (run, validate,
+      version — no `check rpc`/`--rpc-*`), per-suite Prometheus metric set
+      (`internal/metrics/webhook.go`: records consumed/filtered/forwarded/failed,
+      POST duration histogram, retry/backoff/blocked gauges) on the metrics
+      server with `/healthz` + `/readyz` (endpoint-reachable + post-blocked),
+      graceful shutdown; slog on stderr. → Metrics.
+- [x] **Tests**: webhooksink loop with httptest (forward all, 5xx-retry,
+      4xx-fail-fast, malformed-line fail-fast, confirm-before-advance, auth
+      header); filter include/exclude by type/name + field-condition eq/gt/lt +
+      missing-field + combined; poster URL/method validation + redaction; config
+      decode/defaults/sibling-ignore/env-override/`value_cmd`; metrics endpoint +
+      sink `/readyz`; CLI version/help/validate/run (fake poster) + filter run.
+      All offline-safe in the default `go test ./...`. → Testing.
+- [x] **Release**: `evm-sink-webhook` build + archive + Homebrew cask in
+      `.goreleaser.yaml`; `install.sh` aware of the new binary. → Release.
+- [x] **Acceptance:** build/vet/test/lint green offline; `goreleaser check`
+      passes; `evm-sink-webhook --help`/`version` work; validate catches bad
+      config (missing url, unsupported field-condition op); run forwards every
+      passing stdin record at-least-once (verbatim, `application/json`), blocks
+      (never drops) on a 5xx/stalled endpoint, and fails fast on a 4xx.
+
 ## Deferred (post-spine, per design)
 
 Native transfer internal/trace transfers; config reload (+ metric reset); reorg
-handling and the additive `finalized`/`removed` field; checkpointing/resume; the
-`evm-sink-webhook` sink and its scope (design Open Question 1). See design
-[Open Questions](design.md#open-questions). (ERC-721 balance/ownership runtime is
-done — see M4; the `evm-sink-kafka` sink is done — see S1.)
+handling and the additive `finalized`/`removed` field; checkpointing/resume. See
+design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
+runtime is done — see M4; the `evm-sink-kafka` sink is done — see S1; the
+`evm-sink-webhook` sink is done — see S2.)
 
 ## Post-M4 follow-ups
 

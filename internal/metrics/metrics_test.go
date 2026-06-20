@@ -205,6 +205,75 @@ func TestMetricsEndpointServesKafkaSet(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointServesWebhookSet(t *testing.T) {
+	w := NewWebhook("codex-chain", "")
+	w.SetUp(true)
+	w.SetWorkers(1)
+	w.IncConsumed()
+	w.IncFiltered()
+	w.IncForwarded("event")
+	w.IncFailed("transient")
+	w.IncRetry()
+	w.ObservePost(time.Millisecond)
+	w.SetBackoffSeconds(time.Second)
+	w.SetBlocked(true)
+	w.SetConsecutiveFailures(2)
+
+	h := NewHealth(0, 0)
+	srv := newTestServer(t, true, h, w.Registry())
+	code, body := get(t, "http://"+srv.Addr()+"/metrics")
+	if code != http.StatusOK {
+		t.Fatalf("/metrics = %d", code)
+	}
+	for _, want := range []string{
+		`evm_sink_webhook_up{blockchain="codex-chain",chain_id="unknown"} 1`,
+		"evm_sink_webhook_records_consumed_total",
+		"evm_sink_webhook_records_filtered_total",
+		`evm_sink_webhook_records_forwarded_total{`,
+		`record_type="event"`,
+		`evm_sink_webhook_records_failed_total{`,
+		`error_type="transient"`,
+		"evm_sink_webhook_post_retries_total",
+		"evm_sink_webhook_post_duration_seconds",
+		"evm_sink_webhook_backoff_duration_seconds",
+		"evm_sink_webhook_post_blocked",
+		"evm_sink_webhook_consecutive_failures",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q", want)
+		}
+	}
+	// Gauges must not carry a _total suffix.
+	if strings.Contains(body, "evm_sink_webhook_post_blocked_total") {
+		t.Error("blocked gauge should not have _total suffix")
+	}
+}
+
+// TestWebhookHealthReadiness verifies the sink health adapter maps endpoint
+// reachability and post-blocked onto /readyz via the shared Health.
+func TestWebhookHealthReadiness(t *testing.T) {
+	base := NewHealth(30*time.Second, 0) // lag disabled for a sink.
+	wh := NewWebhookHealth(base)
+	srv := newTestServer(t, false, base, nil)
+	url := "http://" + srv.Addr()
+
+	// Ready by default (endpoint reachable, not blocked).
+	if code, _ := get(t, url+"/readyz"); code != http.StatusOK {
+		t.Errorf("/readyz should be 200 by default, got %d", code)
+	}
+	// Endpoint unreachable flips not-ready.
+	wh.SetEndpointReachable(false)
+	if code, _ := get(t, url+"/readyz"); code != http.StatusServiceUnavailable {
+		t.Errorf("/readyz should be 503 when endpoint unreachable, got %d", code)
+	}
+	wh.SetEndpointReachable(true)
+	// Post blocked beyond threshold flips not-ready.
+	wh.SetPostBlocked(time.Minute)
+	if code, body := get(t, url+"/readyz"); code != http.StatusServiceUnavailable || !strings.Contains(body, "blocked") {
+		t.Errorf("/readyz should report blocked, got %d %s", code, body)
+	}
+}
+
 // TestKafkaHealthReadiness verifies the sink health adapter maps broker
 // reachability and publish-blocked onto /readyz via the shared Health.
 func TestKafkaHealthReadiness(t *testing.T) {
