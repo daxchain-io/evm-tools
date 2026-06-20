@@ -451,7 +451,10 @@ func TestProbeLoopImmediateAndStops(t *testing.T) {
 }
 
 // TestRunWithProbeEnabled verifies Run cleanly starts and joins the probe
-// goroutine (no hang/leak) while still publishing, and that the probe ran.
+// goroutine (no hang or leak, checked under -race) while still publishing.
+// Whether the immediate probe wins the race against an instant EOF is
+// timing-dependent, so the probe behavior itself is asserted deterministically
+// in TestProbeOnceSetsReachable / TestProbeLoopImmediateAndStops, not here.
 func TestRunWithProbeEnabled(t *testing.T) {
 	h := &probeHealth{}
 	pub := &fakePublisher{}
@@ -470,9 +473,6 @@ func TestRunWithProbeEnabled(t *testing.T) {
 	}
 	if got := len(pub.snapshot()); got != 1 {
 		t.Errorf("expected 1 published record, got %d", got)
-	}
-	if pub.probeCount() < 1 {
-		t.Errorf("expected the active probe to run at least once, got %d", pub.probeCount())
 	}
 }
 
