@@ -36,6 +36,7 @@ makes the suite composable.
 - [Naming Conventions](#naming-conventions)
 - [Governance](#governance)
 - [License](#license)
+- [Operational Notes and Known Limitations](#operational-notes-and-known-limitations)
 - [Open Questions](#open-questions)
 
 ## Design Principles
@@ -1330,6 +1331,55 @@ outside contributions**:
 
 The repository is licensed under Apache-2.0; the full text is in the `LICENSE`
 file at the repo root.
+
+## Operational Notes and Known Limitations
+
+Deployment notes and the constraints an enterprise sign-off should account for.
+
+- **Single producer instance per chain (no built-in HA).** A producer is one poll
+  loop with no leader election, work partitioning, or shared cursor. Running two
+  instances against the same chain/contracts double-emits records (sinks dedup by
+  the documented dedup key, but balance `*_sample` rows differ by `emitted_at` and
+  will not dedup). Run exactly one producer per chain. For failover use
+  active/passive (start a standby on failure) and accept the restart gap below, or
+  shard contracts/address ranges across instances in config.
+- **Restart coverage gap.** `stream.from_block` defaults to `latest` and there is
+  no durable checkpoint, so a producer that restarts resumes at the current head
+  and does not backfill blocks missed while it was down. To avoid a gap across a
+  restart, set `from_block` to a known-safe height, or minimize downtime under a
+  supervisor. A checkpoint/resume cursor is a roadmap item (see Open Questions).
+- **At-head, no finality / reorg handling.** The stream follows the latest head
+  and advances monotonically; it does not await finality or re-scan reorged
+  heights. Logs the node marks `removed` (reorged out) are skipped, but events
+  already emitted under an orphaned block are not retracted and replacement blocks
+  at the same heights are not re-scanned. On chains that reorg (Ethereum mainnet
+  and most L1s/L2s), sinks can therefore retain records for transactions that were
+  reorged out. For reorg-sensitive consumers, dedup/replace downstream by
+  `(chain_id, block_hash, tx_hash, log_index)` or run behind a confirmation lag.
+  Finality-aware emission is a roadmap item.
+- **Native-transfer cost.** Native-transfer detection fetches one receipt per
+  value-bearing transaction (bounded-parallel, capped per block). On a high-volume
+  chain with an unfiltered `[stream.native_transfers]` allowlist this is the
+  dominant RPC cost; scope it with `from`/`to` allowlists and watch lag.
+- **Metrics/health endpoint exposure.** The metrics/health server binds the
+  configured address (default `:900x`, i.e. all interfaces) as plaintext HTTP with
+  no authentication — appropriate for an in-cluster Prometheus scrape, but it
+  exposes operational labels (chain, configured addresses, lag, failure counts).
+  Restrict it with network policy / a private interface, or bind `127.0.0.1` when
+  only a co-located scraper needs it. No secret values are ever metric labels.
+- **Secret exposure surface.** Secrets sourced via `${VAR}` environment
+  interpolation are readable for the process lifetime via `/proc/<pid>/environ`
+  and would appear in a core dump; they are never logged. For hardened deployments
+  prefer `_cmd`/file-based sourcing and disable core dumps.
+- **Malformed input is fail-fast.** A sink treats any line it cannot parse (bad
+  JSON, unsupported `schema_version`, trailing data) as a permanent error and
+  exits non-zero — the stream is the contract, so it never silently skips a
+  record. A single corrupt byte in a long-lived pipe therefore halts the sink;
+  recovery is operator intervention (there is no dead-letter quarantine).
+- **Pipe lifecycle.** A producer ignores `SIGPIPE`, so a dead downstream sink
+  surfaces as a terminal `EPIPE` (clean non-zero exit, graceful flush) rather than
+  a signal kill. A second `SIGINT`/`SIGTERM` during graceful shutdown force-exits,
+  so a wedged shutdown never requires `SIGKILL`.
 
 ## Open Questions
 

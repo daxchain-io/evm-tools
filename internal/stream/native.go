@@ -4,10 +4,19 @@ import (
 	"context"
 	"math/big"
 	"strings"
+	"sync"
 
 	"github.com/daxchain-io/evm-tools/internal/config"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
+
+// nativeReceiptConcurrency bounds how many per-transaction receipt fetches run in
+// parallel within a single block. Native-transfer detection needs one
+// eth_getTransactionReceipt per value-bearing tx to gate out reverted txs; a busy
+// block holds hundreds, so fetching them serially makes the producer fall behind
+// head. A small fixed pool parallelizes the round-trips without hammering the RPC
+// endpoint.
+const nativeReceiptConcurrency = 8
 
 // NativeFilter scopes native transfer emission. With no addresses set, every
 // value-bearing transaction qualifies (the full firehose). When From or To is
@@ -78,7 +87,10 @@ func detectNativeTransfers(ctx context.Context, r Client, f NativeFilter, blk *r
 	if !f.enabled {
 		return nil, nil
 	}
-	var out []nativeTransfer
+
+	// First pass (no RPC): collect value-bearing, allowlisted candidates in block
+	// order so output order is deterministic regardless of receipt-fetch ordering.
+	cands := make([]nativeTransfer, 0, len(blk.Transactions))
 	for _, tx := range blk.Transactions {
 		val, err := tx.ValueBig()
 		if err != nil {
@@ -87,18 +99,58 @@ func detectNativeTransfers(ctx context.Context, r Client, f NativeFilter, blk *r
 		if val.Sign() == 0 {
 			continue // no value moved
 		}
-		isCreation := tx.To == ""
 		if !f.matches(tx.From, tx.To) {
 			continue
 		}
-		rcpt, err := r.TransactionReceipt(ctx, tx.Hash)
-		if err != nil {
-			return nil, err
+		cands = append(cands, nativeTransfer{tx: tx, valueWei: val, contractCreation: tx.To == ""})
+	}
+	if len(cands) == 0 {
+		return nil, nil
+	}
+
+	// Second pass: fetch each candidate's receipt concurrently (bounded) to gate
+	// out reverted txs. A single receipt error fails the whole block so the caller
+	// retries it rather than silently dropping a transfer (lossless); the first
+	// error cancels the rest.
+	succeeded := make([]bool, len(cands))
+	fctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sem := make(chan struct{}, nativeReceiptConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	for i := range cands {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if fctx.Err() != nil {
+				return
+			}
+			rcpt, err := r.TransactionReceipt(fctx, cands[i].tx.Hash)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+					cancel()
+				}
+				mu.Unlock()
+				return
+			}
+			succeeded[i] = rcpt != nil && rcpt.Succeeded()
+		}(i)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	out := make([]nativeTransfer, 0, len(cands))
+	for i := range cands {
+		if succeeded[i] {
+			out = append(out, cands[i])
 		}
-		if rcpt == nil || !rcpt.Succeeded() {
-			continue // reverted or unmined: transfers nothing
-		}
-		out = append(out, nativeTransfer{tx: tx, valueWei: val, contractCreation: isCreation})
 	}
 	return out, nil
 }

@@ -444,6 +444,15 @@ func (s *Stream) emitLog(l rpc.Log) error {
 	if len(l.Topics) == 0 {
 		return nil
 	}
+	if l.Removed {
+		// A log the node is retracting because its block was reorged out. The loop
+		// advances head monotonically and does not re-scan, so emitting it would
+		// record an event for a transaction that no longer exists; skip it. (Full
+		// reorg handling — retraction + re-scan of replacement blocks — is a
+		// documented limitation; see docs/design.md "Operational notes".)
+		s.log.Debug("skipping removed (reorged) log", "contract", l.Address, "block", l.BlockNumber)
+		return nil
+	}
 	byTopic, ok := s.byAddrTopic[strings.ToLower(l.Address)]
 	if !ok {
 		return nil
