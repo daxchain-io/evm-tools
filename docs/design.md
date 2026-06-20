@@ -76,7 +76,7 @@ A single binary release and a single shared config file cover the whole suite.
 | --- | --- | --- |
 | `evm-stream` | Producer — live contract events and native ETH transfers | Building first |
 | `evm-balance` | Producer — native/ERC-20/ERC-721 balance and contract-state polling | Building first |
-| `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics | Roadmap |
+| `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics | Built (S1) |
 | `evm-sink-webhook` | Sink — forward records over HTTP and fire alerts on matching records | Roadmap |
 
 The pipeline shape is always the same: a producer writes JSONL to stdout, and a

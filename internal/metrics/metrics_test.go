@@ -162,3 +162,70 @@ func TestMetricsEndpointServesBalanceSet(t *testing.T) {
 		t.Error("transfer count gauge should not have _total suffix")
 	}
 }
+
+func TestMetricsEndpointServesKafkaSet(t *testing.T) {
+	k := NewKafka("codex-chain", "")
+	k.SetUp(true)
+	k.SetWorkers(1)
+	k.IncConsumed()
+	k.IncPublished("evm.events")
+	k.IncFailed("transient")
+	k.IncRetry()
+	k.ObservePublish(time.Millisecond)
+	k.SetBackoffSeconds(time.Second)
+	k.SetBlocked(true)
+	k.SetConsecutiveFailures(2)
+
+	h := NewHealth(0, 0)
+	srv := newTestServer(t, true, h, k.Registry())
+	code, body := get(t, "http://"+srv.Addr()+"/metrics")
+	if code != http.StatusOK {
+		t.Fatalf("/metrics = %d", code)
+	}
+	for _, want := range []string{
+		`evm_sink_kafka_up{blockchain="codex-chain",chain_id="unknown"} 1`,
+		"evm_sink_kafka_records_consumed_total",
+		`evm_sink_kafka_records_published_total{`,
+		`topic="evm.events"`,
+		`evm_sink_kafka_records_failed_total{`,
+		`error_type="transient"`,
+		"evm_sink_kafka_publish_retries_total",
+		"evm_sink_kafka_publish_duration_seconds",
+		"evm_sink_kafka_backoff_duration_seconds",
+		"evm_sink_kafka_publish_blocked",
+		"evm_sink_kafka_consecutive_failures",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics missing %q", want)
+		}
+	}
+	// Gauges must not carry a _total suffix.
+	if strings.Contains(body, "evm_sink_kafka_publish_blocked_total") {
+		t.Error("blocked gauge should not have _total suffix")
+	}
+}
+
+// TestKafkaHealthReadiness verifies the sink health adapter maps broker
+// reachability and publish-blocked onto /readyz via the shared Health.
+func TestKafkaHealthReadiness(t *testing.T) {
+	base := NewHealth(30*time.Second, 0) // lag disabled for a sink.
+	kh := NewKafkaHealth(base)
+	srv := newTestServer(t, false, base, nil)
+	url := "http://" + srv.Addr()
+
+	// Ready by default (broker reachable, not blocked).
+	if code, _ := get(t, url+"/readyz"); code != http.StatusOK {
+		t.Errorf("/readyz should be 200 by default, got %d", code)
+	}
+	// Broker unreachable flips not-ready.
+	kh.SetBrokerReachable(false)
+	if code, _ := get(t, url+"/readyz"); code != http.StatusServiceUnavailable {
+		t.Errorf("/readyz should be 503 when broker unreachable, got %d", code)
+	}
+	kh.SetBrokerReachable(true)
+	// Publish blocked beyond threshold flips not-ready.
+	kh.SetPublishBlocked(time.Minute)
+	if code, body := get(t, url+"/readyz"); code != http.StatusServiceUnavailable || !strings.Contains(body, "blocked") {
+		t.Errorf("/readyz should report blocked, got %d %s", code, body)
+	}
+}

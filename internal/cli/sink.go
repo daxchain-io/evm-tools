@@ -1,0 +1,174 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/spf13/cobra"
+
+	"github.com/daxchain-io/evm-tools/internal/config"
+	"github.com/daxchain-io/evm-tools/internal/logging"
+)
+
+// SinkTool identifies which sink a command tree is for. Sinks read JSONL on
+// stdin via the record contract and deliver it downstream; they share the
+// shared [metrics]/[log] config and flags but not the producers' [rpc]/[chain]
+// surface, so they get their own thin command tree rather than the
+// producer-shaped one in cli.go.
+type SinkTool string
+
+// Supported sinks.
+const (
+	ToolSinkKafka SinkTool = "evm-sink-kafka"
+)
+
+// sinkFlags holds the values bound to a sink's persistent flag set: the shared
+// metrics/log/config flags plus the sink-specific flags. A sink has no RPC
+// surface, so the --rpc-* flags are absent.
+type sinkFlags struct {
+	configFile string
+
+	metricsEnabled bool
+	metricsAddr    string
+	metricsPath    string
+
+	logLevel  string
+	logFormat string
+
+	allowExec bool
+
+	// Kafka-specific.
+	brokers []string
+	topic   string
+}
+
+// sinkShortDesc returns the one-line description for a sink.
+func (t SinkTool) sinkShortDesc() string {
+	switch t {
+	case ToolSinkKafka:
+		return "Publish JSONL records from stdin to Kafka topics (at-least-once)"
+	default:
+		return "An evm-tools sink"
+	}
+}
+
+// NewSinkRootCommand builds the command tree for a sink: run, validate, version.
+// There is no `check rpc` — a sink has no RPC endpoint.
+func NewSinkRootCommand(tool SinkTool) *cobra.Command {
+	flags := &sinkFlags{}
+
+	root := &cobra.Command{
+		Use:           string(tool),
+		Short:         tool.sinkShortDesc(),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+
+	bindSinkSharedFlags(root, flags)
+	if tool == ToolSinkKafka {
+		bindKafkaFlags(root, flags)
+	}
+
+	root.AddCommand(
+		newSinkRunCommand(tool, flags),
+		newSinkValidateCommand(tool, flags),
+		newVersionCommand(),
+	)
+	return root
+}
+
+// bindSinkSharedFlags installs the shared (non-RPC) persistent flags every sink
+// inherits.
+func bindSinkSharedFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+
+	pf.StringVarP(&f.configFile, "config", "c", "", "path to the evm-tools TOML config file")
+
+	pf.BoolVar(&f.metricsEnabled, "metrics", false, "enable the Prometheus metrics endpoint")
+	pf.StringVar(&f.metricsAddr, "metrics-addr", "", "metrics bind address, e.g. :9002")
+	pf.StringVar(&f.metricsPath, "metrics-path", "", "metrics route, e.g. /metrics")
+
+	pf.StringVar(&f.logLevel, "log-level", "info", "log level: debug|info|warn|error")
+	pf.StringVar(&f.logFormat, "log-format", "text", "log format: text|json")
+
+	pf.BoolVar(&f.allowExec, "allow-exec", false, "allow config _cmd keys to execute (also EVM_TOOLS_ALLOW_EXEC=1)")
+}
+
+// bindKafkaFlags installs the evm-sink-kafka-specific flags.
+func bindKafkaFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringSliceVar(&f.brokers, "brokers", nil, "comma-separated Kafka broker addresses, e.g. host1:9092,host2:9092")
+	pf.StringVar(&f.topic, "topic", "", "default Kafka topic to publish records to")
+}
+
+func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "run",
+		Short: "Read JSONL from stdin and publish each record downstream",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := f.setupLogging(); err != nil {
+				return err
+			}
+			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
+			// shutdown (stop reading, flush/close the writer, stop the server).
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			cmd.SetContext(ctx)
+
+			switch tool {
+			case ToolSinkKafka:
+				return kafkaRun(cmd, f)
+			default:
+				return fmt.Errorf("unknown sink %q", tool)
+			}
+		},
+	}
+}
+
+func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate",
+		Short: "Validate config (and broker/auth material) without connecting",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := f.setupLogging(); err != nil {
+				return err
+			}
+			switch tool {
+			case ToolSinkKafka:
+				return kafkaValidate(cmd, f)
+			default:
+				return fmt.Errorf("unknown sink %q", tool)
+			}
+		},
+	}
+}
+
+// setupLogging configures the slog default logger from the sink flags.
+func (f *sinkFlags) setupLogging() error {
+	_, err := logging.Setup(f.logLevel, f.logFormat)
+	return err
+}
+
+// allowExecEnabled resolves --allow-exec with the EVM_TOOLS_ALLOW_EXEC=1 env
+// fallback, mirroring the producer path.
+func (f *sinkFlags) allowExecEnabled() bool {
+	if f.allowExec {
+		return true
+	}
+	return os.Getenv("EVM_TOOLS_ALLOW_EXEC") == "1"
+}
+
+// loadConfig builds the config loader with the sink's flag bindings wired in.
+func (f *sinkFlags) loadConfig(cmd *cobra.Command) (*config.Loader, error) {
+	return config.New(config.Options{
+		ConfigFile: f.configFile,
+		Flags:      cmd.Flags(),
+	})
+}

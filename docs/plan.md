@@ -194,13 +194,71 @@ reload (+ metric reset); checkpointing/resume; the sinks `evm-sink-kafka` and
 Questions 1, 2). Value interpolation (`${VAR}`/`_cmd`) is now implemented — see
 Post-M4 follow-ups below.
 
+## S1 — evm-sink-kafka
+
+Goal: the first sink — read the suite's JSONL contract on stdin and publish each
+record to Kafka with at-least-once delivery, settling design Open Question 2
+(delivery semantics) for this build. Pure-Go client only (segmentio/kafka-go), so
+the static cross-compiled release binaries are unaffected.
+
+- [x] **`internal/record` JSONL Reader/decoder** (`reader.go`) shared by both
+      sinks: streaming, line-oriented `Reader.Next()` returning `Envelope`,
+      `Reader.Raw()` for verbatim forwarding, blank-line skip, hard error on a
+      malformed line, and `schema_version` accept/reject (`ErrSchemaUnsupported`).
+      Round-trip + golden-driven tests prove it is the faithful inverse of the
+      encoder, which stays the source of truth. → Record Contract, Testing.
+- [x] **Dedup / partition-key identity on the contract** (`key.go`):
+      `Envelope.DedupKey()` per the documented per-class composition (event:
+      chain_id+tx_hash+log_index, reorg-stable; native_transfer: chain_id+tx_hash;
+      `*_sample`: +block_number+emitted_at; `*_change`: +block_number) and
+      `Envelope.PartitionIdentity()` for per-key ordering. Tested for reorg
+      stability and ordering. → Deduplication and resume keys.
+- [x] **`internal/kafkasink`** core: `Publisher` interface wrapping the actual
+      publish (real segmentio/kafka-go `*Writer`, `RequiredAcks=all`, `Hash`
+      balancer for per-key ordering) behind it so default tests use an in-memory
+      fake (no broker); at-least-once loop (confirm-before-advance, blocking
+      exponential backoff + full jitter on transient failure, fail-fast on a
+      permanent broker rejection, never drop a record); topic routing
+      (default + per-type map); partition key = dedup identity (configurable:
+      identity|dedup|none). → Sink delivery semantics, Topic routing.
+- [x] **SASL/TLS auth** (`writer.go`): SASL PLAIN and SCRAM-SHA-256/512 over TLS;
+      password sourced through the existing config env-interpolation/`_cmd`
+      machinery (`password_cmd`), never hardcoded or logged; SASL requires TLS
+      (fail fast otherwise). → Auth, Secret Handling.
+- [x] **`[kafka]` config + flags**: `config.DecodeKafka` (shared keys +
+      `[kafka]`, strict, sibling sections ignored) with `brokers`, `topic`,
+      `topic_by_type`, `partition_key`, `required_acks` (only `all`), backoff/
+      batch tuning, `[kafka.sasl]`, `[kafka.tls]`, `[kafka.metrics]`; env binding
+      (`EVM_TOOLS_KAFKA_*`) and `--brokers`/`--topic` flags. → Configuration.
+- [x] **`cmd/evm-sink-kafka` + sink CLI** (`internal/cli/sink.go`,
+      `internal/cli/kafka.go`): a sink-shaped command tree (run, validate,
+      version — no `check rpc`/`--rpc-*`), per-suite Prometheus metric set
+      (`internal/metrics/kafka.go`: records consumed/published/failed, publish
+      duration histogram, retry/backoff/blocked gauges) on the metrics server
+      with `/healthz` + `/readyz` (broker-reachable + publish-blocked), graceful
+      shutdown that flushes/closes the writer; slog on stderr. → Metrics.
+- [x] **Tests**: record Reader round-trip + schema-reject + dedup/partition key;
+      kafkasink loop with a fake (publishes every record, topic routing,
+      partition keying, transient-retry, permanent fail-fast, confirm-before-
+      advance, malformed-line fail-fast); config decode/defaults/sibling-ignore/
+      env-override/`password_cmd`; metrics endpoint + sink `/readyz`; CLI
+      version/help/validate/run (fake publisher); a `livekafka`-tagged real-broker
+      test. All offline-safe in the default `go test ./...`. → Testing.
+- [x] **Release**: `evm-sink-kafka` build + archive + Homebrew cask in
+      `.goreleaser.yaml`; `install.sh` aware of the new binary. → Release.
+- [x] **Acceptance:** build/vet/test/lint green offline; `goreleaser check`
+      passes; `evm-sink-kafka --help`/`version` work; validate catches bad
+      config (missing brokers/topic, unsupported `required_acks`/`partition_key`,
+      SASL-without-TLS); run publishes every stdin record at-least-once and blocks
+      (never drops) on a stalled broker.
+
 ## Deferred (post-spine, per design)
 
 Native transfer internal/trace transfers; config reload (+ metric reset); reorg
 handling and the additive `finalized`/`removed` field; checkpointing/resume; the
-sinks (`evm-sink-kafka`, `evm-sink-webhook`) and the webhook sink's scope. See
-design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
-runtime is done — see M4.)
+`evm-sink-webhook` sink and its scope (design Open Question 1). See design
+[Open Questions](design.md#open-questions). (ERC-721 balance/ownership runtime is
+done — see M4; the `evm-sink-kafka` sink is done — see S1.)
 
 ## Post-M4 follow-ups
 

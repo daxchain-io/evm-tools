@@ -143,11 +143,77 @@ type BalanceConfig struct {
 	ERC721Ownership []BalanceERC721Ownership `mapstructure:"erc721_ownership"`
 }
 
+// KafkaSASLConfig holds the optional SASL authentication for the Kafka sink.
+// Mechanism is one of "plain", "scram-sha-256", or "scram-sha-512" (empty
+// disables SASL). The Password is a secret and is sourced through the shared
+// env-interpolation / _cmd machinery (password_cmd) so it never lands in the
+// file; it is never logged.
+type KafkaSASLConfig struct {
+	Mechanism string `mapstructure:"mechanism"`
+	Username  string `mapstructure:"username"`
+	Password  string `mapstructure:"password"`
+}
+
+// KafkaTLSConfig holds the TLS settings for the Kafka connection. SASL must run
+// over TLS, so Enabled defaults on when a SASL mechanism is set (enforced by the
+// resolver). CACert/ClientCert/ClientKey are file paths; ServerName overrides
+// the SNI/verification name; InsecureSkipVerify is a deliberate, dev-only escape
+// hatch.
+type KafkaTLSConfig struct {
+	Enabled            *bool  `mapstructure:"enabled"`
+	CACert             string `mapstructure:"ca_cert"`
+	ClientCert         string `mapstructure:"client_cert"`
+	ClientKey          string `mapstructure:"client_key"`
+	ServerName         string `mapstructure:"server_name"`
+	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify"`
+}
+
+// KafkaConfig is the [kafka] section for evm-sink-kafka. Brokers and Topic are
+// the minimum; TopicByType maps a record type to an override topic, and
+// PartitionKey selects how the partition key is derived (default: the record's
+// documented dedup identity, preserving per-key ordering).
+type KafkaConfig struct {
+	Brokers []string `mapstructure:"brokers"`
+	Topic   string   `mapstructure:"topic"`
+	// TopicByType maps a record type (e.g. "event", "balance_sample") to a topic
+	// that overrides Topic for records of that type.
+	TopicByType map[string]string `mapstructure:"topic_by_type"`
+	// PartitionKey selects the partition-key strategy: "identity" (default — the
+	// record's dedup identity, so per-key ordering holds), "dedup" (the full
+	// dedup key including the sample disambiguator), or "none" (no key —
+	// round-robin partitioning, no ordering guarantee).
+	PartitionKey string `mapstructure:"partition_key"`
+	// RequiredAcks selects the publish acknowledgement level. Only "all" is
+	// supported for the at-least-once contract; it is the default. Surfaced so a
+	// future relaxation is a config change, and so a wrong value fails fast.
+	RequiredAcks string `mapstructure:"required_acks"`
+	// BackoffBase / BackoffMax bound the blocking exponential-backoff retry on a
+	// transient publish failure. Strings so a duration like "500ms" / "30s"
+	// parses; empty falls back to built-in defaults.
+	BackoffBase string `mapstructure:"backoff_base"`
+	BackoffMax  string `mapstructure:"backoff_max"`
+	// BatchTimeout bounds how long the writer waits to fill a batch before
+	// flushing; kept small so a low-volume stream still confirms promptly.
+	BatchTimeout string `mapstructure:"batch_timeout"`
+
+	SASL    KafkaSASLConfig `mapstructure:"sasl"`
+	TLS     KafkaTLSConfig  `mapstructure:"tls"`
+	Metrics MetricsConfig   `mapstructure:"metrics"`
+}
+
 // StreamFull is the fully decoded configuration for evm-stream: shared keys
 // plus the [stream] subtree.
 type StreamFull struct {
 	Shared
 	Stream StreamConfig
+}
+
+// KafkaFull is the fully decoded configuration for evm-sink-kafka: shared keys
+// plus the [kafka] subtree. Sinks read stdin JSONL, not RPC, so [rpc]/[chain]
+// are not required — only the shared [metrics]/[log] plus [kafka].
+type KafkaFull struct {
+	Shared
+	Kafka KafkaConfig
 }
 
 // BalanceFull is the fully decoded configuration for evm-balance: shared keys

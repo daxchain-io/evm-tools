@@ -58,6 +58,10 @@ var flagBindings = map[string]string{
 	"rpc-server-name": "rpc.server_name",
 	"log-level":       "log.level",
 	"log-format":      "log.format",
+
+	// evm-sink-kafka flags.
+	"brokers": "kafka.brokers",
+	"topic":   "kafka.topic",
 }
 
 // New builds a Loader, reading the config file (if any) and wiring env binding.
@@ -127,6 +131,11 @@ func bindEnvKeys(v *viper.Viper) {
 		"log.level", "log.format",
 		"stream.metrics.enabled", "stream.metrics.addr", "stream.metrics.path",
 		"balance.metrics.enabled", "balance.metrics.addr", "balance.metrics.path",
+		"kafka.brokers", "kafka.topic", "kafka.partition_key", "kafka.required_acks",
+		"kafka.sasl.mechanism", "kafka.sasl.username", "kafka.sasl.password",
+		"kafka.tls.enabled", "kafka.tls.ca_cert", "kafka.tls.client_cert",
+		"kafka.tls.client_key", "kafka.tls.server_name",
+		"kafka.metrics.enabled", "kafka.metrics.addr", "kafka.metrics.path",
 	}
 	for _, k := range keys {
 		// Error only occurs with an empty key; ignore safely.
@@ -171,6 +180,14 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("balance.metrics.path", "/metrics")
 	v.SetDefault("balance.metrics.addr", ":9001")
+
+	v.SetDefault("kafka.partition_key", "identity")
+	v.SetDefault("kafka.required_acks", "all")
+	v.SetDefault("kafka.backoff_base", "500ms")
+	v.SetDefault("kafka.backoff_max", "30s")
+	v.SetDefault("kafka.batch_timeout", "200ms")
+	v.SetDefault("kafka.metrics.path", "/metrics")
+	v.SetDefault("kafka.metrics.addr", ":9002")
 }
 
 // userConfigDir returns the user-level config directory, defaulting to

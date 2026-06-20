@@ -48,6 +48,27 @@ builds:
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
 
+  # CGO stays disabled: segmentio/kafka-go is pure Go, so the static
+  # cross-compiled binaries are unaffected (no confluent/cgo client).
+  - id: evm-sink-kafka
+    main: ./cmd/evm-sink-kafka
+    binary: evm-sink-kafka
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
 archives:
   - id: evm-stream
     ids:
@@ -62,6 +83,15 @@ archives:
     ids:
       - evm-balance
     name_template: "evm-balance_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+  - id: evm-sink-kafka
+    ids:
+      - evm-sink-kafka
+    name_template: "evm-sink-kafka_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     files:
@@ -129,6 +159,17 @@ homebrew_casks:
     description: "Poll EVM balances and contract state and emit JSONL samples"
     binaries:
       - evm-balance
+  - name: evm-sink-kafka
+    ids:
+      - evm-sink-kafka
+    repository:
+      owner: daxchain-io
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/daxchain-io/evm-tools"
+    description: "Publish JSONL records from stdin to Kafka topics (at-least-once)"
+    binaries:
+      - evm-sink-kafka
 
 changelog:
   sort: asc

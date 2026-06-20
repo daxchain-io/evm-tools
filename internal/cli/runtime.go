@@ -73,3 +73,40 @@ type commandFlags struct {
 	metricsAddrChanged bool
 	metricsPathChanged bool
 }
+
+// resolveSinkMetrics is the sinkFlags analogue of resolveMetrics: it folds the
+// shared and tool-specific metrics config plus the command-line flags into one
+// resolved endpoint config for a sink (which has no RPC surface but the same
+// metrics precedence: flags > [<sink>.metrics] > [metrics] > defaults).
+func (f *sinkFlags) resolveSinkMetrics(cmd commandFlags, shared, tool config.MetricsConfig, defaultAddr string) resolvedMetrics {
+	out := resolvedMetrics{
+		Enabled: shared.IsEnabled(),
+		Addr:    shared.Addr,
+		Path:    shared.Path,
+	}
+	if tool.Enabled != nil {
+		out.Enabled = *tool.Enabled
+	}
+	if tool.Addr != "" {
+		out.Addr = tool.Addr
+	}
+	if tool.Path != "" {
+		out.Path = tool.Path
+	}
+	if out.Addr == "" {
+		out.Addr = defaultAddr
+	}
+	if out.Path == "" {
+		out.Path = "/metrics"
+	}
+	if cmd.metricsChanged {
+		out.Enabled = f.metricsEnabled
+	}
+	if cmd.metricsAddrChanged {
+		out.Addr = f.metricsAddr
+	}
+	if cmd.metricsPathChanged {
+		out.Path = f.metricsPath
+	}
+	return out
+}

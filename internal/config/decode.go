@@ -30,6 +30,13 @@ type balanceTarget struct {
 	Balance BalanceConfig `mapstructure:"balance"`
 }
 
+// kafkaTarget is the decode shape for evm-sink-kafka: shared keys squashed onto
+// the top level plus the [kafka] subtree.
+type kafkaTarget struct {
+	Shared `mapstructure:",squash"`
+	Kafka  KafkaConfig `mapstructure:"kafka"`
+}
+
 // DecodeStream strict-decodes the shared keys plus the [stream] subtree into a
 // StreamFull. Unknown keys within those sections are a fatal error; the
 // [balance] section is ignored.
@@ -52,6 +59,20 @@ func (l *Loader) DecodeBalance(allowExec bool) (*BalanceFull, error) {
 	}
 	t.AllowExec = allowExec
 	return &BalanceFull{Shared: t.Shared, Balance: t.Balance}, nil
+}
+
+// DecodeKafka strict-decodes the shared keys plus the [kafka] subtree into a
+// KafkaFull. Unknown keys within those sections are a fatal error; sibling-tool
+// sections ([stream]/[balance]) are ignored. A sink needs the shared
+// [metrics]/[log] plus its own [kafka] section, not [rpc]/[chain] — those, if
+// present in a shared file, decode harmlessly into the shared struct.
+func (l *Loader) DecodeKafka(allowExec bool) (*KafkaFull, error) {
+	var t kafkaTarget
+	if err := l.strictDecode("kafka", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &KafkaFull{Shared: t.Shared, Kafka: t.Kafka}, nil
 }
 
 // strictDecode builds a settings map containing only the shared keys and the
