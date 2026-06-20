@@ -1,8 +1,8 @@
-# Codex Chain EVM Tools
+# EVM Tools
 
-This repository is a suite of composable command-line tools for observing
-Codex Chain (and other EVM chains) and moving that data into downstream
-systems. The tools follow a Unix-pipeline philosophy: each binary does one job
+This repository is a suite of composable command-line tools for observing EVM
+chains and moving that data into downstream systems. The tools follow a
+Unix-pipeline philosophy: each binary does one job
 well, reads its settings from a shared configuration namespace, and speaks a
 single common data contract — newline-delimited JSON (JSONL) on standard
 output.
@@ -84,15 +84,15 @@ sink reads it from stdin.
 
 ```sh
 # Stream contract events straight into Kafka.
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml \
+evm-stream run -c ~/.config/evm-tools/my-chain.toml \
   | evm-sink-kafka --topic evm.events
 
 # Poll balances and forward changes to an alerting webhook.
-evm-balance run -c ~/.config/evm-tools/codex-chain.toml \
+evm-balance run -c ~/.config/evm-tools/my-chain.toml \
   | evm-sink-webhook --url https://hooks.internal.example.com/evm
 
 # Or just inspect it locally.
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml | jq
+evm-stream run -c ~/.config/evm-tools/my-chain.toml | jq
 ```
 
 Because the producers and sinks share the same monorepo and the same internal
@@ -118,7 +118,7 @@ type-specific **`data`** payload.
 | `type` | string | Record type, e.g. `event`, `native_transfer`, `balance_sample`. Selects the `data` shape. |
 | `tool` | string | Producing tool, e.g. `evm-stream`. |
 | `name` | string | Name of the configured entry (stream contract, balance, token, ownership, or contract-state check) that produced the record. |
-| `chain` | string | Configured chain name, e.g. `codex-chain`. |
+| `chain` | string | Configured chain name, e.g. `my-chain`. |
 | `chain_id` | integer | Resolved EVM chain ID (guaranteed within the JSON safe-integer range). |
 | `block_number` | integer | Source block number. |
 | `block_hash` | string | Source block hash, for provenance; not part of the dedup key. |
@@ -247,12 +247,12 @@ a specific token.
 ### Examples
 
 ```json
-{"schema_version":1,"type":"event","tool":"evm-stream","name":"usdc","chain":"codex-chain","chain_id":4242,"block_number":19000001,"block_hash":"0x...","tx_hash":"0x...","log_index":12,"timestamp":"2026-06-19T12:00:00Z","emitted_at":"2026-06-19T12:00:03Z","data":{"event":"Transfer","signature":"Transfer(address,address,uint256)","contract":"0x...","params":{"from":"0x...","to":"0x...","value":"1250000"}}}
-{"schema_version":1,"type":"native_transfer","tool":"evm-stream","name":"native","chain":"codex-chain","chain_id":4242,"block_number":19000002,"block_hash":"0x...","tx_hash":"0x...","timestamp":"2026-06-19T12:00:12Z","emitted_at":"2026-06-19T12:00:13Z","data":{"from":"0x...","to":"0x...","value_wei":"1250000000000000000","value":"1.25"}}
-{"schema_version":1,"type":"balance_sample","tool":"evm-balance","name":"treasury-eth","chain":"codex-chain","chain_id":4242,"block_number":19000050,"block_hash":"0x...","timestamp":"2026-06-19T12:05:00Z","emitted_at":"2026-06-19T12:05:01Z","data":{"kind":"native","address":"0x...","balance_wei":"4200000000000000000","balance":"4.2"}}
-{"schema_version":1,"type":"balance_change","tool":"evm-balance","name":"treasury-usdc","chain":"codex-chain","chain_id":4242,"block_number":19000061,"block_hash":"0x...","timestamp":"2026-06-19T12:06:00Z","emitted_at":"2026-06-19T12:06:01Z","data":{"kind":"erc20","token":"0x...","address":"0x...","previous_raw":"1000000","balance_raw":"2000000","balance":"2.0","decimals":6}}
-{"schema_version":1,"type":"ownership_change","tool":"evm-balance","name":"special-token-owner","chain":"codex-chain","chain_id":4242,"block_number":19000070,"block_hash":"0x...","timestamp":"2026-06-19T12:07:00Z","emitted_at":"2026-06-19T12:07:01Z","data":{"kind":"erc721","token":"0x...","token_id":"1234","previous_owner":"0x...","owner":"0x..."}}
-{"schema_version":1,"type":"contract_sample","tool":"evm-balance","name":"usdc","chain":"codex-chain","chain_id":4242,"block_number":19000080,"block_hash":"0x...","timestamp":"2026-06-19T12:08:00Z","emitted_at":"2026-06-19T12:08:01Z","data":{"address":"0x...","field":"token_total_supply","total_supply_raw":"50000000000000","total_supply":"50000000.0","decimals":6}}
+{"schema_version":1,"type":"event","tool":"evm-stream","name":"usdc","chain":"my-chain","chain_id":4242,"block_number":19000001,"block_hash":"0x...","tx_hash":"0x...","log_index":12,"timestamp":"2026-06-19T12:00:00Z","emitted_at":"2026-06-19T12:00:03Z","data":{"event":"Transfer","signature":"Transfer(address,address,uint256)","contract":"0x...","params":{"from":"0x...","to":"0x...","value":"1250000"}}}
+{"schema_version":1,"type":"native_transfer","tool":"evm-stream","name":"native","chain":"my-chain","chain_id":4242,"block_number":19000002,"block_hash":"0x...","tx_hash":"0x...","timestamp":"2026-06-19T12:00:12Z","emitted_at":"2026-06-19T12:00:13Z","data":{"from":"0x...","to":"0x...","value_wei":"1250000000000000000","value":"1.25"}}
+{"schema_version":1,"type":"balance_sample","tool":"evm-balance","name":"treasury-eth","chain":"my-chain","chain_id":4242,"block_number":19000050,"block_hash":"0x...","timestamp":"2026-06-19T12:05:00Z","emitted_at":"2026-06-19T12:05:01Z","data":{"kind":"native","address":"0x...","balance_wei":"4200000000000000000","balance":"4.2"}}
+{"schema_version":1,"type":"balance_change","tool":"evm-balance","name":"treasury-usdc","chain":"my-chain","chain_id":4242,"block_number":19000061,"block_hash":"0x...","timestamp":"2026-06-19T12:06:00Z","emitted_at":"2026-06-19T12:06:01Z","data":{"kind":"erc20","token":"0x...","address":"0x...","previous_raw":"1000000","balance_raw":"2000000","balance":"2.0","decimals":6}}
+{"schema_version":1,"type":"ownership_change","tool":"evm-balance","name":"special-token-owner","chain":"my-chain","chain_id":4242,"block_number":19000070,"block_hash":"0x...","timestamp":"2026-06-19T12:07:00Z","emitted_at":"2026-06-19T12:07:01Z","data":{"kind":"erc721","token":"0x...","token_id":"1234","previous_owner":"0x...","owner":"0x..."}}
+{"schema_version":1,"type":"contract_sample","tool":"evm-balance","name":"usdc","chain":"my-chain","chain_id":4242,"block_number":19000080,"block_hash":"0x...","timestamp":"2026-06-19T12:08:00Z","emitted_at":"2026-06-19T12:08:01Z","data":{"address":"0x...","field":"token_total_supply","total_supply_raw":"50000000000000","total_supply":"50000000.0","decimals":6}}
 ```
 
 The first version prefers stable, descriptive JSON field names over compact
@@ -336,9 +336,9 @@ no gap or duplicate at the boundary.
 ### Command shape
 
 ```sh
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml
-evm-stream validate -c ~/.config/evm-tools/codex-chain.toml
-evm-stream check rpc -c ~/.config/evm-tools/codex-chain.toml
+evm-stream run -c ~/.config/evm-tools/my-chain.toml
+evm-stream validate -c ~/.config/evm-tools/my-chain.toml
+evm-stream check rpc -c ~/.config/evm-tools/my-chain.toml
 evm-stream version
 ```
 
@@ -415,7 +415,7 @@ caught at startup instead of silently dropped.
 ### Example
 
 ```toml
-chain = "codex-chain"
+chain = "my-chain"
 
 [rpc]
 url = "https://rpc.internal.example.com:8545"
@@ -521,7 +521,7 @@ username = "evm-tools"
 # Secret: pulled at startup, never written to the file or logged. On a
 # distroless/scratch image (no shell) use ${KAFKA_PASSWORD} interpolation or a
 # mounted secret file instead of _cmd.
-password_cmd = "vault read -field=password secret/codex/kafka"
+password_cmd = "vault read -field=password secret/evm-tools/kafka"
 
 [kafka.tls]
 enabled = true                            # SASL requires TLS (fail fast otherwise)
@@ -545,7 +545,7 @@ headers = { X-Source = "evm-tools" }      # static, non-secret headers
 [webhook.auth]
 header = "Authorization"
 # Secret: sourced like the Kafka password — never written to the file or logged.
-value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/codex/webhook)\""
+value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/evm-tools/webhook)\""
 
 # Optional filters — a FORWARDER WITH OPTIONAL FILTERS, not a rule DSL. All
 # configured filters must pass for a record to be forwarded.
@@ -663,7 +663,7 @@ manager such as Vault without writing them into the file:
 ```toml
 [rpc]
 # Instead of url = "...", fetch it at startup:
-url_cmd = "vault read -field=url secret/codex/rpc"
+url_cmd = "vault read -field=url secret/evm-tools/rpc"
 ```
 
 Rules:
@@ -732,7 +732,7 @@ eventually support.
 
 The tools fail fast with a clear error when the configured RPC URL uses HTTPS
 and the required mTLS files are missing, unreadable, mismatched, or invalid.
-Plain HTTP is allowed for local development, but production Codex Chain RPC
+Plain HTTP is allowed for local development, but production EVM RPC
 access is treated as HTTPS plus mTLS.
 
 ## Secret Handling
@@ -764,7 +764,7 @@ containers, scripts, and exec-style health probes. It is a Cobra subcommand
 rather than a flag on `run`.
 
 ```sh
-evm-stream check rpc -c ~/.config/evm-tools/codex-chain.toml
+evm-stream check rpc -c ~/.config/evm-tools/my-chain.toml
 evm-stream check rpc --rpc-url https://rpc.internal.example.com:8545
 ```
 
@@ -818,10 +818,10 @@ addr = ":9001"
 ```
 
 ```sh
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml --metrics
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml --metrics-addr :9000
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml --metrics-path /metrics
-evm-balance run -c ~/.config/evm-tools/codex-chain.toml --metrics --metrics-addr :9001
+evm-stream run -c ~/.config/evm-tools/my-chain.toml --metrics
+evm-stream run -c ~/.config/evm-tools/my-chain.toml --metrics-addr :9000
+evm-stream run -c ~/.config/evm-tools/my-chain.toml --metrics-path /metrics
+evm-balance run -c ~/.config/evm-tools/my-chain.toml --metrics --metrics-addr :9001
 ```
 
 Flags:
@@ -857,7 +857,7 @@ Per-transaction or per-counterparty identifiers — `tx_hash`, `log_index`, and
 the `from`/`to` of an observed transfer — are never labels. The shared label
 vocabulary stays close to `blockchain-exporter`:
 
-- `blockchain`: configured chain name, such as `codex-chain`.
+- `blockchain`: configured chain name, such as `my-chain`.
 - `chain_id`: resolved EVM chain ID, or `unknown` before it is available.
 - `operation`: RPC operation name, such as `eth_chainId`, `eth_blockNumber`,
   `eth_getLogs`, or `eth_getBlockByNumber`.
@@ -1137,12 +1137,11 @@ Artifacts include the binaries, checksums, and the files installers need.
 checksums file (cosign), publishes GitHub releases, and updates the shared
 Daxchain Homebrew tap from one workflow.
 
-Homebrew installs publish to `daxchain-io/homebrew-tap` as formulae (these are
-CLI binaries), unless the tap standardizes on casks for all Daxchain tools:
+Homebrew publishes a single `evm-tools` cask to `daxchain-io/homebrew-tap` that
+bundles all four binaries, so one command installs the whole suite:
 
 ```sh
-brew install daxchain-io/tap/evm-stream
-brew install daxchain-io/tap/evm-balance
+brew install daxchain-io/tap/evm-tools
 ```
 
 A universal installer supports a `curl | sh` workflow for hosts without
@@ -1168,9 +1167,9 @@ it; `EVM_TOOLS_SKIP_SIGNATURE=1` is an explicit, loudly warned opt-out that
 downgrades to an unauthenticated same-channel SHA-256 check. Downloads are HTTPS
 and fail closed. Because `curl | sh` runs `install.sh` before any verification,
 a download-inspect-run alternative is documented for high-assurance
-environments. The installer lets the caller select
-a binary and install directory, so the same release path installs `evm-stream`
-first and the other tools later.
+environments. The installer downloads the single bundle archive and installs all
+four binaries by default into the chosen directory; set `EVM_TOOLS_BIN` to a
+single binary name to install just one.
 
 ### Release automation
 
@@ -1185,9 +1184,9 @@ toolchain, and runs `goreleaser release --clean`. In that single run GoReleaser:
 - publishes the universal `install.sh` as a release asset, reachable at the
   stable `releases/latest/download/install.sh` URL and regenerated each release
   so it resolves the matching versioned artifacts;
-- updates the Homebrew tap — its `brews` config renders the `evm-stream` and
-  `evm-balance` formulae and commits them to `daxchain-io/homebrew-tap`, so
-  `brew upgrade` sees the new version with no manual step.
+- updates the Homebrew tap — its `homebrew_casks` config renders the single
+  `evm-tools` cask and commits it to `daxchain-io/homebrew-tap`, so `brew upgrade`
+  sees the new version with no manual step.
 
 Required workflow permissions and secrets:
 

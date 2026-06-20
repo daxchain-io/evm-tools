@@ -158,7 +158,7 @@ func TestBackfillThenHeadFollowGapFree(t *testing.T) {
 	s, err := New(Options{
 		Client:         fc,
 		Emitter:        em,
-		ChainName:      "codex-chain",
+		ChainName:      "my-chain",
 		ChainID:        4242,
 		Contracts:      resolvedUSDC(t),
 		PollInterval:   5 * time.Millisecond,
@@ -230,7 +230,7 @@ func TestNativeTransferSuccessGating(t *testing.T) {
 	s, err := New(Options{
 		Client:         fc,
 		Emitter:        em,
-		ChainName:      "codex-chain",
+		ChainName:      "my-chain",
 		ChainID:        4242,
 		NativeFilter:   NativeFilterFromConfig(config.NativeTransfersConfig{Enabled: true}),
 		PollInterval:   5 * time.Millisecond,
@@ -519,7 +519,7 @@ func TestHeadBlockTimePublished(t *testing.T) {
 		Client:         fc,
 		Emitter:        em,
 		Metrics:        hm,
-		ChainName:      "codex-chain",
+		ChainName:      "my-chain",
 		ChainID:        4242,
 		Contracts:      resolvedUSDC(t),
 		PollInterval:   5 * time.Millisecond,

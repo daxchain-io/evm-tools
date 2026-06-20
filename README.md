@@ -1,23 +1,35 @@
-# Codex Chain EVM Tools
+# EVM Tools
 
-A suite of composable command-line tools for observing Codex Chain (and other
-EVM chains) and moving that data into downstream systems. Each tool does one
-job and speaks a single common data contract — newline-delimited JSON on
-standard output — so they pipe together cleanly.
+A suite of composable command-line tools for observing EVM chains and moving
+that data into downstream systems. Each tool does one job and speaks a single
+common data contract — newline-delimited JSON on standard output — so they pipe
+together cleanly.
 
-The first two tools are producers:
-
-- `evm-stream`: live EVM activity monitoring (contract events and native ETH
-  transfers) as newline-delimited JSON.
-- `evm-balance`: balance and contract-state polling as newline-delimited JSON.
-
-Downstream sink tools consume that stream and deliver it somewhere useful:
-
-- `evm-sink-kafka`: publish each record to Kafka topics, at-least-once.
-- `evm-sink-webhook`: forward each record over HTTP, at-least-once, with optional
+- `evm-stream` — live EVM activity monitoring (contract events and native ETH
+  transfers) as JSONL.
+- `evm-balance` — balance and contract-state polling as JSONL.
+- `evm-sink-kafka` — publish each record to Kafka topics, at-least-once.
+- `evm-sink-webhook` — forward each record over HTTP, at-least-once, with optional
   filters.
 
-All tools live in this repository and share one configuration namespace.
+All four live in this repository and share one configuration namespace.
+
+## Install
+
+One command installs the whole suite (all four CLIs):
+
+```sh
+# Homebrew (macOS / Linux)
+brew install daxchain-io/tap/evm-tools
+
+# Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all four:
+curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh
+```
+
+To install a single CLI via the script, set `EVM_TOOLS_BIN` (e.g.
+`EVM_TOOLS_BIN=evm-stream`). The installer verifies the release's cosign-signed
+checksums before installing — see
+[docs/design.md](docs/design.md#release-and-distribution) for the trust model.
 
 ## Pipelines
 
@@ -26,22 +38,22 @@ reads it from stdin.
 
 ```sh
 # Stream contract events straight into Kafka.
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml \
-  | evm-sink-kafka run -c ~/.config/evm-tools/codex-chain.toml
+evm-stream run -c ~/.config/evm-tools/my-chain.toml \
+  | evm-sink-kafka run -c ~/.config/evm-tools/my-chain.toml
 
 # Poll balances and forward changes to an alerting webhook.
-evm-balance run -c ~/.config/evm-tools/codex-chain.toml \
-  | evm-sink-webhook run -c ~/.config/evm-tools/codex-chain.toml
+evm-balance run -c ~/.config/evm-tools/my-chain.toml \
+  | evm-sink-webhook run -c ~/.config/evm-tools/my-chain.toml
 
 # Override the destination on the command line.
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml \
+evm-stream run -c ~/.config/evm-tools/my-chain.toml \
   | evm-sink-kafka --brokers broker:9093 --topic evm.events
 
-evm-balance run -c ~/.config/evm-tools/codex-chain.toml \
+evm-balance run -c ~/.config/evm-tools/my-chain.toml \
   | evm-sink-webhook --url https://hooks.internal.example.com/evm
 
 # Or just inspect the stream locally.
-evm-stream run -c ~/.config/evm-tools/codex-chain.toml | jq
+evm-stream run -c ~/.config/evm-tools/my-chain.toml | jq
 ```
 
 stdout is the data stream and stderr is human-readable diagnostics, so the two
@@ -66,7 +78,7 @@ readiness_probe_interval = "15s"  # active broker probe keeps /readyz live while
 [kafka.sasl]
 mechanism = "scram-sha-512"    # plain | scram-sha-256 | scram-sha-512
 username = "evm-tools"
-password_cmd = "vault read -field=password secret/codex/kafka"
+password_cmd = "vault read -field=password secret/evm-tools/kafka"
 
 [kafka.tls]
 enabled = true                 # SASL requires TLS
@@ -79,7 +91,7 @@ readiness_probe_interval = "15s"                           # probe cadence when 
 
 [webhook.auth]
 header = "Authorization"
-value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/codex/webhook)\""
+value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/evm-tools/webhook)\""
 
 # Optional filters: forward all by default, narrow with these.
 [webhook.filters]

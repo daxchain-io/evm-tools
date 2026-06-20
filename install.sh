@@ -13,7 +13,9 @@
 # running it instead of piping it straight into a shell.
 #
 # Environment overrides:
-#   EVM_TOOLS_BIN      binary to install: evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook (default evm-stream)
+#   EVM_TOOLS_BIN      which CLIs to install: "all" (default) installs the whole
+#                      suite from one archive, or name one — evm-stream |
+#                      evm-balance | evm-sink-kafka | evm-sink-webhook
 #   EVM_TOOLS_VERSION  version tag to install (default: latest)
 #   EVM_TOOLS_INSTALL_DIR  install directory (default: /usr/local/bin)
 #   EVM_TOOLS_BASE_URL     base "releases" URL (default the GitHub repo); set
@@ -27,7 +29,8 @@
 set -eu
 
 REPO="daxchain-io/evm-tools"
-BIN="${EVM_TOOLS_BIN:-evm-stream}"
+BIN="${EVM_TOOLS_BIN:-all}"
+ALL_BINS="evm-stream evm-balance evm-sink-kafka evm-sink-webhook"
 VERSION="${EVM_TOOLS_VERSION:-latest}"
 INSTALL_DIR="${EVM_TOOLS_INSTALL_DIR:-/usr/local/bin}"
 BASE_URL="${EVM_TOOLS_BASE_URL:-https://github.com/${REPO}/releases}"
@@ -52,9 +55,16 @@ need() {
 }
 
 case "$BIN" in
-  evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook) ;;
-  *) err "unsupported binary '$BIN' (want evm-stream, evm-balance, evm-sink-kafka, or evm-sink-webhook)" ;;
+  all | evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook) ;;
+  *) err "unsupported EVM_TOOLS_BIN '$BIN' (want all, evm-stream, evm-balance, evm-sink-kafka, or evm-sink-webhook)" ;;
 esac
+
+# The release bundles every binary in one archive; pick which to install.
+if [ "$BIN" = "all" ]; then
+  bins="$ALL_BINS"
+else
+  bins="$BIN"
+fi
 
 need uname
 need mktemp
@@ -109,7 +119,7 @@ if [ "$VERSION" = "latest" ]; then
   fi
 fi
 
-archive="${BIN}_${ver_no_v}_${os}_${arch}.tar.gz"
+archive="evm-tools_${ver_no_v}_${os}_${arch}.tar.gz"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -178,6 +188,9 @@ if [ ! -w "$INSTALL_DIR" ]; then
   err "install dir '$INSTALL_DIR' is not writable; re-run with sudo or set EVM_TOOLS_INSTALL_DIR"
 fi
 
-install -m 0755 "${tmp}/${BIN}" "${INSTALL_DIR}/${BIN}"
-echo "Installed ${BIN} to ${INSTALL_DIR}/${BIN}" >&2
-"${INSTALL_DIR}/${BIN}" version || true
+# shellcheck disable=SC2086 # intentional word-splitting of the space-separated bin list
+for b in $bins; do
+  [ -f "${tmp}/${b}" ] || err "binary '${b}' not found in ${archive}"
+  install -m 0755 "${tmp}/${b}" "${INSTALL_DIR}/${b}"
+  echo "Installed ${b} to ${INSTALL_DIR}/${b}" >&2
+done

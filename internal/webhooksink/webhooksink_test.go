@@ -35,7 +35,7 @@ func eventEnv(tx string, logIndex uint64) record.Envelope {
 	li := logIndex
 	return record.Envelope{
 		Type: record.TypeEvent, Tool: record.ToolStream, Name: "usdc",
-		Chain: "codex-chain", ChainID: 4242, BlockNumber: 100,
+		Chain: "my-chain", ChainID: 4242, BlockNumber: 100,
 		TxHash: tx, LogIndex: &li,
 		Data: record.EventData{Event: "Transfer", Signature: "Transfer(address,address,uint256)", Contract: "0xc", Params: map[string]string{"value": "1"}},
 	}
@@ -44,7 +44,7 @@ func eventEnv(tx string, logIndex uint64) record.Envelope {
 func nativeSampleEnv(name string, block uint64, balance string) record.Envelope {
 	return record.Envelope{
 		Type: record.TypeBalanceSample, Tool: record.ToolBalance, Name: name,
-		Chain: "codex-chain", ChainID: 4242, BlockNumber: block,
+		Chain: "my-chain", ChainID: 4242, BlockNumber: block,
 		Data: record.BalanceData{Kind: record.KindNative, Address: "0xa", BalanceWei: "1", Balance: balance},
 	}
 }

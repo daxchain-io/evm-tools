@@ -87,7 +87,7 @@ func TestReadyzReflectsSignals(t *testing.T) {
 }
 
 func TestMetricsEndpointServesStreamSet(t *testing.T) {
-	s := NewStream("codex-chain", "4242")
+	s := NewStream("my-chain", "4242")
 	s.SetUp(true)
 	s.SetConfiguredContracts(3)
 	s.IncEventRecord("usdc", "0xabc", "Transfer")
@@ -103,8 +103,8 @@ func TestMetricsEndpointServesStreamSet(t *testing.T) {
 		t.Fatalf("/metrics = %d", code)
 	}
 	for _, want := range []string{
-		`evm_stream_up{blockchain="codex-chain",chain_id="4242"} 1`,
-		`evm_stream_configured_contracts{blockchain="codex-chain",chain_id="4242"} 3`,
+		`evm_stream_up{blockchain="my-chain",chain_id="4242"} 1`,
+		`evm_stream_configured_contracts{blockchain="my-chain",chain_id="4242"} 3`,
 		"evm_stream_records_emitted_total",
 		"evm_stream_native_transfer_records_emitted_total",
 		`evm_stream_contract_event_records_emitted_total{`,
@@ -122,7 +122,7 @@ func TestMetricsEndpointServesStreamSet(t *testing.T) {
 }
 
 func TestMetricsEndpointServesBalanceSet(t *testing.T) {
-	b := NewBalance("codex-chain", "4242")
+	b := NewBalance("my-chain", "4242")
 	b.SetUp(true)
 	b.SetConfiguredNative(2)
 	b.SetConfiguredContracts(1)
@@ -142,8 +142,8 @@ func TestMetricsEndpointServesBalanceSet(t *testing.T) {
 		t.Fatalf("/metrics = %d", code)
 	}
 	for _, want := range []string{
-		`evm_balance_up{blockchain="codex-chain",chain_id="4242"} 1`,
-		`evm_balance_configured_native_accounts{blockchain="codex-chain",chain_id="4242"} 2`,
+		`evm_balance_up{blockchain="my-chain",chain_id="4242"} 1`,
+		`evm_balance_configured_native_accounts{blockchain="my-chain",chain_id="4242"} 2`,
 		"evm_balance_records_emitted_total",
 		"evm_balance_sample_records_emitted_total",
 		"evm_balance_change_records_emitted_total",
@@ -164,7 +164,7 @@ func TestMetricsEndpointServesBalanceSet(t *testing.T) {
 }
 
 func TestMetricsEndpointServesKafkaSet(t *testing.T) {
-	k := NewKafka("codex-chain", "")
+	k := NewKafka("my-chain", "")
 	k.SetUp(true)
 	k.SetWorkers(1)
 	k.IncConsumed()
@@ -183,7 +183,7 @@ func TestMetricsEndpointServesKafkaSet(t *testing.T) {
 		t.Fatalf("/metrics = %d", code)
 	}
 	for _, want := range []string{
-		`evm_sink_kafka_up{blockchain="codex-chain",chain_id="unknown"} 1`,
+		`evm_sink_kafka_up{blockchain="my-chain",chain_id="unknown"} 1`,
 		"evm_sink_kafka_records_consumed_total",
 		`evm_sink_kafka_records_published_total{`,
 		`topic="evm.events"`,
@@ -206,7 +206,7 @@ func TestMetricsEndpointServesKafkaSet(t *testing.T) {
 }
 
 func TestMetricsEndpointServesWebhookSet(t *testing.T) {
-	w := NewWebhook("codex-chain", "")
+	w := NewWebhook("my-chain", "")
 	w.SetUp(true)
 	w.SetWorkers(1)
 	w.IncConsumed()
@@ -226,7 +226,7 @@ func TestMetricsEndpointServesWebhookSet(t *testing.T) {
 		t.Fatalf("/metrics = %d", code)
 	}
 	for _, want := range []string{
-		`evm_sink_webhook_up{blockchain="codex-chain",chain_id="unknown"} 1`,
+		`evm_sink_webhook_up{blockchain="my-chain",chain_id="unknown"} 1`,
 		"evm_sink_webhook_records_consumed_total",
 		"evm_sink_webhook_records_filtered_total",
 		`evm_sink_webhook_records_forwarded_total{`,

@@ -6,8 +6,8 @@ is the short version of how to work here.
 
 ## What this is
 
-`evm-tools` is a Go monorepo of composable CLIs for observing Codex Chain (and
-other EVM chains). Producers (`evm-stream`, `evm-balance`) emit newline-delimited
+`evm-tools` is a Go monorepo of composable CLIs for observing EVM chains.
+Producers (`evm-stream`, `evm-balance`) emit newline-delimited
 JSON to stdout; downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`, roadmap)
 consume it. Module path: `github.com/daxchain-io/evm-tools`. Go 1.22+ (toolchain
 pinned in `go.mod`).

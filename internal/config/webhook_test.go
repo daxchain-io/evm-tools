@@ -6,7 +6,7 @@ import (
 )
 
 const sampleWebhookConfig = `
-chain = "codex-chain"
+chain = "my-chain"
 
 [metrics]
 enabled = false
@@ -49,7 +49,7 @@ func TestDecodeWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeWebhook: %v", err)
 	}
-	if cfg.Chain != "codex-chain" {
+	if cfg.Chain != "my-chain" {
 		t.Errorf("chain = %q", cfg.Chain)
 	}
 	if cfg.Webhook.URL != "https://hooks.internal.example.com/evm" {

@@ -27,7 +27,7 @@ type Reader interface {
 
 // Info is the resolved metadata for a configured chain.
 type Info struct {
-	// Name is the operator-configured chain name (e.g. "codex-chain"); it is a
+	// Name is the operator-configured chain name (e.g. "my-chain"); it is a
 	// label, not derived from the node.
 	Name string
 	// ID is the EVM chain ID resolved via eth_chainId.

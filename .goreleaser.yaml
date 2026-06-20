@@ -90,38 +90,16 @@ builds:
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
 
+# One archive bundles all four binaries, so a single `brew install` / `curl`
+# install delivers the whole suite (evm-stream, evm-balance, and the sinks).
 archives:
-  - id: evm-stream
+  - id: evm-tools
     ids:
       - evm-stream
-    name_template: "evm-stream_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
-    files:
-      - LICENSE
-      - README.md
-  - id: evm-balance
-    ids:
       - evm-balance
-    name_template: "evm-balance_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
-    files:
-      - LICENSE
-      - README.md
-  - id: evm-sink-kafka
-    ids:
       - evm-sink-kafka
-    name_template: "evm-sink-kafka_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
-    files:
-      - LICENSE
-      - README.md
-  - id: evm-sink-webhook
-    ids:
       - evm-sink-webhook
-    name_template: "evm-sink-webhook_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "evm-tools_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     files:
@@ -166,50 +144,22 @@ release:
 # which is GoReleaser's supported path (the old "brews" formula generator is
 # deprecated). See docs/design.md "Release and Distribution" — formulae "unless
 # the tap standardizes on casks for all Daxchain tools".
+# A single `evm-tools` cask installs the whole suite:
+#   brew install daxchain-io/tap/evm-tools
 homebrew_casks:
-  - name: evm-stream
+  - name: evm-tools
     ids:
-      - evm-stream
+      - evm-tools
     repository:
       owner: daxchain-io
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/daxchain-io/evm-tools"
-    description: "Stream live EVM contract events and native transfers as JSONL"
+    description: "Composable CLIs for observing EVM chains and streaming records as JSONL (evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook)"
     binaries:
       - evm-stream
-  - name: evm-balance
-    ids:
       - evm-balance
-    repository:
-      owner: daxchain-io
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/daxchain-io/evm-tools"
-    description: "Poll EVM balances and contract state and emit JSONL samples"
-    binaries:
-      - evm-balance
-  - name: evm-sink-kafka
-    ids:
       - evm-sink-kafka
-    repository:
-      owner: daxchain-io
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/daxchain-io/evm-tools"
-    description: "Publish JSONL records from stdin to Kafka topics (at-least-once)"
-    binaries:
-      - evm-sink-kafka
-  - name: evm-sink-webhook
-    ids:
-      - evm-sink-webhook
-    repository:
-      owner: daxchain-io
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/daxchain-io/evm-tools"
-    description: "Forward JSONL records from stdin to an HTTP endpoint (at-least-once, optional filters)"
-    binaries:
       - evm-sink-webhook
 
 changelog:

@@ -6,7 +6,7 @@ import (
 )
 
 const sampleKafkaConfig = `
-chain = "codex-chain"
+chain = "my-chain"
 
 [metrics]
 enabled = false
@@ -46,7 +46,7 @@ func TestDecodeKafka(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeKafka: %v", err)
 	}
-	if cfg.Chain != "codex-chain" {
+	if cfg.Chain != "my-chain" {
 		t.Errorf("chain = %q", cfg.Chain)
 	}
 	if len(cfg.Kafka.Brokers) != 2 || cfg.Kafka.Brokers[0] != "broker1:9092" {

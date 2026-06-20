@@ -19,7 +19,7 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 const sampleConfig = `
-chain = "codex-chain"
+chain = "my-chain"
 
 [rpc]
 url = "https://rpc.internal.example.com:8545"
@@ -74,7 +74,7 @@ func TestDecodeStream(t *testing.T) {
 		t.Fatalf("DecodeStream: %v", err)
 	}
 
-	if cfg.Chain != "codex-chain" {
+	if cfg.Chain != "my-chain" {
 		t.Errorf("chain = %q", cfg.Chain)
 	}
 	if cfg.RPC.URL != "https://rpc.internal.example.com:8545" {
@@ -148,7 +148,7 @@ func TestSiblingSectionIgnored(t *testing.T) {
 // subtree is harmless.
 func TestUnknownKeyInOwnSectionFatal(t *testing.T) {
 	body := `
-chain = "codex-chain"
+chain = "my-chain"
 [stream]
 poll_intervall = "2s"   # typo
 `
@@ -177,7 +177,7 @@ poll_intervall = "2s"   # typo
 // section, not a shared key) is rejected for both tools.
 func TestUnknownSharedKeyFatal(t *testing.T) {
 	body := `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 urll = "https://x"   # typo in a shared section
 `
@@ -216,7 +216,7 @@ func TestEnvOverride(t *testing.T) {
 
 // TestDefaultsApply verifies built-in defaults fill in when the file omits them.
 func TestDefaultsApply(t *testing.T) {
-	body := `chain = "codex-chain"`
+	body := `chain = "my-chain"`
 	p := writeConfig(t, body)
 	l, err := New(Options{ConfigFile: p})
 	if err != nil {
@@ -250,7 +250,7 @@ func TestMissingExplicitFileFatal(t *testing.T) {
 
 // TestAllowExecThreaded verifies the allowExec flag reaches the decoded config.
 func TestAllowExecThreaded(t *testing.T) {
-	p := writeConfig(t, `chain = "codex-chain"`)
+	p := writeConfig(t, `chain = "my-chain"`)
 	l, err := New(Options{ConfigFile: p})
 	if err != nil {
 		t.Fatalf("New: %v", err)

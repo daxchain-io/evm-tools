@@ -9,7 +9,7 @@ func TestInterpolationEnv(t *testing.T) {
 	t.Setenv("TEST_RPC_HOST", "rpc.example.com")
 	t.Setenv("TEST_RPC_TOKEN", "s3cr3t")
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "https://${TEST_RPC_HOST}:8545?token=${TEST_RPC_TOKEN}"
 `)
@@ -87,7 +87,7 @@ func TestInterpolationUnsetFatal(t *testing.T) {
 func TestInterpolationInArray(t *testing.T) {
 	t.Setenv("USDC_ADDR", "0xabc")
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [[stream.contracts]]
 name = "usdc"
 address = "${USDC_ADDR}"
@@ -108,7 +108,7 @@ events = ["Transfer"]
 
 func TestCmdDisabledFatal(t *testing.T) {
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url_cmd = "echo https://x:8545"
 `)
@@ -127,7 +127,7 @@ url_cmd = "echo https://x:8545"
 
 func TestCmdResolves(t *testing.T) {
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url_cmd = "echo https://resolved:8545"
 `)
@@ -146,7 +146,7 @@ url_cmd = "echo https://resolved:8545"
 
 func TestCmdBothSetFatal(t *testing.T) {
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "https://literal:8545"
 url_cmd = "echo https://other:8545"
@@ -167,7 +167,7 @@ func TestCmdShortCircuitedByEnvBinding(t *testing.T) {
 	// (the command would fail if it did).
 	t.Setenv("EVM_TOOLS_RPC_URL", "https://from-env:9999")
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url_cmd = "exit 1"
 `)
@@ -187,7 +187,7 @@ url_cmd = "exit 1"
 func TestCmdInterpolatedCommand(t *testing.T) {
 	t.Setenv("VAULT_HOST", "h")
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url_cmd = "echo https://${VAULT_HOST}:1"
 `)
@@ -206,7 +206,7 @@ url_cmd = "echo https://${VAULT_HOST}:1"
 
 func TestCmdNonZeroExitFatal(t *testing.T) {
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url_cmd = "echo boom-detail 1>&2; exit 3"
 `)
@@ -226,7 +226,7 @@ url_cmd = "echo boom-detail 1>&2; exit 3"
 func TestCmdNoShellFatal(t *testing.T) {
 	t.Setenv("PATH", "")
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url_cmd = "echo x"
 `)
@@ -247,7 +247,7 @@ url_cmd = "echo x"
 // triggers the disabled-exec error nor runs: evm-stream ignores [balance].
 func TestSiblingCmdIgnored(t *testing.T) {
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [balance]
 interval_cmd = "echo 1m"
 `)
@@ -274,7 +274,7 @@ interval_cmd = "echo 1m"
 func TestCmdNotShortCircuitedByDefault(t *testing.T) {
 	// stream.from_block has a default ("latest"); a _cmd on it must still run.
 	p := writeConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [stream]
 from_block_cmd = "echo 12345"
 `)
@@ -297,7 +297,7 @@ func TestInterpolationNotAppliedToBindingValue(t *testing.T) {
 	// A value supplied via an env binding is not file-sourced: ${...} inside it
 	// is left literal and an unset reference is not fatal.
 	t.Setenv("EVM_TOOLS_RPC_URL", "https://x:1?token=${SHOULD_NOT_EXPAND}")
-	p := writeConfig(t, `chain = "codex-chain"`)
+	p := writeConfig(t, `chain = "my-chain"`)
 	l, err := New(Options{ConfigFile: p})
 	if err != nil {
 		t.Fatalf("New: %v", err)

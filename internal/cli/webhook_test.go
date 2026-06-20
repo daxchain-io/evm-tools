@@ -154,12 +154,12 @@ func TestWebhookSinkRunForwardsStdin(t *testing.T) {
 	li := uint64(0)
 	_ = w.Emit(record.Envelope{
 		Type: record.TypeEvent, Tool: record.ToolStream, Name: "usdc",
-		Chain: "codex-chain", ChainID: 4242, BlockNumber: 100, TxHash: "0x1", LogIndex: &li,
+		Chain: "my-chain", ChainID: 4242, BlockNumber: 100, TxHash: "0x1", LogIndex: &li,
 		Data: record.EventData{Event: "Transfer", Signature: "Transfer(address,address,uint256)", Contract: "0xc", Params: map[string]string{"v": "1"}},
 	})
 	_ = w.Emit(record.Envelope{
 		Type: record.TypeBalanceSample, Tool: record.ToolBalance, Name: "treasury",
-		Chain: "codex-chain", ChainID: 4242, BlockNumber: 101,
+		Chain: "my-chain", ChainID: 4242, BlockNumber: 101,
 		Data: record.BalanceData{Kind: record.KindNative, Address: "0xa", BalanceWei: "1", Balance: "0"},
 	})
 

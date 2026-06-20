@@ -83,7 +83,7 @@ func writeStreamConfig(t *testing.T, body string) string {
 // prints a JSON status and exits 0.
 func TestStreamCheckRPCSuccess(t *testing.T) {
 	srv := ethRPCServer(t)
-	cfg := writeStreamConfig(t, "chain = \"codex-chain\"\n[rpc]\nurl = \""+srv.URL+"\"\n")
+	cfg := writeStreamConfig(t, "chain = \"my-chain\"\n[rpc]\nurl = \""+srv.URL+"\"\n")
 	out, err := runWithCtx(context.Background(), t, ToolStream, "check", "rpc", "--config", cfg)
 	if err != nil {
 		t.Fatalf("check rpc: %v\n%s", err, out)
@@ -120,7 +120,7 @@ func TestStreamCheckRPCUnreachable(t *testing.T) {
 // built-in ERC-20 events (no network).
 func TestStreamValidateGood(t *testing.T) {
 	cfg := writeStreamConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "http://localhost:8545"
 [stream]

@@ -62,6 +62,17 @@ if ! command -v cosign >/dev/null 2>&1; then
   exit 1
 fi
 
+# install.sh verifies checksums.txt with `cosign verify-blob --signature <.sig>
+# --certificate <.pem>`, i.e. the legacy DETACHED outputs. Pin that output
+# format explicitly: --new-bundle-format=false makes sign-blob write the
+# detached --output-signature/--output-certificate files regardless of the
+# cosign default. cosign 2.x already defaults this off (so this is a no-op on
+# the v2 line CI pins in .github/workflows/release.yml); cosign 3.x defaults it
+# ON and would otherwise ignore --output-* and fail. Stating it keeps the
+# wrapper honest if that pin ever moves. The flag exists since cosign 2.4.
+# Adopting the bundle format here means switching install.sh to the bundle
+# verify flow at the same time.
+
 if [ "$have_key" -eq 1 ] && [ "$have_oidc" -eq 0 ]; then
   # Stored-key fallback when keyless OIDC is unavailable. No certificate is
   # produced in this mode, so write an empty placeholder to satisfy the
@@ -69,6 +80,7 @@ if [ "$have_key" -eq 1 ] && [ "$have_oidc" -eq 0 ]; then
   echo "cosign-sign: signing ${artifact} with COSIGN_PRIVATE_KEY (key mode)" >&2
   cosign sign-blob \
     --key env://COSIGN_PRIVATE_KEY \
+    --new-bundle-format=false \
     --output-signature="${signature}" \
     "${artifact}" \
     --yes
@@ -78,6 +90,7 @@ fi
 
 echo "cosign-sign: signing ${artifact} with keyless OIDC" >&2
 cosign sign-blob \
+  --new-bundle-format=false \
   --output-signature="${signature}" \
   --output-certificate="${certificate}" \
   "${artifact}" \

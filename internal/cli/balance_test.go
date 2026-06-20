@@ -53,7 +53,7 @@ func balanceRPCServer(t *testing.T) *httptest.Server {
 // JSON status and exits 0.
 func TestBalanceCheckRPCSuccess(t *testing.T) {
 	srv := balanceRPCServer(t)
-	cfg := writeStreamConfig(t, "chain = \"codex-chain\"\n[rpc]\nurl = \""+srv.URL+"\"\n")
+	cfg := writeStreamConfig(t, "chain = \"my-chain\"\n[rpc]\nurl = \""+srv.URL+"\"\n")
 	out, err := runWithCtx(context.Background(), t, ToolBalance, "check", "rpc", "--config", cfg)
 	if err != nil {
 		t.Fatalf("check rpc: %v\n%s", err, out)
@@ -74,7 +74,7 @@ func TestBalanceCheckRPCSuccess(t *testing.T) {
 // config (no network).
 func TestBalanceValidateGood(t *testing.T) {
 	cfg := writeStreamConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "http://localhost:8545"
 [balance]
@@ -106,7 +106,7 @@ transfer_count_window_blocks = 1000
 // ownership entries (no network).
 func TestBalanceValidateERC721(t *testing.T) {
 	cfg := writeStreamConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "http://localhost:8545"
 [balance]
@@ -207,7 +207,7 @@ intervial = "1m"
 func TestBalanceRunEmitsSamples(t *testing.T) {
 	srv := balanceRPCServer(t)
 	cfg := writeStreamConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "`+srv.URL+`"
 [balance]
@@ -267,7 +267,7 @@ decimals = 6
 func TestBalanceRunEmitsERC721Records(t *testing.T) {
 	srv := balanceRPCServer(t)
 	cfg := writeStreamConfig(t, `
-chain = "codex-chain"
+chain = "my-chain"
 [rpc]
 url = "`+srv.URL+`"
 [balance]

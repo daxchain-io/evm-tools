@@ -27,7 +27,20 @@ jobs:
           check-latest: true
 
       - name: Install cosign
+        # Pin cosign to the v2 line. The release signs checksums.txt with the
+        # legacy DETACHED flow: scripts/cosign-sign.sh writes
+        # --output-signature/--output-certificate and install.sh verifies with
+        # `cosign verify-blob --signature/--certificate`. That flow depends on
+        # cosign's --new-bundle-format defaulting OFF. cosign 3.0 flips that
+        # default ON, where a bare sign-blob ignores --output-* and fails the
+        # signing step (no checksums.txt.sig/.pem). cosign-installer@v3 only
+        # serves cosign 2.x (cosign 3.x needs cosign-installer@v4), but pin the
+        # exact release so the version can't drift onto an incompatible default.
+        # To adopt cosign 3.x, migrate cosign-sign.sh AND install.sh to the
+        # --bundle/--new-bundle-format flow together (see scripts/cosign-sign.sh).
         uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.6.3"
 
       - name: GoReleaser release
         uses: goreleaser/goreleaser-action@v6

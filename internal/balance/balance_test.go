@@ -227,7 +227,7 @@ func TestNativeSampleAndChange(t *testing.T) {
 	p, err := New(Options{
 		Client:    fc,
 		Emitter:   em,
-		ChainName: "codex-chain",
+		ChainName: "my-chain",
 		ChainID:   4242,
 		Cadence:   Cadence{Interval: 3 * time.Millisecond},
 		Native:    []NativeTarget{{Name: "treasury", Address: "0xACCT"}},

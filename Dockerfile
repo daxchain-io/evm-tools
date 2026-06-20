@@ -13,9 +13,9 @@
 # Build:   docker build -t evm-tools .
 # Run:     docker run --rm evm-tools evm-stream version
 # Pipeline (stdout is data, stderr is diagnostics — never merge them):
-#   docker run --rm -v "$PWD/codex-chain.toml:/etc/evm-tools/codex-chain.toml:ro" \
-#     evm-tools sh -c 'evm-stream run -c /etc/evm-tools/codex-chain.toml \
-#       | evm-sink-kafka run -c /etc/evm-tools/codex-chain.toml'
+#   docker run --rm -v "$PWD/my-chain.toml:/etc/evm-tools/my-chain.toml:ro" \
+#     evm-tools sh -c 'evm-stream run -c /etc/evm-tools/my-chain.toml \
+#       | evm-sink-kafka run -c /etc/evm-tools/my-chain.toml'
 
 # --- build stage -------------------------------------------------------------
 # Pin the builder to the toolchain the module targets (see go.mod).
