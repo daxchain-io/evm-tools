@@ -22,6 +22,12 @@ import (
 // record (preserves losslessness — design Open Question 1, settled).
 type Poster interface {
 	Post(ctx context.Context, payload []byte) error
+	// Reachable performs a read-only check (an HTTP GET of the configured health
+	// URL) that the endpoint is reachable, returning nil on a 2xx. The active
+	// readiness probe uses it so /readyz reflects endpoint health while no records
+	// are flowing. When no health URL is configured the probe is disabled at the
+	// CLI layer and this is not called.
+	Reachable(ctx context.Context) error
 	Close() error
 }
 
@@ -40,14 +46,18 @@ type PosterConfig struct {
 	AuthValue  string
 	// Timeout bounds a single request. Zero uses a built-in default.
 	Timeout time.Duration
+	// HealthURL, when set, is GET-probed by the active readiness probe to confirm
+	// the endpoint is reachable while idle. Empty disables the active probe.
+	HealthURL string
 }
 
 // httpPoster is the real Poster backed by net/http.
 type httpPoster struct {
-	client  *http.Client
-	url     string
-	method  string
-	headers map[string]string
+	client    *http.Client
+	url       string
+	method    string
+	headers   map[string]string
+	healthURL string
 }
 
 // defaultTimeout bounds a single POST when none is configured.
@@ -92,12 +102,45 @@ func NewHTTPPoster(cfg PosterConfig) (Poster, error) {
 		timeout = defaultTimeout
 	}
 
+	healthURL := strings.TrimSpace(cfg.HealthURL)
+	if healthURL != "" && !strings.HasPrefix(healthURL, "http://") && !strings.HasPrefix(healthURL, "https://") {
+		return nil, fmt.Errorf("webhooksink: webhook health_url must be http(s), got %q", RedactURL(healthURL))
+	}
+
 	return &httpPoster{
-		client:  &http.Client{Timeout: timeout},
-		url:     url,
-		method:  method,
-		headers: headers,
+		client:    &http.Client{Timeout: timeout},
+		url:       url,
+		method:    method,
+		headers:   headers,
+		healthURL: healthURL,
 	}, nil
+}
+
+// Reachable GET-probes the configured health URL to confirm the endpoint is
+// reachable (used by the active readiness probe). A 2xx means reachable. When no
+// health URL is configured it returns nil; the probe is disabled at the CLI
+// layer, so that path is not reached in practice.
+func (p *httpPoster) Reachable(ctx context.Context) error {
+	if p.healthURL == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.healthURL, nil)
+	if err != nil {
+		return err
+	}
+	for k, v := range p.headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("health check returned HTTP %d", resp.StatusCode)
 }
 
 // Post sends one record payload as application/json and blocks until the server

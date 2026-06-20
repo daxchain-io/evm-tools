@@ -46,6 +46,12 @@ func webhookRun(cmd *cobra.Command, f *sinkFlags) error {
 
 	healthBase := metrics.NewHealth(readyEmitBlockedThreshold, 0) // lag disabled for a sink.
 	health := metrics.NewWebhookHealth(healthBase)
+	// With no active probe, start optimistically ready (like the producers) so an
+	// idle webhook with no traffic isn't falsely not-ready; a failed POST flips
+	// it. With an active probe, the immediate probe sets the real value.
+	if resolved.ProbeInterval == 0 {
+		health.SetEndpointReachable(true)
+	}
 
 	mc := f.webhookMetricsConfig(cmd, cfg)
 	srv, err := metrics.NewServer(metrics.ServerOptions{
@@ -73,14 +79,15 @@ func webhookRun(cmd *cobra.Command, f *sinkFlags) error {
 
 	reader := record.NewReader(cmd.InOrStdin())
 	sink, err := webhooksink.New(webhooksink.Options{
-		Reader:      reader,
-		Poster:      poster,
-		Filter:      resolved.Filter,
-		Metrics:     m,
-		Health:      health,
-		Logger:      logger,
-		BackoffBase: resolved.BackoffBase,
-		BackoffMax:  resolved.BackoffMax,
+		Reader:        reader,
+		Poster:        poster,
+		Filter:        resolved.Filter,
+		Metrics:       m,
+		Health:        health,
+		Logger:        logger,
+		BackoffBase:   resolved.BackoffBase,
+		BackoffMax:    resolved.BackoffMax,
+		ProbeInterval: resolved.ProbeInterval,
 	})
 	if err != nil {
 		return err
@@ -136,6 +143,7 @@ type resolvedWebhook struct {
 	FilterSummary string
 	BackoffBase   time.Duration
 	BackoffMax    time.Duration
+	ProbeInterval time.Duration
 }
 
 // validateWebhook applies the cross-field invariants strict decoding cannot
@@ -164,6 +172,15 @@ func validateWebhook(cfg *config.WebhookFull) (resolvedWebhook, error) {
 	if err != nil {
 		return resolvedWebhook{}, err
 	}
+	// The active probe runs only when a health URL is configured; without one,
+	// readiness follows POST outcomes (with an optimistic start).
+	probeInterval := time.Duration(0)
+	if wh.HealthURL != "" {
+		probeInterval, err = parseProbeInterval(wh.ReadinessProbeInterval, 15*time.Second, "webhook.readiness_probe_interval")
+		if err != nil {
+			return resolvedWebhook{}, err
+		}
+	}
 
 	pc := webhooksink.PosterConfig{
 		URL:        wh.URL,
@@ -172,6 +189,7 @@ func validateWebhook(cfg *config.WebhookFull) (resolvedWebhook, error) {
 		AuthHeader: wh.Auth.Header,
 		AuthValue:  wh.Auth.Value,
 		Timeout:    timeout,
+		HealthURL:  wh.HealthURL,
 	}
 
 	return resolvedWebhook{
@@ -181,6 +199,7 @@ func validateWebhook(cfg *config.WebhookFull) (resolvedWebhook, error) {
 		FilterSummary: summary,
 		BackoffBase:   backoffBase,
 		BackoffMax:    backoffMax,
+		ProbeInterval: probeInterval,
 	}, nil
 }
 

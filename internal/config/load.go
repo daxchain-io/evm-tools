@@ -142,6 +142,7 @@ func bindEnvKeys(v *viper.Viper) {
 		"kafka.metrics.enabled", "kafka.metrics.addr", "kafka.metrics.path",
 		"webhook.url", "webhook.method", "webhook.timeout",
 		"webhook.backoff_base", "webhook.backoff_max",
+		"webhook.health_url", "webhook.readiness_probe_interval",
 		"webhook.auth.header", "webhook.auth.value",
 		"webhook.metrics.enabled", "webhook.metrics.addr", "webhook.metrics.path",
 	}
@@ -195,6 +196,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kafka.backoff_max", "30s")
 	v.SetDefault("kafka.batch_timeout", "200ms")
 	v.SetDefault("kafka.readiness_probe_interval", "15s")
+
+	v.SetDefault("webhook.readiness_probe_interval", "15s")
 	v.SetDefault("kafka.metrics.path", "/metrics")
 	v.SetDefault("kafka.metrics.addr", ":9002")
 

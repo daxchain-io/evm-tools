@@ -3,22 +3,45 @@ package webhooksink
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/record"
 )
 
-// fakePoster captures forwarded payloads without any network.
+// fakePoster captures forwarded payloads without any network. It is mutex-guarded
+// so the active probe (Reachable) can run concurrently with Post under -race.
 type fakePoster struct {
-	got [][]byte
+	mu           sync.Mutex
+	got          [][]byte
+	reachableErr error
+	probes       int
 }
 
 func (f *fakePoster) Post(_ context.Context, payload []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.got = append(f.got, append([]byte(nil), payload...))
 	return nil
 }
 func (f *fakePoster) Close() error { return nil }
+func (f *fakePoster) Reachable(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probes++
+	return f.reachableErr
+}
+func (f *fakePoster) probeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.probes
+}
+func (f *fakePoster) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.got)
+}
 
 func runWithFilter(t *testing.T, in string, opts FilterOptions) (*fakePoster, *countingMetrics) {
 	t.Helper()

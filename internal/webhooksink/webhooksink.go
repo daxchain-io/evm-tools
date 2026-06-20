@@ -69,6 +69,13 @@ type Options struct {
 	BackoffBase time.Duration
 	BackoffMax  time.Duration
 
+	// ProbeInterval, when > 0, enables an active endpoint-reachability probe (a
+	// GET of the configured health URL) that refreshes readiness on this interval
+	// even while no records are flowing. ProbeTimeout bounds a single probe; it is
+	// defaulted from ProbeInterval when unset.
+	ProbeInterval time.Duration
+	ProbeTimeout  time.Duration
+
 	// now and randInt are injectable for deterministic tests.
 	now     func() time.Time
 	randInt func(n int64) int64
@@ -119,6 +126,12 @@ func New(opts Options) (*Sink, error) {
 	if opts.BackoffMax <= 0 {
 		opts.BackoffMax = 30 * time.Second
 	}
+	if opts.ProbeInterval > 0 && opts.ProbeTimeout <= 0 {
+		opts.ProbeTimeout = 10 * time.Second
+		if opts.ProbeInterval < opts.ProbeTimeout {
+			opts.ProbeTimeout = opts.ProbeInterval
+		}
+	}
 	return &Sink{opts: opts, log: opts.Logger, now: opts.now}, nil
 }
 
@@ -130,6 +143,17 @@ func New(opts Options) (*Sink, error) {
 // so failing fast preserves losslessness rather than silently dropping the
 // record.
 func (s *Sink) Run(ctx context.Context) error {
+	// Active readiness probe: keep /readyz reflecting endpoint reachability even
+	// while no records flow. Cancelled and joined before Run returns.
+	if s.opts.ProbeInterval > 0 {
+		pctx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); s.probeLoop(pctx) }()
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -230,6 +254,45 @@ func (s *Sink) clearBlocked() {
 	s.opts.Metrics.SetBlocked(false)
 	s.opts.Metrics.SetBackoffSeconds(0)
 	s.opts.Health.SetPostBlocked(0)
+}
+
+// probeLoop actively checks endpoint reachability on ProbeInterval and records
+// the result in readiness, so /readyz reflects the endpoint even when no records
+// are flowing. It probes once immediately so startup readiness is live without
+// waiting for a tick, then on each interval until ctx is cancelled.
+func (s *Sink) probeLoop(ctx context.Context) {
+	s.probeOnce(ctx)
+	t := time.NewTicker(s.opts.ProbeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.probeOnce(ctx)
+		}
+	}
+}
+
+// probeOnce runs one bounded reachability check and updates readiness. It logs
+// only a coarse error_type (never the URL, body, or any secret) on failure, and
+// is safe to run concurrently with the post loop's own readiness updates — both
+// go through the atomic Health setter.
+func (s *Sink) probeOnce(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	pctx := ctx
+	if s.opts.ProbeTimeout > 0 {
+		var cancel context.CancelFunc
+		pctx, cancel = context.WithTimeout(ctx, s.opts.ProbeTimeout)
+		defer cancel()
+	}
+	err := s.opts.Poster.Reachable(pctx)
+	s.opts.Health.SetEndpointReachable(err == nil)
+	if err != nil && ctx.Err() == nil {
+		s.log.Debug("endpoint reachability probe failed", "error_type", string(Classify(err)))
+	}
 }
 
 // backoffFor computes base*2^(attempt-1), capped at BackoffMax, with full jitter

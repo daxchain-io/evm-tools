@@ -260,6 +260,13 @@ type WebhookConfig struct {
 	// parse; empty falls back to built-in defaults.
 	BackoffBase string `mapstructure:"backoff_base"`
 	BackoffMax  string `mapstructure:"backoff_max"`
+	// HealthURL, when set, is GET-probed by the active readiness probe to confirm
+	// the endpoint is reachable while idle. Empty disables the active probe;
+	// readiness then follows POST outcomes and starts optimistically ready.
+	HealthURL string `mapstructure:"health_url"`
+	// ReadinessProbeInterval is how often the active probe runs when HealthURL is
+	// set. A duration like "15s" (the default); "0"/"off" disables it.
+	ReadinessProbeInterval string `mapstructure:"readiness_probe_interval"`
 
 	Auth    WebhookAuthConfig `mapstructure:"auth"`
 	Filters WebhookFilters    `mapstructure:"filters"`

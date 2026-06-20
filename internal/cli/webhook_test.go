@@ -23,7 +23,8 @@ func (f *cliFakePoster) Post(_ context.Context, payload []byte) error {
 	f.got = append(f.got, append([]byte(nil), payload...))
 	return nil
 }
-func (f *cliFakePoster) Close() error { return nil }
+func (f *cliFakePoster) Close() error                    { return nil }
+func (f *cliFakePoster) Reachable(context.Context) error { return nil }
 func (f *cliFakePoster) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

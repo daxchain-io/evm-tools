@@ -297,7 +297,8 @@ func (b *blockingPoster) Post(ctx context.Context, _ []byte) error {
 	b.mu.Unlock()
 	return nil
 }
-func (b *blockingPoster) Close() error { return nil }
+func (b *blockingPoster) Close() error                    { return nil }
+func (b *blockingPoster) Reachable(context.Context) error { return nil }
 func (b *blockingPoster) inflight() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -307,6 +308,115 @@ func (b *blockingPoster) completed() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.done
+}
+
+// probeHealth captures readiness updates for the active-probe tests.
+type probeHealth struct {
+	mu        sync.Mutex
+	reachable bool
+	sets      int
+}
+
+func (h *probeHealth) SetPostBlocked(time.Duration) {}
+func (h *probeHealth) SetEndpointReachable(v bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reachable = v
+	h.sets++
+}
+func (h *probeHealth) lastReachable() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reachable
+}
+func (h *probeHealth) setCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sets
+}
+
+func newProbeSink(t *testing.T, p Poster, h Healther) *Sink {
+	t.Helper()
+	s, err := New(Options{
+		Reader:        record.NewReader(strings.NewReader("")),
+		Poster:        p,
+		Filter:        newFilterOrFatal(t, FilterOptions{}),
+		Health:        h,
+		ProbeInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return s
+}
+
+// TestProbeOnceSetsReachable verifies a single active probe maps a healthy/failed
+// endpoint check to readiness, independent of any POST.
+func TestProbeOnceSetsReachable(t *testing.T) {
+	h := &probeHealth{}
+	fp := &fakePoster{}
+	s := newProbeSink(t, fp, h)
+
+	s.probeOnce(context.Background())
+	if !h.lastReachable() {
+		t.Error("a healthy endpoint probe should set reachable=true")
+	}
+	if fp.probeCount() != 1 {
+		t.Errorf("expected 1 probe call, got %d", fp.probeCount())
+	}
+
+	fp.mu.Lock()
+	fp.reachableErr = errors.New("connection refused")
+	fp.mu.Unlock()
+	s.probeOnce(context.Background())
+	if h.lastReachable() {
+		t.Error("an unreachable endpoint probe should set reachable=false")
+	}
+}
+
+// TestProbeLoopImmediateAndStops verifies the loop probes once immediately and
+// exits on cancel.
+func TestProbeLoopImmediateAndStops(t *testing.T) {
+	h := &probeHealth{}
+	fp := &fakePoster{}
+	s := newProbeSink(t, fp, h)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.probeLoop(ctx); close(done) }()
+
+	waitFor(t, func() bool { return h.setCount() >= 1 })
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probeLoop did not stop on cancel")
+	}
+}
+
+// TestRunWithProbeEnabled verifies Run cleanly starts and joins the probe
+// goroutine (no hang/leak under -race) while still forwarding. The probe's own
+// behavior is asserted deterministically above, not via this timing-sensitive
+// path.
+func TestRunWithProbeEnabled(t *testing.T) {
+	h := &probeHealth{}
+	fp := &fakePoster{}
+	s, err := New(Options{
+		Reader:        record.NewReader(strings.NewReader(streamFrom(t, eventEnv("0x1", 0)))),
+		Poster:        fp,
+		Filter:        newFilterOrFatal(t, FilterOptions{}),
+		Health:        h,
+		ProbeInterval: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := fp.count(); got != 1 {
+		t.Errorf("expected 1 forwarded record, got %d", got)
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {
