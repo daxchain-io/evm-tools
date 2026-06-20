@@ -53,3 +53,50 @@ jobs:
           # tap update needs its own credential. Provisioning this secret is a
           # maintainer task (see docs/plan.md M3).
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  homebrew-install:
+    name: Homebrew install smoke
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install evm-tools from the Daxchain tap
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+
+          brew uninstall --cask --force evm-tools >/dev/null 2>&1 || true
+          brew untap daxchain-io/tap >/dev/null 2>&1 || true
+
+          for attempt in $(seq 1 30); do
+            brew tap daxchain-io/tap
+
+            if brew info daxchain-io/tap/evm-tools | grep -Eq "evm-tools.*: ${version}"; then
+              break
+            fi
+
+            if [ "$attempt" -eq 30 ]; then
+              echo "::error::daxchain-io/tap/evm-tools did not update to ${version}" >&2
+              brew info daxchain-io/tap/evm-tools || true
+              exit 1
+            fi
+
+            brew untap daxchain-io/tap >/dev/null 2>&1 || true
+            sleep 10
+          done
+
+          if brew help trust >/dev/null 2>&1; then
+            brew trust --cask daxchain-io/tap/evm-tools || true
+          fi
+
+          brew install --cask daxchain-io/tap/evm-tools
+
+          for bin in evm-stream evm-balance evm-sink-kafka evm-sink-webhook; do
+            command -v "$bin"
+            "$bin" version | grep -q "version: ${version}"
+          done
+
+      - name: Uninstall evm-tools cask
+        if: always()
+        run: brew uninstall --cask --force evm-tools >/dev/null 2>&1 || true

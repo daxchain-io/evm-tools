@@ -1141,7 +1141,7 @@ Homebrew publishes a single `evm-tools` cask to `daxchain-io/homebrew-tap` that
 bundles all four binaries, so one command installs the whole suite:
 
 ```sh
-brew install daxchain-io/tap/evm-tools
+brew install --cask daxchain-io/tap/evm-tools
 ```
 
 A universal installer supports a `curl | sh` workflow for hosts without

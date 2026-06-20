@@ -101,3 +101,38 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean
+
+      - name: Upload GoReleaser snapshot artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: goreleaser-dist
+          if-no-files-found: error
+          path: |
+            dist/evm-tools_*.tar.gz
+            dist/homebrew/Casks/evm-tools.rb
+
+  brew-install:
+    name: Homebrew cask install (${{ matrix.os }})
+    needs: goreleaser
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        if: runner.os == 'Linux'
+        uses: Homebrew/actions/setup-homebrew@main
+
+      - name: Download GoReleaser snapshot artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
+
+      - name: Smoke test generated Homebrew cask
+        run: scripts/brew-cask-smoke.sh

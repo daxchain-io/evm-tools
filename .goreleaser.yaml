@@ -145,7 +145,7 @@ release:
 # deprecated). See docs/design.md "Release and Distribution" — formulae "unless
 # the tap standardizes on casks for all Daxchain tools".
 # A single `evm-tools` cask installs the whole suite:
-#   brew install daxchain-io/tap/evm-tools
+#   brew install --cask daxchain-io/tap/evm-tools
 homebrew_casks:
   - name: evm-tools
     ids:
@@ -161,6 +161,13 @@ homebrew_casks:
       - evm-balance
       - evm-sink-kafka
       - evm-sink-webhook
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
+          end
 
 changelog:
   sort: asc

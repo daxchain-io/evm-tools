@@ -20,7 +20,7 @@ One command installs the whole suite (all four CLIs):
 
 ```sh
 # Homebrew (macOS / Linux)
-brew install daxchain-io/tap/evm-tools
+brew install --cask daxchain-io/tap/evm-tools
 
 # Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all four:
 curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh

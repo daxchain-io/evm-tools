@@ -140,13 +140,19 @@ Goal: prove the brew/curl artifacts build before a real tag.
       `signs.output` paths so a signing-skipped release never references a
       missing `checksums.txt.sig`/`.pem` upload asset. → Release and
       Distribution.
-- [ ] First real tag `v0.1.0` once the org adds `HOMEBREW_TAP_GITHUB_TOKEN` +
-      cosign secrets (maintainer task — needs an external secret). → Release
-      automation.
-- [ ] **Acceptance:** snapshot succeeds (done); `install.sh` resolves the
-      matching artifact (verified against the snapshot); `brew install` works
-      from the tap after the tagged release (blocked on the real tag + tap
-      token, a maintainer task).
+- [x] Release secret wiring: `HOMEBREW_TAP_GITHUB_TOKEN` is provisioned for the
+      source repo so the release workflow can push the generated cask to
+      `daxchain-io/homebrew-tap`. Cosign uses GitHub OIDC keyless signing in the
+      release workflow, so no stored cosign key is required for the normal path.
+      → Release automation.
+- [ ] First real tag `v0.1.0`. → Release automation.
+- [x] **Acceptance:** snapshot succeeds (done); `install.sh` resolves the
+      matching artifact (verified against the snapshot); CI now smoke-tests
+      `brew install --cask` against the GoReleaser-generated cask on Linux and
+      macOS by rewriting the snapshot cask to local artifacts before any real
+      tag exists. The tagged release workflow also installs `evm-tools` back
+      from `daxchain-io/tap` on macOS after GoReleaser pushes the cask, proving
+      the real user-facing Homebrew command works.
 
 ## M4 — Specified deferred producer features
 
