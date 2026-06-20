@@ -46,6 +46,12 @@ func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			if err := f.setupLogging(); err != nil {
 				return err
 			}
+			// Ignore SIGPIPE so a write to a broken stdout (a dead downstream sink)
+			// returns EPIPE to the record writer — which the run loop treats as a
+			// terminal "downstream gone" condition with a clean non-signal exit —
+			// instead of the default disposition killing the producer with a signal
+			// and bypassing graceful shutdown / the final flush.
+			signal.Ignore(syscall.SIGPIPE)
 			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
 			// shutdown (finish the in-flight line, flush, stop the server).
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)

@@ -126,6 +126,21 @@ func TestReaderMalformedLine(t *testing.T) {
 	}
 }
 
+// TestReaderRejectsTrailingData verifies a line carrying more than one JSON
+// object (or trailing garbage) is a hard error rather than silently dropping the
+// trailing record(s) — Decode alone stops after the first value.
+func TestReaderRejectsTrailingData(t *testing.T) {
+	line := `{"schema_version":1,"type":"event","name":"a"}{"schema_version":1,"type":"event","name":"b"}` + "\n"
+	r := NewReader(strings.NewReader(line))
+	_, err := r.Next()
+	if err == nil {
+		t.Fatal("expected a hard error on trailing data after the JSON object")
+	}
+	if !strings.Contains(err.Error(), "trailing data") {
+		t.Errorf("error should mention trailing data, got: %v", err)
+	}
+}
+
 // TestReaderRejectsUnsupportedSchema verifies the reader rejects a record whose
 // schema_version this build does not accept — both higher and lower — with a
 // matchable error, rather than best-effort parsing it.

@@ -68,6 +68,7 @@ func NewBalance(chainName, chainID string) *Balance {
 	reg := prometheus.NewRegistry()
 	b := &Balance{reg: reg, chainName: chainName, chainID: chainID}
 	base := prometheus.Labels{labelBlockchain: chainName, labelChainID: b.chainID}
+	registerCommon(reg, "evm_balance", base)
 
 	g := func(name, help string) prometheus.Gauge {
 		m := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: help, ConstLabels: base})
@@ -98,7 +99,7 @@ func NewBalance(chainName, chainID string) *Balance {
 	b.timeSinceLastBlock = g("blockchain_chain_time_since_last_block_seconds", "Wall-clock age of the latest head block, in seconds.")
 
 	b.lastSampledBlock = g("evm_balance_last_sampled_block_number", "Highest block at which a sample was taken.")
-	b.lagBlocks = g("evm_balance_lag_blocks", "Difference between RPC head and last sampled block.")
+	b.lagBlocks = g("evm_balance_lag_blocks", "Blocks the RPC head has advanced since the last sample (sampling staleness; informational — not a /readyz signal for the poller).")
 	b.emitBlockedSeconds = g("evm_balance_emit_blocked_seconds", "Time the current or last stdout write has been blocked by downstream backpressure.")
 
 	b.recordsEmitted = c("evm_balance_records_emitted_total", "Total JSONL records emitted.")

@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"runtime/debug"
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/record"
@@ -142,7 +143,17 @@ func New(opts Options) (*Sink, error) {
 // unsupported schema_version, or a permanent HTTP 4xx. Those are non-retryable,
 // so failing fast preserves losslessness rather than silently dropping the
 // record.
-func (s *Sink) Run(ctx context.Context) error {
+func (s *Sink) Run(ctx context.Context) (err error) {
+	// Convert a panic into a terminal error so the caller's graceful shutdown
+	// (poster close, metrics server stop) still runs and the process exits
+	// non-zero for a supervisor restart, rather than crashing abruptly.
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("recovered from panic in webhook sink loop; stopping",
+				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("webhook sink panic: %v", r)
+		}
+	}()
 	// Active readiness probe: keep /readyz reflecting endpoint reachability even
 	// while no records flow. Cancelled and joined before Run returns.
 	if s.opts.ProbeInterval > 0 {
@@ -181,8 +192,14 @@ func (s *Sink) Run(ctx context.Context) error {
 		// retry loop holds it across backoff sleeps.
 		payload := append([]byte(nil), s.opts.Reader.Raw()...)
 
-		if err := s.postWithRetry(ctx, payload); err != nil {
+		posted, err := s.postWithRetry(ctx, payload)
+		if err != nil {
 			return err
+		}
+		if !posted {
+			// ctx cancelled mid-retry before the server confirmed the record:
+			// a clean stop, not a delivery. Don't count it.
+			return nil
 		}
 		s.opts.Metrics.IncForwarded(string(env.Type))
 	}
@@ -190,38 +207,39 @@ func (s *Sink) Run(ctx context.Context) error {
 
 // postWithRetry POSTs payload, retrying transient failures with blocking
 // exponential backoff plus full jitter until the POST succeeds or ctx is
-// cancelled. A permanent failure (HTTP 4xx) returns immediately. The POST is
-// confirmed (2xx) before this returns nil, so the caller advances the cursor
-// only after the server has the record.
-func (s *Sink) postWithRetry(ctx context.Context, payload []byte) error {
+// cancelled. A permanent failure (HTTP 4xx) returns immediately. It reports
+// posted=true only after the POST is confirmed (2xx), so the caller advances the
+// cursor and counts the record only once the server has it; a cancellation
+// before that returns posted=false, nil (a clean stop).
+func (s *Sink) postWithRetry(ctx context.Context, payload []byte) (posted bool, err error) {
 	attempt := 0
 	blockedSince := time.Time{}
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return false, nil
 		}
 		start := s.now()
-		err := s.opts.Poster.Post(ctx, payload)
+		perr := s.opts.Poster.Post(ctx, payload)
 		s.opts.Metrics.ObservePost(s.now().Sub(start))
-		if err == nil {
+		if perr == nil {
 			if attempt > 0 {
 				s.log.Info("endpoint recovered", "after_failures", attempt)
 				s.clearBlocked()
 			}
 			s.opts.Health.SetEndpointReachable(true)
 			s.opts.Metrics.SetConsecutiveFailures(0)
-			return nil
+			return true, nil
 		}
 		if ctx.Err() != nil {
-			// Cancelled mid-POST: a clean shutdown, not a failure.
-			return nil
+			// Cancelled mid-POST: a clean shutdown, not a failure or a delivery.
+			return false, nil
 		}
 
-		class := Classify(err)
+		class := Classify(perr)
 		s.opts.Metrics.IncFailed(string(class))
 		if class == ClassPermanent {
 			s.clearBlocked()
-			return fmt.Errorf("permanent POST failure: %w", err)
+			return false, fmt.Errorf("permanent POST failure: %w", perr)
 		}
 
 		// Transient: back off and retry, blocking (lossless backpressure).
@@ -245,7 +263,7 @@ func (s *Sink) postWithRetry(ctx context.Context, payload []byte) error {
 			"blocked", blocked.String(),
 		)
 		if !sleepCtx(ctx, backoff) {
-			return nil // ctx cancelled during backoff: clean stop.
+			return false, nil // ctx cancelled during backoff: clean stop, nothing posted.
 		}
 	}
 }

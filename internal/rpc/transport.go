@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"runtime"
 	"time"
+
+	"github.com/daxchain-io/evm-tools/internal/keyperm"
 )
 
 // TLSConfig is the TLS material for the outbound RPC client. The field names
@@ -146,14 +147,5 @@ func newHTTPClient(rawURL string, cfg TLSConfig, timeout time.Duration) (*http.C
 // group- or world-readable on a non-Windows host. The file contents are never
 // read or logged — only the path and octal mode.
 func warnIfKeyTooOpen(path string) {
-	if runtime.GOOS == "windows" {
-		return
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return // load step reports a real read error with the path
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		keyPermWarner(path, info.Mode().Perm())
-	}
+	keyperm.WarnIfTooOpen(path, keyPermWarner)
 }

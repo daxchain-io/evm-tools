@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/segmentio/kafka-go/sasl"
 	"github.com/segmentio/kafka-go/sasl/plain"
 	"github.com/segmentio/kafka-go/sasl/scram"
+
+	"github.com/daxchain-io/evm-tools/internal/keyperm"
 )
 
 // WriterConfig is the resolved configuration for the real kafka-go publisher.
@@ -224,6 +227,12 @@ func tlsConfig(cfg WriterConfig) (*tls.Config, error) {
 		return nil, errors.New("kafkasink: set both tls.client_cert and tls.client_key, or neither")
 	}
 	if cfg.TLSClientCert != "" {
+		// Warn (don't fail) when the private key is group/world-readable, matching
+		// the RPC mTLS client-key check — secret-handling parity across the suite.
+		keyperm.WarnIfTooOpen(cfg.TLSClientKey, func(path string, mode os.FileMode) {
+			slog.Warn("kafka tls client_key is group/world-readable; tighten its mode",
+				"path", path, "mode", fmt.Sprintf("%#o", mode))
+		})
 		pair, err := tls.LoadX509KeyPair(cfg.TLSClientCert, cfg.TLSClientKey)
 		if err != nil {
 			return nil, fmt.Errorf("kafkasink: load client keypair (%q/%q): invalid certificate or key", cfg.TLSClientCert, cfg.TLSClientKey)

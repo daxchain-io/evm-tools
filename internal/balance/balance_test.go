@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -260,6 +261,40 @@ func TestNativeSampleAndChange(t *testing.T) {
 	ch := changes[0].Data.(record.BalanceData)
 	if ch.BalanceWei != "2500" || ch.PreviousWei != "1000" {
 		t.Errorf("change should carry prior 1000 -> 2500, got %+v", ch)
+	}
+}
+
+// TestPermanentResultFailsFast verifies that a misconfigured target (an address
+// that is not a contract, so eth_call returns "0x") makes the poller fail fast
+// with a permanent error rather than retrying transiently forever and silently
+// emitting no data for any target (Principle 7).
+func TestPermanentResultFailsFast(t *testing.T) {
+	fc := newFakeClient()
+	fc.setCall("0xbad", callDataDecimals(), uint256Hex(6))
+	fc.setCall("0xbad", callDataBalanceOf("0xholder"), "0x") // empty: not a contract
+	em := &captureEmitter{}
+	p, err := New(Options{
+		Client:      fc,
+		Emitter:     em,
+		ChainName:   "c",
+		ChainID:     1,
+		Cadence:     Cadence{Interval: time.Millisecond},
+		ERC20:       []ERC20Target{{Name: "bad", Token: "0xbad", Address: "0xholder"}},
+		BackoffBase: time.Millisecond,
+		BackoffMax:  2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.Run(context.Background()) }()
+	select {
+	case rerr := <-done:
+		if rerr == nil || !strings.Contains(rerr.Error(), "permanent") {
+			t.Fatalf("want a permanent sampling failure, got %v", rerr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("poller did not fail fast on a permanent decode error (retrying forever?)")
 	}
 }
 

@@ -109,6 +109,7 @@ func NewStream(chainName, chainID string) *Stream {
 		chainID:   chainID,
 	}
 	base := prometheus.Labels{labelBlockchain: chainName, labelChainID: s.chainID}
+	registerCommon(reg, "evm_stream", base)
 
 	g := func(name, help string) prometheus.Gauge {
 		m := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: help, ConstLabels: base})

@@ -72,7 +72,12 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 		return err
 	}
 
-	health := metrics.NewHealth(readyEmitBlockedThreshold, readyLagThreshold)
+	// Lag is informational for the balance poller (a sampler is expected to be
+	// behind head between samples — that gap is the configured cadence, not an
+	// unhealthy state), so the lag dimension of /readyz is disabled here. The
+	// evm_balance_lag_blocks gauge still reports real staleness for dashboards;
+	// emit-blocked (a stalled stdout) remains the meaningful readiness signal.
+	health := metrics.NewHealth(readyEmitBlockedThreshold, 0)
 	health.SetRPCReachable(true)
 
 	mc := f.balanceMetricsConfig(cmd, cfg)
@@ -88,7 +93,8 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	}
 	go func() {
 		if serveErr := srv.Serve(); serveErr != nil {
-			logger.Error("metrics server stopped", "error", serveErr)
+			logger.Error("metrics server stopped unexpectedly; marking process not-live", "error", serveErr)
+			health.SetLive(false)
 		}
 	}()
 	logger.Info("health/metrics server listening", "addr", srv.Addr(), "metrics_enabled", mc.Enabled)

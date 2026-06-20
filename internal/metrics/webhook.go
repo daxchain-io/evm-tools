@@ -48,6 +48,7 @@ func NewWebhook(chainName, chainID string) *Webhook {
 	reg := prometheus.NewRegistry()
 	w := &Webhook{reg: reg, chainName: chainName, chainID: chainID}
 	base := prometheus.Labels{labelBlockchain: chainName, labelChainID: w.chainID}
+	registerCommon(reg, "evm_sink_webhook", base)
 
 	g := func(name, help string) prometheus.Gauge {
 		m := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: help, ConstLabels: base})

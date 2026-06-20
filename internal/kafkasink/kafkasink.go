@@ -24,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"runtime/debug"
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/record"
@@ -222,7 +223,17 @@ func New(opts Options) (*Sink, error) {
 // schema_version, or a permanent broker rejection (a 4xx-equivalent). Those are
 // non-retryable, so failing fast preserves losslessness rather than silently
 // dropping the record.
-func (s *Sink) Run(ctx context.Context) error {
+func (s *Sink) Run(ctx context.Context) (err error) {
+	// Convert a panic into a terminal error so the caller's graceful shutdown
+	// (publisher close, metrics server stop) still runs and the process exits
+	// non-zero for a supervisor restart, rather than crashing abruptly.
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("recovered from panic in kafka sink loop; stopping",
+				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("kafka sink panic: %v", r)
+		}
+	}()
 	// Active readiness probe: keep /readyz reflecting broker reachability even
 	// while no records flow (an idle pipe makes no publish attempts, so the
 	// publish-path signal alone would go stale). Cancelled and joined before Run
@@ -262,8 +273,15 @@ func (s *Sink) Run(ctx context.Context) error {
 		value := append([]byte(nil), s.opts.Reader.Raw()...)
 		msg := Message{Topic: topic, Key: key, Value: value}
 
-		if err := s.publishWithRetry(ctx, msg); err != nil {
+		published, err := s.publishWithRetry(ctx, msg)
+		if err != nil {
 			return err
+		}
+		if !published {
+			// ctx was cancelled before the broker confirmed: a clean stop, not a
+			// confirmed publish. Don't count it (published_total is the
+			// at-least-once delivery evidence) — mirrors the file/webhook sinks.
+			return nil
 		}
 		s.opts.Metrics.IncPublished(topic)
 	}
@@ -272,14 +290,16 @@ func (s *Sink) Run(ctx context.Context) error {
 // publishWithRetry publishes msg, retrying transient failures with blocking
 // exponential backoff plus full jitter until the publish succeeds or ctx is
 // cancelled. A permanent failure returns immediately. The publish is confirmed
-// (RequiredAcks=all on the real writer) before this returns nil, so the caller
-// advances the cursor only after the broker has the record.
-func (s *Sink) publishWithRetry(ctx context.Context, msg Message) error {
+// (RequiredAcks=all on the real writer) before this returns (true, nil), so the
+// caller advances the cursor and counts the record only after the broker has it.
+// It returns (false, nil) on every ctx-cancel path (a clean shutdown that did NOT
+// confirm a publish) so the caller does not over-count published_total.
+func (s *Sink) publishWithRetry(ctx context.Context, msg Message) (bool, error) {
 	attempt := 0
 	blockedSince := time.Time{}
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return false, nil
 		}
 		start := s.now()
 		err := s.opts.Publisher.Publish(ctx, msg)
@@ -291,18 +311,18 @@ func (s *Sink) publishWithRetry(ctx context.Context, msg Message) error {
 			}
 			s.opts.Health.SetBrokerReachable(true)
 			s.opts.Metrics.SetConsecutiveFailures(0)
-			return nil
+			return true, nil
 		}
 		if ctx.Err() != nil {
 			// Cancelled mid-publish: a clean shutdown, not a failure.
-			return nil
+			return false, nil
 		}
 
 		class := Classify(err)
 		s.opts.Metrics.IncFailed(string(class))
 		if class == ClassPermanent {
 			s.clearBlocked()
-			return fmt.Errorf("permanent publish failure to topic %q: %w", msg.Topic, err)
+			return false, fmt.Errorf("permanent publish failure to topic %q: %w", msg.Topic, err)
 		}
 
 		// Transient: back off and retry, blocking (lossless backpressure).
@@ -327,7 +347,7 @@ func (s *Sink) publishWithRetry(ctx context.Context, msg Message) error {
 			"blocked", blocked.String(),
 		)
 		if !sleepCtx(ctx, backoff) {
-			return nil // ctx cancelled during backoff: clean stop.
+			return false, nil // ctx cancelled during backoff: clean stop.
 		}
 	}
 }

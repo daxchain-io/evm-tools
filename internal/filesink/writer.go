@@ -13,12 +13,16 @@ import (
 	"time"
 )
 
-// dirPerm/filePerm are the modes for the output directory and files. The active
-// file is 0o644 (owner-write, world-read) — JSONL records are not secrets, but
-// callers can pre-create the directory with a tighter mode if needed.
+// dirPerm/filePerm are the modes for the output directory and files. They default
+// to owner+group only (no world bits) so emitted records — which reveal exactly
+// which contracts/addresses an operator monitors — are not world-readable on a
+// shared host. On-chain data is public, so group-read is a deliberate middle
+// ground that still lets a co-grouped log shipper read the files; operators
+// needing a different mode can pre-create the directory or set a tighter umask.
+// Both the active file and rotated/compressed segments use filePerm.
 const (
-	dirPerm  os.FileMode = 0o755
-	filePerm os.FileMode = 0o644
+	dirPerm  os.FileMode = 0o750
+	filePerm os.FileMode = 0o640
 )
 
 // rotatedTimeFormat stamps rotated segments with a sortable, millisecond-precise

@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/chain"
@@ -243,7 +245,18 @@ func validateCadence(c Cadence) error {
 // Transient RPC failures are retried with exponential backoff plus jitter; the
 // loop does not self-terminate on persistent failure. A cancelled ctx is a clean
 // stop (returns nil).
-func (p *Poller) Run(ctx context.Context) error {
+func (p *Poller) Run(ctx context.Context) (err error) {
+	// Convert a panic into a terminal error so the caller's graceful shutdown
+	// (final flush, metrics server stop) still runs and the process exits non-zero
+	// for a supervisor restart, rather than crashing abruptly.
+	defer func() {
+		if r := recover(); r != nil {
+			p.log.Error("recovered from panic in balance loop; stopping",
+				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("balance panic: %v", r)
+		}
+	}()
+
 	p.resolveDecimals(ctx)
 
 	p.log.Info("balance poller started",
@@ -264,6 +277,54 @@ func (p *Poller) Run(ctx context.Context) error {
 	return p.runIntervalCadence(ctx)
 }
 
+// errEmptyCallResult is returned by the decode helpers when an eth_call yields an
+// empty ("0x") result — on most nodes that means the target is not a contract or
+// the queried view method does not exist. It is wrapped in *permanentErr so the
+// poll loop fails fast (Principle 7) with the target named, instead of retrying a
+// misconfiguration forever and silently emitting no data for any target.
+var errEmptyCallResult = errors.New("empty call result (target is not a contract, or the queried view method does not exist)")
+
+// permanentErr marks a non-retryable sampling failure (a misconfigured target).
+// The wrapping context from the sample function names the offending target.
+type permanentErr struct{ err error }
+
+func (e *permanentErr) Error() string { return e.err.Error() }
+func (e *permanentErr) Unwrap() error { return e.err }
+
+// emitErr marks a failure that originated from the output Emitter (a broken
+// stdout pipe / dead downstream sink) rather than the RPC client — terminal, and
+// never treated as a transient RPC fault.
+type emitErr struct{ err error }
+
+func (e *emitErr) Error() string { return "emit: " + e.err.Error() }
+func (e *emitErr) Unwrap() error { return e.err }
+
+// handleError decides how to react to a poll/sample error. It returns whether the
+// loop should stop and the terminal error to return (nil for a clean stop). An
+// emit error (broken output) or a permanent misconfiguration is terminal — the
+// poller stops with a clear error rather than backing off forever; every other
+// error is transient and backed off (blocking), with a ctx-cancel during backoff
+// treated as a clean stop.
+func (p *Poller) handleError(ctx context.Context, consecutiveFailures *int, err error) (stop bool, terminal error) {
+	var ee *emitErr
+	if errors.As(err, &ee) && (errors.Is(ee.err, syscall.EPIPE) || errors.Is(ee.err, syscall.EBADF)) {
+		// Downstream output is gone (dead sink / closed pipe): terminal. Other,
+		// recoverable output errors fall through to the transient backoff so a
+		// record is never dropped.
+		p.log.Error("output write failed; downstream gone, stopping", "error", ee.err.Error())
+		return true, fmt.Errorf("emit to stdout failed: %w", ee.err)
+	}
+	var pe *permanentErr
+	if errors.As(err, &pe) {
+		p.log.Error("permanent sampling failure; fix configuration and restart", "error", err.Error())
+		return true, fmt.Errorf("permanent sampling failure: %w", err)
+	}
+	if !p.handleFailure(ctx, consecutiveFailures, err) {
+		return true, nil // ctx cancelled during backoff: clean stop
+	}
+	return false, nil
+}
+
 // runIntervalCadence samples once immediately, then on every Interval tick.
 func (p *Poller) runIntervalCadence(ctx context.Context) error {
 	ticker := time.NewTicker(p.opts.Cadence.Interval)
@@ -271,8 +332,8 @@ func (p *Poller) runIntervalCadence(ctx context.Context) error {
 
 	consecutiveFailures := 0
 	for {
-		if !p.tick(ctx, &consecutiveFailures) {
-			return nil
+		if stop, err := p.tick(ctx, &consecutiveFailures); stop {
+			return err
 		}
 		select {
 		case <-ctx.Done():
@@ -300,13 +361,23 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if !p.handleFailure(ctx, &consecutiveFailures, err) {
-				return nil
+			if stop, herr := p.handleError(ctx, &consecutiveFailures, err); stop {
+				return herr
 			}
 			continue
 		}
 		p.opts.Metrics.SetHead(head)
-		p.opts.Health.SetRPCReachable(true)
+		// A successful head poll means the RPC has recovered: reset failure state
+		// and emit the recovery log on every poll, not only when a sample is due —
+		// otherwise the "rpc recovered" log never fires and the consecutive-failure
+		// /backoff gauges stay pinned at their failure values between samples.
+		p.onSuccess(&consecutiveFailures)
+		// Publish real lag — how far head has advanced since the last sample — so
+		// evm_balance_lag_blocks reflects sampling staleness rather than a constant
+		// 0. sampleAll resets it to 0 when a fresh sample is taken.
+		if haveSampled && head > lastSampled {
+			p.opts.Metrics.SetLagBlocks(head - lastSampled)
+		}
 
 		due := !haveSampled || head >= lastSampled+p.opts.Cadence.EveryBlocks
 		if due {
@@ -316,8 +387,8 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return nil
 				}
-				if !p.handleFailure(ctx, &consecutiveFailures, err) {
-					return nil
+				if stop, herr := p.handleError(ctx, &consecutiveFailures, err); stop {
+					return herr
 				}
 				continue
 			}
@@ -335,9 +406,12 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 	}
 }
 
-// tick runs one interval-cadence sample at the current head, handling failure
-// and backoff. It returns false when ctx was cancelled (the caller should stop).
-func (p *Poller) tick(ctx context.Context, consecutiveFailures *int) bool {
+// tick runs one interval-cadence sample at the current head. It returns
+// (stop, terminal): stop=true with a nil error on a clean stop (ctx cancelled),
+// stop=true with a non-nil error on a terminal failure (broken output or a
+// permanent misconfiguration), and stop=false to continue after a transient
+// failure was backed off.
+func (p *Poller) tick(ctx context.Context, consecutiveFailures *int) (stop bool, terminal error) {
 	loopStart := p.now()
 	head, err := p.opts.Client.BlockNumber(ctx)
 	if err == nil {
@@ -347,12 +421,12 @@ func (p *Poller) tick(ctx context.Context, consecutiveFailures *int) bool {
 	p.opts.Metrics.ObserveLoop(p.now().Sub(loopStart))
 	if err != nil {
 		if ctx.Err() != nil {
-			return false
+			return true, nil
 		}
-		return p.handleFailure(ctx, consecutiveFailures, err)
+		return p.handleError(ctx, consecutiveFailures, err)
 	}
 	p.onSuccess(consecutiveFailures)
-	return true
+	return false, nil
 }
 
 // onSuccess resets the failure/backoff state after a clean sample.

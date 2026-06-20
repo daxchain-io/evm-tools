@@ -29,6 +29,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -139,7 +140,17 @@ func New(opts Options) (*Sink, error) {
 // unsupported schema_version, or a non-recoverable write error. Those are
 // non-retryable, so failing fast preserves losslessness rather than dropping the
 // record.
-func (s *Sink) Run(ctx context.Context) error {
+func (s *Sink) Run(ctx context.Context) (err error) {
+	// Convert a panic into a terminal error so the caller's graceful shutdown
+	// (final sync + close, metrics server stop) still runs and the process exits
+	// non-zero for a supervisor restart, rather than crashing abruptly.
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("recovered from panic in file sink loop; stopping",
+				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("file sink panic: %v", r)
+		}
+	}()
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -163,8 +174,14 @@ func (s *Sink) Run(ctx context.Context) error {
 		// retry loop holds it across backoff sleeps.
 		payload := append([]byte(nil), s.opts.Reader.Raw()...)
 
-		if err := s.writeWithRetry(ctx, payload); err != nil {
+		written, err := s.writeWithRetry(ctx, payload)
+		if err != nil {
 			return err
+		}
+		if !written {
+			// ctx cancelled mid-retry before the record was durably appended:
+			// a clean stop, not a confirmed write. Don't count it.
+			return nil
 		}
 		s.opts.Metrics.IncWritten(string(env.Type))
 	}
@@ -172,20 +189,21 @@ func (s *Sink) Run(ctx context.Context) error {
 
 // writeWithRetry appends payload, retrying transient (disk-full) failures with
 // blocking exponential backoff plus full jitter until the write succeeds or ctx
-// is cancelled. A permanent failure returns immediately. The write (and fsync,
-// when enabled) is confirmed before this returns nil, so the caller advances the
-// cursor only after the record is durably recorded.
-func (s *Sink) writeWithRetry(ctx context.Context, payload []byte) error {
+// is cancelled. A permanent failure returns immediately. It reports written=true
+// only after the write (and fsync, when enabled) is confirmed, so the caller
+// advances the cursor and counts the record only once it is durably recorded;
+// a cancellation before that returns written=false, nil (a clean stop).
+func (s *Sink) writeWithRetry(ctx context.Context, payload []byte) (written bool, err error) {
 	attempt := 0
 	blockedSince := time.Time{}
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return false, nil
 		}
 		start := s.now()
-		_, err := s.opts.Writer.Write(payload)
+		_, werr := s.opts.Writer.Write(payload)
 		s.opts.Metrics.ObserveWrite(s.now().Sub(start))
-		if err == nil {
+		if werr == nil {
 			if attempt > 0 {
 				s.log.Info("disk recovered", "after_failures", attempt)
 				s.clearBlocked()
@@ -193,14 +211,14 @@ func (s *Sink) writeWithRetry(ctx context.Context, payload []byte) error {
 			s.opts.Health.SetWritable(true)
 			s.opts.Metrics.SetConsecutiveFailures(0)
 			s.opts.Metrics.SetCurrentSizeBytes(s.opts.Writer.Size())
-			return nil
+			return true, nil
 		}
 
-		class := Classify(err)
+		class := Classify(werr)
 		s.opts.Metrics.IncFailed(string(class))
 		if class == ClassPermanent {
 			s.clearBlocked()
-			return fmt.Errorf("permanent write failure: %w", err)
+			return false, fmt.Errorf("permanent write failure: %w", werr)
 		}
 
 		// Transient (disk full): back off and retry, blocking (lossless backpressure).
@@ -224,7 +242,7 @@ func (s *Sink) writeWithRetry(ctx context.Context, payload []byte) error {
 			"blocked", blocked.String(),
 		)
 		if !sleepCtx(ctx, backoff) {
-			return nil // ctx cancelled during backoff: clean stop.
+			return false, nil // ctx cancelled during backoff: clean stop, nothing written.
 		}
 	}
 }

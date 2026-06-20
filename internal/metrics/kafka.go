@@ -47,6 +47,7 @@ func NewKafka(chainName, chainID string) *Kafka {
 	reg := prometheus.NewRegistry()
 	k := &Kafka{reg: reg, chainName: chainName, chainID: chainID}
 	base := prometheus.Labels{labelBlockchain: chainName, labelChainID: k.chainID}
+	registerCommon(reg, "evm_sink_kafka", base)
 
 	g := func(name, help string) prometheus.Gauge {
 		m := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: help, ConstLabels: base})

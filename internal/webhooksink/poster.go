@@ -108,7 +108,18 @@ func NewHTTPPoster(cfg PosterConfig) (Poster, error) {
 	}
 
 	return &httpPoster{
-		client:    &http.Client{Timeout: timeout},
+		client: &http.Client{
+			Timeout: timeout,
+			// Never follow redirects. Go strips the standard Authorization header
+			// on a cross-host redirect but NOT arbitrary custom headers, so a
+			// compromised/misconfigured endpoint returning a 3xx to an
+			// attacker-controlled host would leak the configured secret auth header
+			// (and the record payload). Returning the 3xx response as-is lets Post
+			// treat it as a permanent misconfiguration instead of following it.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		url:       url,
 		method:    method,
 		headers:   headers,
@@ -171,6 +182,11 @@ func (p *httpPoster) Post(ctx context.Context, payload []byte) error {
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		// A redirect we deliberately did not follow (see CheckRedirect). Retrying
+		// won't help and following would risk leaking the auth header, so fail
+		// fast and tell the operator to configure the final destination directly.
+		return &PermanentError{Reason: fmt.Sprintf("HTTP %d redirect not followed (point webhook.url at the final destination; redirects are refused to avoid leaking auth headers)", resp.StatusCode)}
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		// 4xx: retrying will not help — fail fast (exit non-zero), never drop.
 		return &PermanentError{Reason: fmt.Sprintf("HTTP %d (client error)", resp.StatusCode)}
@@ -192,11 +208,14 @@ func (e *transientHTTPError) Error() string {
 	return fmt.Sprintf("HTTP %d (server error)", e.status)
 }
 
-// RedactURL strips any query string and userinfo from a URL for safe logging —
-// a token in the query or userinfo never reaches stderr (see docs/design.md
-// "Secret Handling"). It is intentionally simple (string-level) so it works on a
-// raw, possibly-unparseable URL. It is exported so the CLI can log a redacted URL
-// at startup.
+// RedactURL strips any query string, userinfo, AND path from a URL for safe
+// logging, keeping only scheme://host[:port]. The common webhook providers carry
+// the delivery secret in the PATH — Slack (/services/T.../B.../<secret>), Discord
+// (/api/webhooks/<id>/<token>), Teams, and most generic services — not just the
+// query, so a non-root path is replaced with a fixed marker (mirroring
+// rpc.RedactURL; see docs/design.md "Secret Handling"). Intentionally simple
+// (string-level) so it works on a raw, possibly-unparseable URL. Exported so the
+// CLI can log a redacted URL at startup.
 func RedactURL(raw string) string {
 	if i := strings.IndexByte(raw, '?'); i >= 0 {
 		raw = raw[:i]
@@ -210,5 +229,15 @@ func RedactURL(raw string) string {
 	if i := strings.IndexByte(rest, '@'); i >= 0 {
 		rest = rest[i+1:]
 	}
-	return scheme + rest
+	host := rest
+	path := ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		host = rest[:i]
+		path = rest[i:]
+	}
+	if path != "" && path != "/" {
+		// The path may itself be the delivery secret; never echo it.
+		return scheme + host + "/[redacted]"
+	}
+	return scheme + host + path
 }

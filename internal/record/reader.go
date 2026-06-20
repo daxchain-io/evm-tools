@@ -87,6 +87,13 @@ func (r *Reader) Next() (Envelope, error) {
 		if err := dec.Decode(&env); err != nil {
 			return Envelope{}, fmt.Errorf("record: decode line: %w", err)
 		}
+		// A line must contain exactly one JSON object. json.Decoder.Decode stops
+		// after the first value and would silently ignore a concatenated second
+		// object or trailing garbage; treat that as a hard error so a malformed
+		// line fails fast rather than dropping the trailing record(s).
+		if dec.More() {
+			return Envelope{}, fmt.Errorf("record: trailing data after JSON object on line")
+		}
 		if env.SchemaVersion != SchemaVersion {
 			return Envelope{}, &SchemaError{Got: env.SchemaVersion, Accepted: SchemaVersion}
 		}

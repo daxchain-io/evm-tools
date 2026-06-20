@@ -52,6 +52,7 @@ func NewFile(chainName, chainID string) *File {
 	reg := prometheus.NewRegistry()
 	f := &File{reg: reg, chainName: chainName, chainID: chainID}
 	base := prometheus.Labels{labelBlockchain: chainName, labelChainID: f.chainID}
+	registerCommon(reg, "evm_sink_file", base)
 
 	g := func(name, help string) prometheus.Gauge {
 		m := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: help, ConstLabels: base})

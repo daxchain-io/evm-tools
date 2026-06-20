@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/chain"
@@ -58,6 +60,17 @@ type Healther interface {
 	SetLag(n uint64)
 }
 
+// emitErr marks a failure that originated from the output Emitter (a broken
+// stdout pipe / dead downstream sink) rather than the RPC client. It is terminal:
+// the run loop stops with this error instead of entering the RPC backoff (a dead
+// output is not recoverable by re-polling the chain), and it is never counted as
+// an RPC reconnect or as RPC-unreachable — so an output fault does not poison the
+// RPC error metrics or the /readyz reason.
+type emitErr struct{ err error }
+
+func (e *emitErr) Error() string { return "emit: " + e.err.Error() }
+func (e *emitErr) Unwrap() error { return e.err }
+
 // Emitter is the record sink (record.Writer satisfies it). It returns an error
 // when the underlying stdout write blocks-then-fails, propagating backpressure.
 type Emitter interface {
@@ -96,6 +109,11 @@ type Stream struct {
 	addresses   []string // lowercased contract addresses for the log filter
 	topic0Set   []string // union of topic0s (any-of filter position 0)
 	byAddrTopic map[string]map[string]eventABI
+
+	// lastHead is the head height observed on the previous poll, used to detect a
+	// backward step (an RPC endpoint serving a stale/load-balanced lagging node).
+	// Accessed only from the single Run goroutine.
+	lastHead uint64
 }
 
 // New builds a Stream from resolved options. It validates the derived state but
@@ -165,7 +183,20 @@ func New(opts Options) (*Stream, error) {
 // are retried with exponential backoff plus jitter; the loop does not
 // self-terminate on persistent failure. A cancelled ctx is a clean stop
 // (returns nil).
-func (s *Stream) Run(ctx context.Context) error {
+func (s *Stream) Run(ctx context.Context) (err error) {
+	// Convert a panic (e.g. an unexpected slicing edge case in log/native decode)
+	// into a terminal error rather than crashing the process: the caller's
+	// graceful shutdown then still runs (final flush, metrics server stop) and the
+	// process exits non-zero so a supervisor restarts it, instead of an abrupt
+	// crash that loses the buffered output and SIGPIPEs the downstream.
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("recovered from panic in stream loop; stopping",
+				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("stream panic: %v", r)
+		}
+	}()
+
 	from, err := s.resolveStart(ctx)
 	if err != nil {
 		return err
@@ -193,6 +224,17 @@ func (s *Stream) Run(ctx context.Context) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil // clean shutdown mid-poll
+			}
+			var ee *emitErr
+			if errors.As(err, &ee) && (errors.Is(ee.err, syscall.EPIPE) || errors.Is(ee.err, syscall.EBADF)) {
+				// The downstream output is gone (a dead sink / closed pipe). Retrying
+				// the chain cannot fix a broken output, so stop with a terminal error
+				// — a clean non-signal exit so a supervisor restarts the pipeline —
+				// rather than spinning the RPC backoff loop forever. Other, recoverable
+				// output errors (e.g. a full disk when stdout is a file) fall through
+				// to the transient retry below so a record is never dropped.
+				s.log.Error("output write failed; downstream gone, stopping", "error", ee.err.Error())
+				return fmt.Errorf("emit to stdout failed: %w", ee.err)
 			}
 			consecutiveFailures++
 			s.opts.Health.SetRPCReachable(false)
@@ -238,6 +280,17 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 	}
 	s.opts.Metrics.SetHead(head)
 	s.updateHeadBlockTime(ctx, head)
+
+	// A backward step in head means the endpoint is serving a stale view (a
+	// load balancer routed to a lagging node, or a node rolled back). This is
+	// otherwise silent — nextBlock simply waits — so surface it. (A frozen,
+	// non-advancing head is observable via blockchain_chain_time_since_last_block_seconds,
+	// which grows as the served head block ages.)
+	if head < s.lastHead {
+		s.log.Warn("rpc head regressed; endpoint may be stale or load-balanced across lagging nodes",
+			"from", s.lastHead, "to", head)
+	}
+	s.lastHead = head
 
 	if nextBlock > head {
 		// Ahead of head (e.g. from_block in the future, or a transient
@@ -322,6 +375,20 @@ func (s *Stream) processLogs(ctx context.Context, from, to uint64) error {
 	logs, err := s.opts.Client.GetLogs(ctx, filter)
 	s.opts.Metrics.ObserveLogChunk(to-from+1, s.now().Sub(start))
 	if err != nil {
+		// Public providers reject a window that matches too many logs or spans too
+		// wide a range. Rather than retry the identical oversized chunk forever
+		// (a silent stall during backfill), split it and retry each half — down to
+		// a single block — before surfacing the error. A cancelled ctx is not a cap
+		// error and surfaces immediately for a clean stop.
+		if from < to && ctx.Err() == nil && isLogRangeCapError(err) {
+			mid := from + (to-from)/2
+			s.log.Warn("eth_getLogs window rejected as too large; splitting and retrying",
+				"from", from, "to", to, "error_type", string(rpc.Classify(err)))
+			if lerr := s.processLogs(ctx, from, mid); lerr != nil {
+				return lerr
+			}
+			return s.processLogs(ctx, mid+1, to)
+		}
 		return err
 	}
 
@@ -331,6 +398,37 @@ func (s *Stream) processLogs(ctx context.Context, from, to uint64) error {
 		}
 	}
 	return nil
+}
+
+// isLogRangeCapError reports whether an eth_getLogs error indicates the provider
+// rejected the query for matching too many logs or spanning too wide a block
+// range (Alchemy/Infura/QuickNode/Ankr/geth phrasings). Such an error is fixable
+// by querying a smaller range, unlike a generic transient RPC failure. Matching
+// is best-effort substring matching on the provider message: a false positive
+// only causes harmless extra splitting, and a false negative falls back to the
+// normal transient retry.
+func isLogRangeCapError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, sub := range []string{
+		"more than 10000 results",
+		"query returned more than",
+		"response size exceeded",
+		"log response size",
+		"block range", // "...is too wide", "exceeds the maximum block range"
+		"range too large",
+		"range is too large",
+		"too wide",
+		"query timeout exceeded",
+		"exceeds the limit",
+	} {
+		if strings.Contains(msg, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // emitLog decodes and emits a single matched log. Logs whose address/topic0 are
@@ -387,7 +485,7 @@ func (s *Stream) emitLog(l rpc.Log) error {
 		},
 	}
 	if err := s.opts.Emitter.Emit(env); err != nil {
-		return err
+		return &emitErr{err: err}
 	}
 	s.opts.Metrics.IncEventRecord(cName, strings.ToLower(l.Address), ev.Name)
 	s.opts.Metrics.SetLastEmittedBlock(blockNum)
@@ -450,7 +548,7 @@ func (s *Stream) emitNative(blk *rpc.Block, blkNum uint64, ts string, t nativeTr
 		Data:        data,
 	}
 	if err := s.opts.Emitter.Emit(env); err != nil {
-		return err
+		return &emitErr{err: err}
 	}
 	s.opts.Metrics.IncNativeTransferRecord()
 	s.opts.Metrics.SetLastEmittedBlock(blkNum)

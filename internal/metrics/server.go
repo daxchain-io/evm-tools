@@ -145,8 +145,15 @@ func NewServer(opts ServerOptions) (*Server, error) {
 
 	return &Server{
 		httpSrv: &http.Server{
-			Handler:           mux,
+			Handler: mux,
+			// Conservative timeouts on every phase: scrape/health responses are
+			// tiny, so tight bounds are safe and they close the slowloris-style
+			// resource-exhaustion surface on an endpoint that binds all interfaces
+			// by default. ReadHeaderTimeout also guards the header phase.
 			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		},
 		ln:   ln,
 		opts: opts,

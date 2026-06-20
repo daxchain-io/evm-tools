@@ -230,7 +230,7 @@ func (p *Poller) emit(typ record.Type, name string, head uint64, blockHash, ts s
 		Data:        data,
 	}
 	if err := p.opts.Emitter.Emit(env); err != nil {
-		return err
+		return &emitErr{err: err}
 	}
 	switch typ {
 	case record.TypeBalanceChange, record.TypeContractChange, record.TypeOwnershipChange:

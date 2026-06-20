@@ -347,6 +347,51 @@ func (c *failHeadClient) TransactionReceipt(context.Context, string) (*rpc.Recei
 // TestBackpressurePropagates verifies an emitter error (a failed stdout write)
 // propagates as a poll failure rather than dropping the record. The loop should
 // not crash; it retries.
+// TestProcessLogsSplitsOnRangeCap verifies that when a provider rejects a
+// getLogs window as too wide / too many results, the stream splits the range and
+// retries the sub-ranges (down to small windows) instead of retrying the same
+// oversized chunk forever, and still emits the records.
+func TestProcessLogsSplitsOnRangeCap(t *testing.T) {
+	fc := &fakeClient{
+		chainID: 1,
+		heads:   []uint64{100},
+		getLogs: func(f rpc.LogFilter) ([]rpc.Log, error) {
+			// Reject any window wider than 10 blocks, like a public provider's cap.
+			if f.ToBlock-f.FromBlock+1 > 10 {
+				return nil, errors.New("rpc error -32005: query returned more than 10000 results")
+			}
+			return []rpc.Log{makeTransferLog(f.FromBlock, "1")}, nil
+		},
+	}
+	em := &captureEmitter{}
+	s, err := New(Options{
+		Client:         fc,
+		Emitter:        em,
+		ChainName:      "c",
+		ChainID:        1,
+		Contracts:      resolvedUSDC(t),
+		PollInterval:   time.Hour, // a single backfill poll covers [1,100]
+		LogChunkBlocks: 100,
+		FromBlock:      "1",
+		BackoffBase:    time.Millisecond,
+		BackoffMax:     2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	waitFor(t, func() bool { return em.count() >= 1 }, 2*time.Second)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if em.count() == 0 {
+		t.Error("no records emitted; chunk split did not recover the oversized range")
+	}
+}
+
 func TestBackpressurePropagates(t *testing.T) {
 	emitErr := errors.New("pipe blocked then broke")
 	fc := &fakeClient{

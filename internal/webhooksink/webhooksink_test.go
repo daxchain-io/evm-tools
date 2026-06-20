@@ -183,6 +183,40 @@ func TestSinkRetriesTransient5xx(t *testing.T) {
 	}
 }
 
+// stuckPoster always fails with a transient error and never succeeds — it models
+// a permanently unreachable endpoint the sink keeps retrying.
+type stuckPoster struct{}
+
+func (stuckPoster) Post(context.Context, []byte) error { return errors.New("connection refused") }
+func (stuckPoster) Close() error                       { return nil }
+func (stuckPoster) Reachable(context.Context) error    { return nil }
+
+// TestSinkContextCancelDoesNotCountForward verifies that when the endpoint stays
+// unreachable and the context cancels mid-backoff, the forwarded counter stays
+// at 0: the record was never delivered, so counting it would over-count
+// evm_sink_webhook_records_forwarded_total by one at shutdown.
+func TestSinkContextCancelDoesNotCountForward(t *testing.T) {
+	mm := &countingMetrics{}
+	sink, err := New(Options{
+		Reader:      record.NewReader(strings.NewReader(streamFrom(t, eventEnv("0x1", 0)))),
+		Poster:      stuckPoster{},
+		Metrics:     mm,
+		BackoffBase: 50 * time.Millisecond,
+		BackoffMax:  50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := sink.Run(ctx); err != nil {
+		t.Fatalf("context cancel should be a clean stop, got %v", err)
+	}
+	if mm.forwarded != 0 {
+		t.Errorf("forwarded = %d, want 0 (record never delivered before cancel)", mm.forwarded)
+	}
+}
+
 // TestSinkFailsFastOn4xx verifies a permanent HTTP 4xx stops the sink with a
 // non-nil error (exit non-zero) rather than retrying — a silent drop would
 // violate losslessness; an infinite retry would wedge the pipeline.
@@ -485,13 +519,55 @@ func TestNewHTTPPosterRejectsBadURL(t *testing.T) {
 	}
 }
 
-// TestRedactURL verifies query strings and userinfo are stripped for logging.
+// TestPosterRefusesRedirect verifies the poster does NOT follow a 3xx (which
+// could re-send the secret auth header to another host) and instead surfaces a
+// permanent error so the sink fails fast rather than leaking.
+func TestPosterRefusesRedirect(t *testing.T) {
+	var leakedAuth atomic.Bool
+	// The attacker host the redirect would point to: record if it ever sees auth.
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "" {
+			leakedAuth.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer evil.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, &http.Request{}, evil.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	p, err := NewHTTPPoster(PosterConfig{URL: srv.URL, AuthHeader: "X-Api-Key", AuthValue: "supersecret"})
+	if err != nil {
+		t.Fatalf("NewHTTPPoster: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+	err = p.Post(context.Background(), []byte(`{"x":1}`))
+	if err == nil {
+		t.Fatal("expected an error for a redirect response")
+	}
+	if Classify(err) != ClassPermanent {
+		t.Errorf("redirect should be permanent (fail fast), got %v (%s)", err, Classify(err))
+	}
+	if leakedAuth.Load() {
+		t.Error("auth header was sent to the redirect target — secret leak")
+	}
+}
+
+// TestRedactURL verifies query strings, userinfo, AND non-root paths are stripped
+// for logging — webhook providers carry the delivery secret in the path.
 func TestRedactURL(t *testing.T) {
 	cases := map[string]string{
-		"https://h.example.com/evm?token=abc":     "https://h.example.com/evm",
-		"https://user:pass@h.example.com/evm":     "https://h.example.com/evm",
-		"https://user:pass@h.example.com/e?t=sec": "https://h.example.com/e",
-		"http://plain.example.com/path":           "http://plain.example.com/path",
+		"https://h.example.com/evm?token=abc":     "https://h.example.com/[redacted]",
+		"https://user:pass@h.example.com/evm":     "https://h.example.com/[redacted]",
+		"https://user:pass@h.example.com/e?t=sec": "https://h.example.com/[redacted]",
+		"http://plain.example.com/path":           "http://plain.example.com/[redacted]",
+		// Path-embedded provider secrets must not survive.
+		"https://hooks.slack.com/services/T0/B0/Xsecret": "https://hooks.slack.com/[redacted]",
+		"https://discord.com/api/webhooks/123/tok":       "https://discord.com/[redacted]",
+		// Bare host / root path keep their (non-secret) shape for diagnostics.
+		"https://hooks.example.com":  "https://hooks.example.com",
+		"https://hooks.example.com/": "https://hooks.example.com/",
 	}
 	for in, want := range cases {
 		if got := RedactURL(in); got != want {

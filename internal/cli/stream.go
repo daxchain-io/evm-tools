@@ -101,7 +101,11 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 	}
 	go func() {
 		if serveErr := srv.Serve(); serveErr != nil {
-			logger.Error("metrics server stopped", "error", serveErr)
+			// An unexpected Serve() return (clean shutdown returns nil) means the
+			// health/metrics endpoint is gone; flip liveness so an orchestrator
+			// probe restarts the pod rather than letting it run blind.
+			logger.Error("metrics server stopped unexpectedly; marking process not-live", "error", serveErr)
+			health.SetLive(false)
 		}
 	}()
 	logger.Info("health/metrics server listening", "addr", srv.Addr(), "metrics_enabled", mc.Enabled)

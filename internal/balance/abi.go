@@ -85,7 +85,7 @@ func decodeAddress(hexResult string) (string, error) {
 		return "", fmt.Errorf("decode call result: %w", err)
 	}
 	if len(b) == 0 {
-		return "", fmt.Errorf("empty call result (function may not exist)")
+		return "", &permanentErr{err: errEmptyCallResult}
 	}
 	if len(b) > 32 {
 		b = b[len(b)-32:]
@@ -120,7 +120,7 @@ func decodeUint256(hexResult string) (*big.Int, error) {
 		return nil, fmt.Errorf("decode call result: %w", err)
 	}
 	if len(b) == 0 {
-		return nil, fmt.Errorf("empty call result (function may not exist)")
+		return nil, &permanentErr{err: errEmptyCallResult}
 	}
 	// Take the last 32 bytes if the result is wider; a single uint256 occupies
 	// exactly one word but be tolerant of left padding.

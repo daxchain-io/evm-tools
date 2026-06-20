@@ -167,6 +167,31 @@ func TestSinkContextCancelStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestSinkContextCancelDoesNotCountWrite(t *testing.T) {
+	// A writer permanently stuck on a transient (disk-full) error: the record is
+	// never durably appended. Cancelling mid-backoff is a clean stop, and the
+	// written counter must stay at 0 — incrementing it here would over-count
+	// evm_sink_file_records_written_total by one at shutdown.
+	w := &fakeWriter{failN: 1 << 30, failErr: &TransientError{Reason: "disk full"}}
+	mm := &countingMetrics{}
+	s := newSink(t, jsonl(rec("event", "USDT")), w, func(o *Options) {
+		o.BackoffBase = 50 * time.Millisecond
+		o.BackoffMax = 50 * time.Millisecond
+		o.Metrics = mm
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("context cancel should be a clean stop, got %v", err)
+	}
+	if len(w.lines) != 0 {
+		t.Errorf("no record should be durably written, got %d", len(w.lines))
+	}
+	if mm.written != 0 {
+		t.Errorf("written = %d, want 0 (record never written before cancel)", mm.written)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	cases := []struct {
 		name string
@@ -187,11 +212,13 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-// countingMetrics is a Metrics that invokes onRetry on each retry (other methods
-// are no-ops). Used to assert retry counting without a full prometheus set.
+// countingMetrics is a Metrics that invokes onRetry on each retry and tallies
+// confirmed writes (other methods are no-ops). Used to assert retry/write
+// counting without a full prometheus set.
 type countingMetrics struct {
 	noopMetrics
 	onRetry func()
+	written int
 }
 
 func (m *countingMetrics) IncRetry() {
@@ -199,3 +226,5 @@ func (m *countingMetrics) IncRetry() {
 		m.onRetry()
 	}
 }
+
+func (m *countingMetrics) IncWritten(string) { m.written++ }
