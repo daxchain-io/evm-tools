@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -473,6 +474,32 @@ func TestRunWithProbeEnabled(t *testing.T) {
 	}
 	if got := len(pub.snapshot()); got != 1 {
 		t.Errorf("expected 1 published record, got %d", got)
+	}
+}
+
+// TestRecoveryLogged verifies the sink emits an Info when it recovers after a
+// transient failure — the state-transition-out signal that complements the
+// "backing off" warning, so an operator sees the failing-then-healthy cycle.
+func TestRecoveryLogged(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	pub := &fakePublisher{failFirst: 2, failErr: errors.New("dial tcp: connection refused")}
+	sink, err := New(Options{
+		Reader:      record.NewReader(strings.NewReader(streamFrom(t, eventEnv("0x1", 0)))),
+		Publisher:   pub,
+		Router:      newRouterOrFatal(t, "evm.events", nil, PartitionIdentity),
+		Logger:      logger,
+		BackoffBase: time.Millisecond,
+		BackoffMax:  2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := sink.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(buf.String(), "broker recovered") {
+		t.Errorf("expected a recovery log after transient failures; logs:\n%s", buf.String())
 	}
 }
 

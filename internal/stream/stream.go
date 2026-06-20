@@ -211,6 +211,9 @@ func (s *Stream) Run(ctx context.Context) error {
 			continue
 		}
 		// Success: reset failure state and advance.
+		if consecutiveFailures > 0 {
+			s.log.Info("rpc recovered", "after_failures", consecutiveFailures)
+		}
 		consecutiveFailures = 0
 		s.opts.Health.SetRPCReachable(true)
 		s.opts.Metrics.SetConsecutiveFailures(0)

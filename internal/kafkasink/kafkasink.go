@@ -286,6 +286,7 @@ func (s *Sink) publishWithRetry(ctx context.Context, msg Message) error {
 		s.opts.Metrics.ObservePublish(s.now().Sub(start))
 		if err == nil {
 			if attempt > 0 {
+				s.log.Info("broker recovered", "after_failures", attempt)
 				s.clearBlocked()
 			}
 			s.opts.Health.SetBrokerReachable(true)

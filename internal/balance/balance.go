@@ -357,6 +357,9 @@ func (p *Poller) tick(ctx context.Context, consecutiveFailures *int) bool {
 
 // onSuccess resets the failure/backoff state after a clean sample.
 func (p *Poller) onSuccess(consecutiveFailures *int) {
+	if *consecutiveFailures > 0 {
+		p.log.Info("rpc recovered", "after_failures", *consecutiveFailures)
+	}
 	*consecutiveFailures = 0
 	p.opts.Health.SetRPCReachable(true)
 	p.opts.Metrics.SetConsecutiveFailures(0)

@@ -205,6 +205,7 @@ func (s *Sink) postWithRetry(ctx context.Context, payload []byte) error {
 		s.opts.Metrics.ObservePost(s.now().Sub(start))
 		if err == nil {
 			if attempt > 0 {
+				s.log.Info("endpoint recovered", "after_failures", attempt)
 				s.clearBlocked()
 			}
 			s.opts.Health.SetEndpointReachable(true)
