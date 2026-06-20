@@ -177,7 +177,7 @@ func validateKafka(cfg *config.KafkaFull) (resolvedKafka, error) {
 	if err != nil {
 		return resolvedKafka{}, err
 	}
-	probeInterval, err := parseProbeInterval(k.ReadinessProbeInterval, 15*time.Second, "kafka.readiness_probe_interval")
+	probeInterval, err := parseProbeInterval(k.ReadinessProbeInterval, "kafka.readiness_probe_interval")
 	if err != nil {
 		return resolvedKafka{}, err
 	}
@@ -285,11 +285,14 @@ func parseDurationDefault(s string, def time.Duration, name string) (time.Durati
 // parseProbeInterval parses the readiness-probe interval. Empty uses def;
 // "0"/"0s"/"off"/"none"/"disabled" returns 0 (probe disabled); anything else
 // must be a positive duration.
-func parseProbeInterval(s string, def time.Duration, name string) (time.Duration, error) {
+func parseProbeInterval(s, name string) (time.Duration, error) {
+	// defaultProbeInterval is the readiness-probe cadence used by every sink when
+	// the key is unset; the disable spellings turn the probe off.
+	const defaultProbeInterval = 15 * time.Second
 	t := strings.ToLower(strings.TrimSpace(s))
 	switch t {
 	case "":
-		return def, nil
+		return defaultProbeInterval, nil
 	case "0", "0s", "off", "none", "disabled":
 		return 0, nil
 	}

@@ -383,6 +383,38 @@ the sink command tree from S1/S2.
       rotation interval; real-binary rotation+gzip+prune verified against a >1 MB
       stream.
 
+## S5 — AWS sinks (evm-sink-aws-sqs, evm-sink-aws-sns)
+
+Goal: deliver records to AWS SQS and SNS, sharing one core. Credentials come from
+the AWS SDK default chain (never config).
+
+- [x] **`internal/awssink`** shared core: at-least-once run loop (cancellable
+      read, panic recovery, lossless backoff), `Publisher` interface, smithy
+      fault-based Classify (throttle/5xx transient, 4xx permanent), FIFO
+      MessageGroupId/MessageDeduplicationId hashed from PartitionIdentity/DedupKey,
+      256 KB oversize guard, `LoadAWSConfig` (default chain + region/endpoint).
+- [x] **SQS (`sqs.go`)** SendMessage + GetQueueAttributes probe; **SNS (`sns.go`)**
+      Publish + GetTopicAttributes probe; `.fifo` suffix auto-enables FIFO.
+- [x] **Wiring**: generic `metrics.SinkMetrics`/`SinkHealth`; `[aws_sqs]`/`[aws_sns]`
+      config+decode+load (`:9005`/`:9006`); `cli/aws.go` (run/validate, no-network
+      validate); `cmd/evm-sink-aws-sqs` + `cmd/evm-sink-aws-sns`.
+- [x] **Tests**: fake Publisher — deliver-all, FIFO id hashing, permanent/transient
+      Classify, oversize fail-fast, context-cancel clean stop. Verified `-race`.
+
+## S6 — Postgres sink (evm-sink-postgres)
+
+Goal: insert records into PostgreSQL idempotently (ON CONFLICT (dedup_key) DO
+NOTHING), so at-least-once is effectively exactly-once in the table.
+
+- [x] **`internal/pgsink`**: run loop + `Inserter`; SQLSTATE-class Classify
+      (08/40/53/57/55 transient, 22/23/42 permanent); `postgres.go` with pgxpool,
+      parameterized idempotent INSERT, optional auto-DDL, strict `ValidateTableName`
+      (injection-safe), DSN redaction (Target = host/port/db).
+- [x] **Wiring**: `[postgres]` config (dsn secret via `_cmd`/`${VAR}`), `cli/postgres.go`,
+      `cmd/evm-sink-postgres`, `:9007`; `--table` flag (dsn is config/env only).
+- [x] **Tests**: fake Inserter — insert-all, permanent/transient Classify,
+      context-cancel, table-name validation. Verified `-race`.
+
 ## Deferred (post-spine, per design)
 
 Native transfer internal/trace transfers; config reload (+ metric reset); reorg
@@ -390,7 +422,7 @@ handling and the additive `finalized`/`removed` field; checkpointing/resume. See
 design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
 runtime is done — see M4; the `evm-sink-kafka` sink is done — see S1; the
 `evm-sink-webhook` sink is done — see S2; the `evm-sink-file` sink is done — see
-S4.)
+S4; the AWS SQS/SNS sinks — see S5; the `evm-sink-postgres` sink — see S6.)
 
 ## Post-M4 follow-ups
 

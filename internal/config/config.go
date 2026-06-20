@@ -323,6 +323,60 @@ type FileConfig struct {
 	Metrics MetricsConfig `mapstructure:"metrics"`
 }
 
+// AWSCommon holds the AWS connection settings shared by the SQS and SNS sinks.
+// Credentials are never configured here — the AWS SDK default chain (environment,
+// shared config/profile, IRSA/web identity, instance role) supplies them, so no
+// secret material lands in the file.
+type AWSCommon struct {
+	// Region is the AWS region; empty lets the SDK resolve it from the environment.
+	Region string `mapstructure:"region"`
+	// EndpointURL overrides the service endpoint (LocalStack/VPC endpoint/tests).
+	EndpointURL string `mapstructure:"endpoint_url"`
+	// BackoffBase / BackoffMax bound the blocking retry backoff on a transient
+	// failure (throttling/5xx/network). Strings so "500ms" / "30s" parse; empty
+	// uses built-in defaults.
+	BackoffBase string `mapstructure:"backoff_base"`
+	BackoffMax  string `mapstructure:"backoff_max"`
+	// ReadinessProbeInterval is how often an active reachability probe refreshes
+	// /readyz while idle. A duration like "15s" (default); "0"/"off" disables it.
+	ReadinessProbeInterval string        `mapstructure:"readiness_probe_interval"`
+	Metrics                MetricsConfig `mapstructure:"metrics"`
+}
+
+// AWSSQSConfig is the [aws_sqs] section for evm-sink-aws-sqs. QueueURL is the
+// minimum; a ".fifo" queue URL enables FIFO message-group/dedup handling.
+type AWSSQSConfig struct {
+	QueueURL  string `mapstructure:"queue_url"`
+	AWSCommon `mapstructure:",squash"`
+}
+
+// AWSSNSConfig is the [aws_sns] section for evm-sink-aws-sns. TopicARN is the
+// minimum; a ".fifo" topic enables FIFO message-group/dedup handling.
+type AWSSNSConfig struct {
+	TopicARN  string `mapstructure:"topic_arn"`
+	AWSCommon `mapstructure:",squash"`
+}
+
+// PostgresConfig is the [postgres] section for evm-sink-postgres. DSN is the
+// minimum and is a SECRET (it carries the password): source it through the shared
+// env-interpolation / _cmd machinery (dsn_cmd or ${VAR}) so it never lands in the
+// file, and it is never logged.
+type PostgresConfig struct {
+	DSN string `mapstructure:"dsn"`
+	// Table is the destination table (default "evm_records"); may be schema.table.
+	Table string `mapstructure:"table"`
+	// CreateTable runs CREATE TABLE IF NOT EXISTS on startup when true.
+	CreateTable bool `mapstructure:"create_table"`
+	// BackoffBase / BackoffMax bound the blocking retry backoff on a transient DB
+	// failure. Strings so "500ms" / "30s" parse; empty uses built-in defaults.
+	BackoffBase string `mapstructure:"backoff_base"`
+	BackoffMax  string `mapstructure:"backoff_max"`
+	// ReadinessProbeInterval is how often an active DB ping refreshes /readyz while
+	// idle. A duration like "15s" (default); "0"/"off" disables it.
+	ReadinessProbeInterval string        `mapstructure:"readiness_probe_interval"`
+	Metrics                MetricsConfig `mapstructure:"metrics"`
+}
+
 // StreamFull is the fully decoded configuration for evm-stream: shared keys
 // plus the [stream] subtree.
 type StreamFull struct {
@@ -352,6 +406,27 @@ type WebhookFull struct {
 type FileFull struct {
 	Shared
 	File FileConfig
+}
+
+// AWSSQSFull is the fully decoded configuration for evm-sink-aws-sqs: shared keys
+// plus the [aws_sqs] subtree.
+type AWSSQSFull struct {
+	Shared
+	AWSSQS AWSSQSConfig
+}
+
+// AWSSNSFull is the fully decoded configuration for evm-sink-aws-sns: shared keys
+// plus the [aws_sns] subtree.
+type AWSSNSFull struct {
+	Shared
+	AWSSNS AWSSNSConfig
+}
+
+// PostgresFull is the fully decoded configuration for evm-sink-postgres: shared
+// keys plus the [postgres] subtree.
+type PostgresFull struct {
+	Shared
+	Postgres PostgresConfig
 }
 
 // BalanceFull is the fully decoded configuration for evm-balance: shared keys

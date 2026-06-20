@@ -9,8 +9,9 @@ is the short version of how to work here.
 `evm-tools` is a Go monorepo of composable CLIs for observing EVM chains.
 Producers (`evm-stream`, `evm-balance`) emit newline-delimited
 JSON to stdout; downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`,
-`evm-sink-file`) consume it. Module path: `github.com/daxchain-io/evm-tools`.
-Go 1.22+ (toolchain pinned in `go.mod`).
+`evm-sink-file`, `evm-sink-aws-sqs`, `evm-sink-aws-sns`, `evm-sink-postgres`)
+consume it. Module path: `github.com/daxchain-io/evm-tools`. Go 1.22+ (toolchain
+pinned in `go.mod`).
 
 ## Commands
 
@@ -42,6 +43,9 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 - `internal/stream`, `internal/balance` — producer core logic.
 - `internal/kafkasink`, `internal/webhooksink`, `internal/filesink` — sink core
   logic (`filesink` = rotating writer + filter + at-least-once run loop).
+- `internal/awssink` — shared AWS SQS/SNS sink core (FIFO-aware, 256 KB guard).
+- `internal/pgsink` — Postgres sink core (idempotent `ON CONFLICT` insert via pgx).
+- `internal/keyperm` — shared private-key file-mode warning.
 
 ## Load-bearing conventions
 

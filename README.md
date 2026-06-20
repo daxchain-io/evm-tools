@@ -13,18 +13,25 @@ together cleanly.
   filters.
 - `evm-sink-file` — append each record to a rotating local file, at-least-once,
   with optional gzip compression and filters.
+- `evm-sink-aws-sqs` — send each record to an AWS SQS queue, at-least-once,
+  FIFO-aware (credentials from the AWS default chain).
+- `evm-sink-aws-sns` — publish each record to an AWS SNS topic, at-least-once,
+  FIFO-aware.
+- `evm-sink-postgres` — insert each record into a PostgreSQL table; idempotent
+  (`ON CONFLICT (dedup_key) DO NOTHING`), so at-least-once is effectively
+  exactly-once in the table.
 
-All five live in this repository and share one configuration namespace.
+All eight live in this repository and share one configuration namespace.
 
 ## Install
 
-One command installs the whole suite (all five CLIs):
+One command installs the whole suite (all eight CLIs):
 
 ```sh
 # Homebrew (macOS / Linux)
 brew install --cask daxchain-io/tap/evm-tools
 
-# Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all five:
+# Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all eight:
 curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh
 ```
 
@@ -70,8 +77,9 @@ not merge stderr into it (`2>&1` would corrupt the JSONL).
 
 Every tool reads one shared `evm-tools` config file. Producers read the shared
 `[rpc]`/`[metrics]`/`[log]` settings plus their `[stream]`/`[balance]` section;
-sinks read the shared `[metrics]`/`[log]` settings plus their `[kafka]`,
-`[webhook]`, or `[file]` section, and ignore the producer-only sections.
+sinks read the shared `[metrics]`/`[log]` settings plus their own section
+(`[kafka]`, `[webhook]`, `[file]`, `[aws_sqs]`, `[aws_sns]`, or `[postgres]`), and
+ignore the producer-only sections.
 
 ```toml
 # evm-sink-kafka
@@ -119,15 +127,33 @@ fsync = false                  # fsync each line (durability vs throughput)
 
 [file.filters]                 # type/name allow/deny lists (no field condition)
 include_types = ["event", "native_transfer"]
+
+# evm-sink-aws-sqs — send each record to SQS (credentials from the AWS default
+# chain: env, shared config, IRSA/web identity, or instance role — never here).
+[aws_sqs]
+queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/evm-events"
+region = "us-east-1"           # optional; SDK resolves from env if unset
+# A .fifo queue_url auto-enables MessageGroupId/MessageDeduplicationId.
+
+# evm-sink-aws-sns — publish each record to an SNS topic.
+[aws_sns]
+topic_arn = "arn:aws:sns:us-east-1:123456789012:evm-events"
+
+# evm-sink-postgres — idempotent insert (ON CONFLICT (dedup_key) DO NOTHING).
+[postgres]
+dsn_cmd = "vault read -field=dsn secret/evm-tools/postgres"  # secret; never in the file
+table = "evm_records"
+create_table = true            # CREATE TABLE IF NOT EXISTS on startup
 ```
 
-Secrets (the Kafka SASL password, the webhook auth value) are sourced through
-env interpolation (`${VAR}`) or a `_cmd` key, so they never live in the file or
+Secrets (the Kafka SASL password, the webhook auth value, the Postgres DSN) are
+sourced through env interpolation (`${VAR}`) or a `_cmd` key, so they never live
+in the file or
 the logs.
 
 ## Container image
 
-A multi-stage `Dockerfile` builds an `alpine`-based image with all five binaries.
+A multi-stage `Dockerfile` builds an `alpine`-based image with all eight binaries.
 The base ships a shell on purpose so config `_cmd` keys keep working; a
 distroless/scratch base has no shell, so use `${VAR}` interpolation or mounted
 secrets there instead.

@@ -112,7 +112,55 @@ builds:
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
 
-# One archive bundles all five binaries, so a single `brew install` / `curl`
+  # The AWS sinks use aws-sdk-go-v2 (pure Go) and the Postgres sink uses pgx (pure
+  # Go), so CGO stays disabled and all three cross-compile statically like the rest
+  # of the suite.
+  - id: evm-sink-aws-sqs
+    main: ./cmd/evm-sink-aws-sqs
+    binary: evm-sink-aws-sqs
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
+  - id: evm-sink-aws-sns
+    main: ./cmd/evm-sink-aws-sns
+    binary: evm-sink-aws-sns
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
+  - id: evm-sink-postgres
+    main: ./cmd/evm-sink-postgres
+    binary: evm-sink-postgres
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
+# One archive bundles all eight binaries, so a single `brew install` / `curl`
 # install delivers the whole suite (evm-stream, evm-balance, and the sinks).
 archives:
   - id: evm-tools
@@ -122,6 +170,9 @@ archives:
       - evm-sink-kafka
       - evm-sink-webhook
       - evm-sink-file
+      - evm-sink-aws-sqs
+      - evm-sink-aws-sns
+      - evm-sink-postgres
     name_template: "evm-tools_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
@@ -178,13 +229,16 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/daxchain-io/evm-tools"
-    description: "Composable CLIs for observing EVM chains and streaming records as JSONL (evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook, evm-sink-file)"
+    description: "Composable CLIs for observing EVM chains and streaming records as JSONL (evm-stream, evm-balance, and sinks for Kafka, webhooks, files, AWS SQS/SNS, and PostgreSQL)"
     binaries:
       - evm-stream
       - evm-balance
       - evm-sink-kafka
       - evm-sink-webhook
       - evm-sink-file
+      - evm-sink-aws-sqs
+      - evm-sink-aws-sns
+      - evm-sink-postgres
     hooks:
       post:
         install: |

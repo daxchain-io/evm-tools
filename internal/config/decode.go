@@ -51,6 +51,23 @@ type fileTarget struct {
 	File   FileConfig `mapstructure:"file"`
 }
 
+// awsSQSTarget / awsSNSTarget are the decode shapes for the AWS sinks.
+type awsSQSTarget struct {
+	Shared `mapstructure:",squash"`
+	AWSSQS AWSSQSConfig `mapstructure:"aws_sqs"`
+}
+
+type awsSNSTarget struct {
+	Shared `mapstructure:",squash"`
+	AWSSNS AWSSNSConfig `mapstructure:"aws_sns"`
+}
+
+// postgresTarget is the decode shape for evm-sink-postgres.
+type postgresTarget struct {
+	Shared   `mapstructure:",squash"`
+	Postgres PostgresConfig `mapstructure:"postgres"`
+}
+
 // DecodeStream strict-decodes the shared keys plus the [stream] subtree into a
 // StreamFull. Unknown keys within those sections are a fatal error; the
 // [balance] section is ignored.
@@ -113,6 +130,36 @@ func (l *Loader) DecodeFile(allowExec bool) (*FileFull, error) {
 	}
 	t.AllowExec = allowExec
 	return &FileFull{Shared: t.Shared, File: t.File}, nil
+}
+
+// DecodeAWSSQS strict-decodes the shared keys plus the [aws_sqs] subtree.
+func (l *Loader) DecodeAWSSQS(allowExec bool) (*AWSSQSFull, error) {
+	var t awsSQSTarget
+	if err := l.strictDecode("aws_sqs", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &AWSSQSFull{Shared: t.Shared, AWSSQS: t.AWSSQS}, nil
+}
+
+// DecodeAWSSNS strict-decodes the shared keys plus the [aws_sns] subtree.
+func (l *Loader) DecodeAWSSNS(allowExec bool) (*AWSSNSFull, error) {
+	var t awsSNSTarget
+	if err := l.strictDecode("aws_sns", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &AWSSNSFull{Shared: t.Shared, AWSSNS: t.AWSSNS}, nil
+}
+
+// DecodePostgres strict-decodes the shared keys plus the [postgres] subtree.
+func (l *Loader) DecodePostgres(allowExec bool) (*PostgresFull, error) {
+	var t postgresTarget
+	if err := l.strictDecode("postgres", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &PostgresFull{Shared: t.Shared, Postgres: t.Postgres}, nil
 }
 
 // strictDecode builds a settings map containing only the shared keys and the

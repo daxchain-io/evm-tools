@@ -80,6 +80,9 @@ A single binary release and a single shared config file cover the whole suite.
 | `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics | Built (S1) |
 | `evm-sink-webhook` | Sink — forward records over HTTP with optional filters | Built (S2) |
 | `evm-sink-file` | Sink — append records to a rotating local file (gzip, retention) | Built (S3) |
+| `evm-sink-aws-sqs` | Sink — send records to an AWS SQS queue (FIFO-aware) | Built (S5) |
+| `evm-sink-aws-sns` | Sink — publish records to an AWS SNS topic (FIFO-aware) | Built (S5) |
+| `evm-sink-postgres` | Sink — idempotent insert into a PostgreSQL table | Built (S6) |
 
 The pipeline shape is always the same: a producer writes JSONL to stdout, and a
 sink reads it from stdin.
@@ -499,11 +502,15 @@ token_id = "1234"
 
 The sinks read from the same shared file. They use the shared `[metrics]`/`[log]`
 defaults and their own namespaced section — `[kafka]` for `evm-sink-kafka`,
-`[webhook]` for `evm-sink-webhook`, `[file]` for `evm-sink-file` — and ignore the
-producer-only `[rpc]`, `[stream]`, and `[balance]` sections. Each sources its
-secrets (the Kafka SASL password, the webhook auth-header value) through the same
-[value interpolation](#value-interpolation) / `_cmd` machinery as the producers,
-so nothing secret lands in the file.
+`[webhook]` for `evm-sink-webhook`, `[file]` for `evm-sink-file`, `[aws_sqs]` /
+`[aws_sns]` for the AWS sinks, and `[postgres]` for `evm-sink-postgres` — and
+ignore the producer-only `[rpc]`, `[stream]`, and `[balance]` sections. Each
+sources its secrets (the Kafka SASL password, the webhook auth-header value, the
+Postgres DSN) through the same [value interpolation](#value-interpolation) /
+`_cmd` machinery as the producers, so nothing secret lands in the file. The AWS
+sinks take no credentials in config at all — the AWS SDK default chain
+(environment, shared config, IRSA/web identity, or an instance role) supplies
+them.
 
 ```toml
 # evm-sink-kafka — publish each stdin record to Kafka, at-least-once.
@@ -585,6 +592,39 @@ include_types = ["event", "native_transfer"]
 [file.metrics]
 enabled = true
 addr = ":9004"
+
+# evm-sink-aws-sqs — send each stdin record to SQS. No credentials here: the AWS
+# SDK default chain (env, shared config, IRSA, instance role) supplies them.
+[aws_sqs]
+queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/evm-events"
+region = "us-east-1"                       # optional; SDK resolves it if unset
+# endpoint_url = "http://localhost:4566"   # optional; LocalStack/VPC endpoint
+# A ".fifo" queue_url auto-enables MessageGroupId (record partition identity) and
+# MessageDeduplicationId (record dedup key, hashed to a FIFO-safe id).
+
+[aws_sqs.metrics]
+enabled = true
+addr = ":9005"
+
+# evm-sink-aws-sns — publish each stdin record to an SNS topic (same AWS settings).
+[aws_sns]
+topic_arn = "arn:aws:sns:us-east-1:123456789012:evm-events"
+
+[aws_sns.metrics]
+enabled = true
+addr = ":9006"
+
+# evm-sink-postgres — idempotent insert into a table (ON CONFLICT (dedup_key) DO
+# NOTHING), so at-least-once delivery is effectively exactly-once in the table.
+[postgres]
+# DSN is a secret: source it via _cmd/${VAR}, never inline. Never logged.
+dsn_cmd = "vault read -field=dsn secret/evm-tools/postgres"
+table = "evm_records"                      # may be schema.table; validated
+create_table = true                        # CREATE TABLE IF NOT EXISTS on startup
+
+[postgres.metrics]
+enabled = true
+addr = ":9007"
 ```
 
 ### evm-sink-kafka
@@ -1056,6 +1096,9 @@ evm-tools/
     evm-sink-kafka/        # thin entrypoint
     evm-sink-webhook/      # thin entrypoint
     evm-sink-file/         # thin entrypoint
+    evm-sink-aws-sqs/      # thin entrypoint
+    evm-sink-aws-sns/      # thin entrypoint
+    evm-sink-postgres/     # thin entrypoint
   internal/
     config/                # shared loading, precedence, interpolation, per-tool decoding
     rpc/                   # TLS RPC transport + client (server-auth by default, optional mTLS)
@@ -1066,6 +1109,9 @@ evm-tools/
     cli/                   # shared Cobra command trees (producers + sinks)
     stream/                # evm-stream core logic
     balance/               # evm-balance core logic
+    awssink/               # shared AWS SQS/SNS sink core
+    pgsink/                # evm-sink-postgres core logic (pgx)
+    keyperm/               # shared private-key file-mode warning
     kafkasink/             # evm-sink-kafka core logic
     webhooksink/           # evm-sink-webhook core logic
     filesink/              # evm-sink-file core logic (rotating writer + filter + run loop)
@@ -1380,6 +1426,21 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   surfaces as a terminal `EPIPE` (clean non-zero exit, graceful flush) rather than
   a signal kill. A second `SIGINT`/`SIGTERM` during graceful shutdown force-exits,
   so a wedged shutdown never requires `SIGKILL`.
+- **Postgres sink startup and unstorable rows.** `evm-sink-postgres` validates at
+  startup — it connects, checks the target table/columns, and confirms the
+  `ON CONFLICT (dedup_key)` UNIQUE index/PRIMARY KEY exists (creating the table
+  when `create_table=true`) — and **fails fast** if the database is unreachable or
+  the table is misconfigured. This is intentional: a supervisor restart retries,
+  and failing at boot beats failing on the first record. At run time, a record
+  PostgreSQL genuinely cannot store — e.g. a JSON string containing `U+0000`,
+  which `jsonb` rejects — is a permanent error that stops the sink (consistent with
+  the fail-fast-on-malformed-input posture above), rather than being silently
+  dropped or mutated; quarantine such input upstream if it can occur.
+- **AWS sink credentials & retries.** The AWS sinks take no credentials in config
+  — the SDK default chain supplies them. Retry classification delegates to the AWS
+  SDK's own retryer (throttling, request timeouts, retryable 5xx, and connection
+  errors are retried with blocking backoff), so only a genuine client fault
+  (access denied, a non-existent queue/topic, a bad request) fails fast.
 
 ## Open Questions
 

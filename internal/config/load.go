@@ -69,6 +69,13 @@ var flagBindings = map[string]string{
 
 	// evm-sink-file flags.
 	"path": "file.path",
+
+	// evm-sink-aws-sqs / evm-sink-aws-sns flags.
+	"queue-url": "aws_sqs.queue_url",
+	"topic-arn": "aws_sns.topic_arn",
+
+	// evm-sink-postgres flag (dsn is secret -> config/env only, never argv).
+	"table": "postgres.table",
 }
 
 // New builds a Loader, reading the config file (if any) and wiring env binding.
@@ -153,6 +160,15 @@ func bindEnvKeys(v *viper.Viper) {
 		"file.path", "file.max_size_mb", "file.rotation_interval", "file.max_backups",
 		"file.compress", "file.fsync", "file.backoff_base", "file.backoff_max",
 		"file.metrics.enabled", "file.metrics.addr", "file.metrics.path",
+		"aws_sqs.queue_url", "aws_sqs.region", "aws_sqs.endpoint_url",
+		"aws_sqs.backoff_base", "aws_sqs.backoff_max", "aws_sqs.readiness_probe_interval",
+		"aws_sqs.metrics.enabled", "aws_sqs.metrics.addr", "aws_sqs.metrics.path",
+		"aws_sns.topic_arn", "aws_sns.region", "aws_sns.endpoint_url",
+		"aws_sns.backoff_base", "aws_sns.backoff_max", "aws_sns.readiness_probe_interval",
+		"aws_sns.metrics.enabled", "aws_sns.metrics.addr", "aws_sns.metrics.path",
+		"postgres.dsn", "postgres.table", "postgres.create_table",
+		"postgres.backoff_base", "postgres.backoff_max", "postgres.readiness_probe_interval",
+		"postgres.metrics.enabled", "postgres.metrics.addr", "postgres.metrics.path",
 	}
 	for _, k := range keys {
 		// Error only occurs with an empty key; ignore safely.
@@ -220,6 +236,25 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("file.backoff_max", "30s")
 	v.SetDefault("file.metrics.path", "/metrics")
 	v.SetDefault("file.metrics.addr", ":9004")
+
+	v.SetDefault("aws_sqs.backoff_base", "500ms")
+	v.SetDefault("aws_sqs.backoff_max", "30s")
+	v.SetDefault("aws_sqs.readiness_probe_interval", "15s")
+	v.SetDefault("aws_sqs.metrics.path", "/metrics")
+	v.SetDefault("aws_sqs.metrics.addr", ":9005")
+
+	v.SetDefault("aws_sns.backoff_base", "500ms")
+	v.SetDefault("aws_sns.backoff_max", "30s")
+	v.SetDefault("aws_sns.readiness_probe_interval", "15s")
+	v.SetDefault("aws_sns.metrics.path", "/metrics")
+	v.SetDefault("aws_sns.metrics.addr", ":9006")
+
+	v.SetDefault("postgres.table", "evm_records")
+	v.SetDefault("postgres.backoff_base", "500ms")
+	v.SetDefault("postgres.backoff_max", "30s")
+	v.SetDefault("postgres.readiness_probe_interval", "15s")
+	v.SetDefault("postgres.metrics.path", "/metrics")
+	v.SetDefault("postgres.metrics.addr", ":9007")
 }
 
 // userConfigDir returns the user-level config directory, defaulting to

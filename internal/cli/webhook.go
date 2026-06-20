@@ -177,7 +177,7 @@ func validateWebhook(cfg *config.WebhookFull) (resolvedWebhook, error) {
 	// readiness follows POST outcomes (with an optimistic start).
 	probeInterval := time.Duration(0)
 	if wh.HealthURL != "" {
-		probeInterval, err = parseProbeInterval(wh.ReadinessProbeInterval, 15*time.Second, "webhook.readiness_probe_interval")
+		probeInterval, err = parseProbeInterval(wh.ReadinessProbeInterval, "webhook.readiness_probe_interval")
 		if err != nil {
 			return resolvedWebhook{}, err
 		}

@@ -19,9 +19,12 @@ type SinkTool string
 
 // Supported sinks.
 const (
-	ToolSinkKafka   SinkTool = "evm-sink-kafka"
-	ToolSinkWebhook SinkTool = "evm-sink-webhook"
-	ToolSinkFile    SinkTool = "evm-sink-file"
+	ToolSinkKafka    SinkTool = "evm-sink-kafka"
+	ToolSinkWebhook  SinkTool = "evm-sink-webhook"
+	ToolSinkFile     SinkTool = "evm-sink-file"
+	ToolSinkAWSSQS   SinkTool = "evm-sink-aws-sqs"
+	ToolSinkAWSSNS   SinkTool = "evm-sink-aws-sns"
+	ToolSinkPostgres SinkTool = "evm-sink-postgres"
 )
 
 // sinkFlags holds the values bound to a sink's persistent flag set: the shared
@@ -48,6 +51,13 @@ type sinkFlags struct {
 
 	// File-specific.
 	path string
+
+	// AWS-specific.
+	queueURL string
+	topicARN string
+
+	// Postgres-specific (dsn is secret -> config/env only, never a flag).
+	table string
 }
 
 // sinkShortDesc returns the one-line description for a sink.
@@ -59,6 +69,12 @@ func (t SinkTool) sinkShortDesc() string {
 		return "Forward JSONL records from stdin to an HTTP endpoint (at-least-once, optional filters)"
 	case ToolSinkFile:
 		return "Append JSONL records from stdin to a rotating local file (at-least-once, optional filters)"
+	case ToolSinkAWSSQS:
+		return "Send JSONL records from stdin to an AWS SQS queue (at-least-once, FIFO-aware)"
+	case ToolSinkAWSSNS:
+		return "Publish JSONL records from stdin to an AWS SNS topic (at-least-once, FIFO-aware)"
+	case ToolSinkPostgres:
+		return "Insert JSONL records from stdin into a PostgreSQL table (idempotent, exactly-once-in-table)"
 	default:
 		return "An evm-tools sink"
 	}
@@ -87,6 +103,12 @@ func NewSinkRootCommand(tool SinkTool) *cobra.Command {
 		bindWebhookFlags(root, flags)
 	case ToolSinkFile:
 		bindFileFlags(root, flags)
+	case ToolSinkAWSSQS:
+		bindAWSSQSFlags(root, flags)
+	case ToolSinkAWSSNS:
+		bindAWSSNSFlags(root, flags)
+	case ToolSinkPostgres:
+		bindPostgresFlags(root, flags)
 	}
 
 	root.AddCommand(
@@ -133,6 +155,26 @@ func bindFileFlags(root *cobra.Command, f *sinkFlags) {
 	pf.StringVar(&f.path, "path", "", "output file path, e.g. /var/log/evm-tools/events.jsonl")
 }
 
+// bindAWSSQSFlags installs the evm-sink-aws-sqs-specific flags.
+func bindAWSSQSFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringVar(&f.queueURL, "queue-url", "", "SQS queue URL (a .fifo URL enables FIFO ordering/dedup)")
+}
+
+// bindAWSSNSFlags installs the evm-sink-aws-sns-specific flags.
+func bindAWSSNSFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringVar(&f.topicARN, "topic-arn", "", "SNS topic ARN (a .fifo topic enables FIFO ordering/dedup)")
+}
+
+// bindPostgresFlags installs the evm-sink-postgres-specific flags. The DSN is a
+// secret and is intentionally NOT a flag (it would leak via the process argv);
+// set it through [postgres].dsn / dsn_cmd / ${VAR}.
+func bindPostgresFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringVar(&f.table, "table", "", "destination table (default evm_records; may be schema.table)")
+}
+
 func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
@@ -156,6 +198,12 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return webhookRun(cmd, f)
 			case ToolSinkFile:
 				return fileRun(cmd, f)
+			case ToolSinkAWSSQS:
+				return awsSQSRun(cmd, f)
+			case ToolSinkAWSSNS:
+				return awsSNSRun(cmd, f)
+			case ToolSinkPostgres:
+				return postgresRun(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
@@ -179,6 +227,12 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return webhookValidate(cmd, f)
 			case ToolSinkFile:
 				return fileValidate(cmd, f)
+			case ToolSinkAWSSQS:
+				return awsSQSValidate(cmd, f)
+			case ToolSinkAWSSNS:
+				return awsSNSValidate(cmd, f)
+			case ToolSinkPostgres:
+				return postgresValidate(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
