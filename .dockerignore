@@ -1,0 +1,17 @@
+# Keep the build context small and reproducible: only source needed to build the
+# binaries goes to the daemon. Everything below is either rebuilt, irrelevant to
+# the build, or would bust the layer cache on unrelated changes.
+.git
+.github
+dist
+docs
+scripts
+install.sh
+*.md
+!go.mod
+!go.sum
+.golangci.yml
+.goreleaser.yaml
+.markdownlint-cli2.yaml
+Dockerfile
+.dockerignore

@@ -11,9 +11,98 @@ The first two tools are producers:
   transfers) as newline-delimited JSON.
 - `evm-balance`: balance and contract-state polling as newline-delimited JSON.
 
-Downstream sink tools (e.g. `evm-sink-kafka`, `evm-sink-webhook`) consume that
-stream and deliver it somewhere useful. All tools live in this repository and
-share one configuration namespace.
+Downstream sink tools consume that stream and deliver it somewhere useful:
 
-See [docs/design.md](docs/design.md) for the current product and implementation
+- `evm-sink-kafka`: publish each record to Kafka topics, at-least-once.
+- `evm-sink-webhook`: forward each record over HTTP, at-least-once, with optional
+  filters.
+
+All tools live in this repository and share one configuration namespace.
+
+## Pipelines
+
+The shape is always the same: a producer writes JSONL to stdout, and a sink
+reads it from stdin.
+
+```sh
+# Stream contract events straight into Kafka.
+evm-stream run -c ~/.config/evm-tools/codex-chain.toml \
+  | evm-sink-kafka run -c ~/.config/evm-tools/codex-chain.toml
+
+# Poll balances and forward changes to an alerting webhook.
+evm-balance run -c ~/.config/evm-tools/codex-chain.toml \
+  | evm-sink-webhook run -c ~/.config/evm-tools/codex-chain.toml
+
+# Override the destination on the command line.
+evm-stream run -c ~/.config/evm-tools/codex-chain.toml \
+  | evm-sink-kafka --brokers broker:9093 --topic evm.events
+
+evm-balance run -c ~/.config/evm-tools/codex-chain.toml \
+  | evm-sink-webhook --url https://hooks.internal.example.com/evm
+
+# Or just inspect the stream locally.
+evm-stream run -c ~/.config/evm-tools/codex-chain.toml | jq
+```
+
+stdout is the data stream and stderr is human-readable diagnostics, so the two
+never mix — keep the producer's stdout flowing into the sink (or a file) and do
+not merge stderr into it (`2>&1` would corrupt the JSONL).
+
+## Configuration
+
+Every tool reads one shared `evm-tools` config file. Producers read the shared
+`[rpc]`/`[metrics]`/`[log]` settings plus their `[stream]`/`[balance]` section;
+sinks read the shared `[metrics]`/`[log]` settings plus their `[kafka]` or
+`[webhook]` section, and ignore the producer-only sections.
+
+```toml
+# evm-sink-kafka
+[kafka]
+brokers = ["broker:9093"]
+topic = "evm.events"
+required_acks = "all"          # only "all" — the at-least-once contract
+
+[kafka.sasl]
+mechanism = "scram-sha-512"    # plain | scram-sha-256 | scram-sha-512
+username = "evm-tools"
+password_cmd = "vault read -field=password secret/codex/kafka"
+
+[kafka.tls]
+enabled = true                 # SASL requires TLS
+
+# evm-sink-webhook
+[webhook]
+url = "https://hooks.internal.example.com/evm"
+
+[webhook.auth]
+header = "Authorization"
+value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/codex/webhook)\""
+
+# Optional filters: forward all by default, narrow with these.
+[webhook.filters]
+include_types = ["balance_change", "native_transfer"]
+
+[webhook.filters.field]        # a single simple condition: eq | gt | lt
+field = "balance"
+op = "gt"
+value = "1000"
+```
+
+Secrets (the Kafka SASL password, the webhook auth value) are sourced through
+env interpolation (`${VAR}`) or a `_cmd` key, so they never live in the file or
+the logs.
+
+## Container image
+
+A multi-stage `Dockerfile` builds an `alpine`-based image with all four binaries.
+The base ships a shell on purpose so config `_cmd` keys keep working; a
+distroless/scratch base has no shell, so use `${VAR}` interpolation or mounted
+secrets there instead.
+
+```sh
+docker build -t evm-tools .
+docker run --rm evm-tools evm-stream version
+```
+
+See [docs/design.md](docs/design.md) for the full product and implementation
 notes.

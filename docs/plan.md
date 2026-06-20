@@ -309,6 +309,37 @@ DSL. Reuses the shared JSONL `record.Reader` and the sink command tree from S1.
       passing stdin record at-least-once (verbatim, `application/json`), blocks
       (never drops) on a 5xx/stalled endpoint, and fails fast on a 4xx.
 
+## S3 — Container and release polish
+
+Goal: production polish for the sinks now that S1/S2 are built — container image,
+container-logging guidance, and config/README coverage of the sinks. No new
+product decisions.
+
+- [x] **Logging in containers** — extend the design's Logging subsection with a
+      `#### Logging in containers` paragraph: stdout carries the JSONL data and
+      stderr carries the `log/slog` diagnostics; Docker/Kubernetes capture both,
+      so `docker logs` / `kubectl logs` surface stderr without putting logs on
+      stdout (which would corrupt the contract) — the 12-factor "logs as a
+      stream" expectation is met. Recommend `--log-format json` for aggregation;
+      run a producer's stdout into a sink (or redirect it), never `2>&1`; note the
+      distroless/scratch no-shell caveat for `_cmd`. Added as a `####` subsection
+      so the Contents TOC needs no change. → Logging.
+- [x] **Multi-stage `Dockerfile`** producing one image with all four binaries on
+      an `alpine` base (has a shell, so `_cmd` works); distroless caveat
+      documented in a comment; `+ .dockerignore`. Built with `docker build` and
+      smoke-tested (all four `version`s, shell present, non-root, JSON output on
+      stdout); `hadolint` clean. → Release and Distribution, Configuration.
+- [x] **Config + README sink coverage** — `[kafka]`/`[webhook]` sample config
+      added to the design Configuration example and to the README, plus
+      producer | sink pipeline usage and the container-image section in the
+      README. → Configuration.
+- [x] **Plan + Tool Suite statuses** — this S1/S2/S3 section; the design Tool
+      Suite table marks `evm-sink-kafka` Built (S1) and `evm-sink-webhook`
+      Built (S2). → Tool Suite.
+- [x] **Acceptance:** build/vet/test/lint green offline; `goreleaser check`
+      passes; `Dockerfile` builds and all four binaries run in the image;
+      `hadolint` clean; docs render and lint.
+
 ## Deferred (post-spine, per design)
 
 Native transfer internal/trace transfers; config reload (+ metric reset); reorg

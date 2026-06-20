@@ -495,6 +495,71 @@ token_id = "1234"
 `balance_change` records with `kind: erc721` and a `count`;
 `[[balance.erc721_ownership]]` emits `ownership_sample` / `ownership_change`.
 
+The sinks read from the same shared file. They use the shared `[metrics]`/`[log]`
+defaults and their own namespaced section — `[kafka]` for `evm-sink-kafka`,
+`[webhook]` for `evm-sink-webhook` — and ignore the producer-only `[rpc]`,
+`[stream]`, and `[balance]` sections. Both source their secrets (the Kafka SASL
+password, the webhook auth-header value) through the same
+[value interpolation](#value-interpolation) / `_cmd` machinery as the producers,
+so nothing secret lands in the file.
+
+```toml
+# evm-sink-kafka — publish each stdin record to Kafka, at-least-once.
+[kafka]
+brokers = ["broker-1.internal:9093", "broker-2.internal:9093"]
+topic = "evm.events"                      # default topic; --topic overrides
+# Optional per-record-type topic routing; unmapped types use `topic`.
+# topic_by_type = { native_transfer = "evm.transfers", balance_change = "evm.balances" }
+partition_key = "identity"                # identity (default) | dedup | none
+required_acks = "all"                     # only "all" — the at-least-once contract
+# backoff_base = "500ms"
+# backoff_max  = "30s"
+
+[kafka.sasl]
+mechanism = "scram-sha-512"               # plain | scram-sha-256 | scram-sha-512
+username = "evm-tools"
+# Secret: pulled at startup, never written to the file or logged. On a
+# distroless/scratch image (no shell) use ${KAFKA_PASSWORD} interpolation or a
+# mounted secret file instead of _cmd.
+password_cmd = "vault read -field=password secret/codex/kafka"
+
+[kafka.tls]
+enabled = true                            # SASL requires TLS (fail fast otherwise)
+ca_cert = "/etc/evm-tools/certs/kafka-ca.crt"
+
+[kafka.metrics]
+enabled = true
+addr = ":9002"
+
+# evm-sink-webhook — forward each stdin record over HTTP, at-least-once.
+[webhook]
+url = "https://hooks.internal.example.com/evm"   # --url overrides
+method = "POST"                           # POST (default) | PUT | PATCH
+headers = { X-Source = "evm-tools" }      # static, non-secret headers
+# timeout = "10s"
+
+[webhook.auth]
+header = "Authorization"
+# Secret: sourced like the Kafka password — never written to the file or logged.
+value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/codex/webhook)\""
+
+# Optional filters — a FORWARDER WITH OPTIONAL FILTERS, not a rule DSL. All
+# configured filters must pass for a record to be forwarded.
+[webhook.filters]
+include_types = ["balance_change", "native_transfer"]
+# exclude_names = ["noisy-token"]
+
+# A single simple field condition on one named data field (eq | gt | lt).
+[webhook.filters.field]
+field = "balance"
+op = "gt"
+value = "1000"
+
+[webhook.metrics]
+enabled = true
+addr = ":9003"
+```
+
 ### Value interpolation
 
 Two mechanisms resolve dynamic values in the config file. Both run on
@@ -863,6 +928,44 @@ Human-readable diagnostics use the standard library `log/slog` on stderr. A
 verbosity and `--log-format` selects `text` (default) or `json`. Logging is
 configured once in an internal package so every binary behaves identically. Per
 Principle 5, metrics — not logs — are the primary operational surface.
+
+#### Logging in containers
+
+The stdout/stderr split (Principle 2) is exactly what a container runtime
+expects, so it satisfies the 12-factor "logs as a stream" model without ever
+putting logs on stdout. **stdout carries the JSONL data stream; stderr carries
+the `log/slog` diagnostics.** Docker and Kubernetes capture *both* streams, so
+`docker logs` and `kubectl logs` surface the stderr diagnostics for free — the
+operator sees the human-readable log stream while the data contract on stdout
+stays uncorrupted. Putting logs on stdout to "make them show up in
+`kubectl logs`" would break the JSONL contract for any consumer of that stream;
+it is unnecessary because the runtime already captures stderr. Set
+`--log-format json` (or the `[log].format` key) when those diagnostics feed a
+log aggregator such as Loki, Elasticsearch, or Cloud Logging, so each line
+parses as structured JSON.
+
+How you wire stdout depends on whether the container runs a producer alone or a
+producer-to-sink pipeline:
+
+- **Pipeline (producer → sink).** Run the producer's stdout into a sink — either
+  both processes in one container connected by a shell pipe, or two containers
+  with the producer's stdout redirected into the sink's stdin (e.g. a sidecar).
+  The JSONL never reaches the container log stream; only the two processes'
+  stderr diagnostics do.
+- **Standalone producer.** stdout *is* the data. Redirect it to the next stage
+  (a file, a named pipe, a sink container's stdin) rather than letting it land in
+  the container log stream as undifferentiated lines. **Never merge stderr into
+  stdout** — do not use `2>&1` or a shell redirect that folds the two together,
+  because that interleaves human log lines into the JSONL and corrupts the data
+  contract. Keep the streams separate and let the runtime collect stderr on its
+  own.
+
+One container caveat affects secret resolution: a distroless or `scratch` base
+image has no shell, so config `_cmd` keys (which run via `sh -c`) fail with a
+clear "shell not found" error there. In those images, source secrets through
+environment-variable interpolation (`${VAR}`) or mounted secret files instead of
+`_cmd`. A base image that ships a shell (for example `alpine`) keeps `_cmd`
+working; see the suite `Dockerfile`, which uses such a base for that reason.
 
 ### Lifecycle and shutdown
 
