@@ -526,6 +526,10 @@ password_cmd = "vault read -field=password secret/codex/kafka"
 [kafka.tls]
 enabled = true                            # SASL requires TLS (fail fast otherwise)
 ca_cert = "/etc/evm-tools/certs/kafka-ca.crt"
+# Optional mutual TLS to the broker and an SNI override:
+# client_cert = "/etc/evm-tools/certs/kafka-client.crt"
+# client_key  = "/etc/evm-tools/certs/kafka-client.key"
+# server_name = "kafka.internal.example.com"
 
 [kafka.metrics]
 enabled = true
@@ -559,6 +563,67 @@ value = "1000"
 enabled = true
 addr = ":9003"
 ```
+
+### evm-sink-kafka
+
+`evm-sink-kafka` reads the suite's JSONL contract on stdin and publishes each
+record to Kafka with **at-least-once** delivery (see
+[Open Questions](#open-questions) #2). It reads the shared `[metrics]`/`[log]`
+keys plus its own `[kafka]` section and ignores the producer-only `[rpc]`,
+`[stream]`, and `[balance]` sections.
+
+- `brokers` (required) — the bootstrap broker list (`host:port`). `--brokers`
+  (a comma-separated string) and `EVM_TOOLS_KAFKA_BROKERS` override it.
+- `topic` (required unless `topic_by_type` covers every record) — the default
+  destination topic; `--topic` overrides it.
+- `topic_by_type` — an optional map from record `type` (`event`,
+  `native_transfer`, `balance_sample`, …) to a topic that overrides `topic` for
+  that type. An unmapped type falls back to `topic`; a record with neither a
+  mapped nor a default topic is a fatal error, never a silent drop.
+- `partition_key` — how the Kafka message key is derived: `identity` (default)
+  keys on the record's [partition identity](#deduplication-and-resume-keys) so
+  every record sharing a logical identity lands on one partition and per-key
+  order is preserved; `dedup` keys on the full dedup key (identity plus the
+  sample `emitted_at` disambiguator); `none` sends no key (round-robin, no
+  ordering guarantee).
+- `required_acks` — only `"all"` is accepted (the default): the broker must
+  acknowledge every in-sync replica before a publish is confirmed, which is the
+  at-least-once contract. Any other value fails fast at startup rather than
+  silently weakening the guarantee.
+- `backoff_base` / `backoff_max` / `batch_timeout` — optional tuning of the
+  blocking retry backoff and the writer's batch-flush window; each is a duration
+  string (`"500ms"`, `"30s"`) and falls back to a built-in default.
+
+**`[kafka.sasl]`** (optional) — `mechanism` is `plain`, `scram-sha-256`, or
+`scram-sha-512` (empty disables SASL); `username` is the principal. The
+`password` is a secret: source it through the shared
+[interpolation/`_cmd`](#value-interpolation) machinery (`password_cmd` or a
+`${VAR}`) so it never lands in the file, and it is never logged. SASL requires
+TLS — a mechanism set with TLS disabled fails fast rather than send the password
+in cleartext.
+
+**`[kafka.tls]`** (optional, required when SASL is set) — `enabled` turns TLS on
+(it defaults on when a SASL mechanism is configured); `ca_cert` trusts a private
+broker CA; `client_cert`/`client_key` present a client certificate for mutual
+TLS; `server_name` overrides the SNI/verification name. `insecure_skip_verify`
+is a deliberate, dev-only escape hatch.
+
+**`[kafka.metrics]`** — the standard per-tool metrics endpoint (see
+[Metrics](#metrics)); the sink binds `:9002` by default so it runs alongside the
+producers' `:9000`/`:9001`. The set covers records consumed/published/failed, a
+publish-duration histogram, and retry/backoff/blocked gauges, plus `/healthz`
+and `/readyz` — the latter flips to not-ready while a publish has been blocked on
+a failing broker beyond its threshold. Because an idle pipe makes no publish
+attempts, an active broker probe (a metadata request every
+`[kafka].readiness_probe_interval`, default `15s`; `0` disables) keeps `/readyz`
+reflecting "is the broker reachable" even when no records are flowing. The
+webhook sink works the same way: it starts optimistically ready and, when an
+optional `[webhook].health_url` is set, actively GET-probes it on the same
+cadence.
+
+`evm-sink-kafka validate` decodes the config and validates the broker list, SASL
+mechanism, and TLS material — building the publisher loads the keypair and CA
+without any network I/O — so a bad config is caught before the sink connects.
 
 ### Value interpolation
 
@@ -1188,9 +1253,19 @@ These are unresolved and worth deciding before or during the build:
    rule DSL. Delivery is at-least-once (confirm-before-advance, blocking retry on
    transient errors, fail-fast on a permanent HTTP 4xx). See `[webhook]` config
    and the S2 milestone in [docs/plan.md](plan.md).
-2. **Sink delivery semantics.** Producers stream best-effort; how much
-   delivery/resume responsibility belongs to sinks (at-least-once, ordering)
-   versus a future checkpointing/resume feature in the producers?
+2. ~~**Sink delivery semantics.**~~ **Settled (S1).** Delivery responsibility
+   lives in the sinks: each sink is **at-least-once** and the producers stay
+   best-effort, with no producer-side checkpointing/resume for now.
+   `evm-sink-kafka` publishes with `RequiredAcks=all` and confirms every publish
+   before advancing the stdin cursor (confirm-before-advance), retrying a
+   transient broker/network failure with blocking exponential backoff plus full
+   jitter so backpressure propagates up the pipe — it never drops a record.
+   Duplicates on retry are acceptable; consumers dedup via the record's
+   [DedupKey](#deduplication-and-resume-keys), and per-key ordering is preserved
+   by partitioning on the record's `PartitionIdentity`. See the `[kafka]` config
+   and the [evm-sink-kafka](#evm-sink-kafka) configuration subsection plus the S1
+   milestone in [docs/plan.md](plan.md). The same at-least-once posture governs
+   `evm-sink-webhook` (Open Question 1).
 3. **Internal native transfers.** Confirm when trace-RPC-based internal transfer
    detection (`include_internal`) is in scope, given it is provider-dependent
    and deferred from the first milestone.

@@ -61,6 +61,7 @@ sinks read the shared `[metrics]`/`[log]` settings plus their `[kafka]` or
 brokers = ["broker:9093"]
 topic = "evm.events"
 required_acks = "all"          # only "all" — the at-least-once contract
+readiness_probe_interval = "15s"  # active broker probe keeps /readyz live while idle; "0" disables
 
 [kafka.sasl]
 mechanism = "scram-sha-512"    # plain | scram-sha-256 | scram-sha-512
@@ -73,6 +74,8 @@ enabled = true                 # SASL requires TLS
 # evm-sink-webhook
 [webhook]
 url = "https://hooks.internal.example.com/evm"
+health_url = "https://hooks.internal.example.com/healthz"  # optional: active GET probe for /readyz
+readiness_probe_interval = "15s"                           # probe cadence when health_url is set
 
 [webhook.auth]
 header = "Authorization"
