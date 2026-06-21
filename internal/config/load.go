@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,9 +28,16 @@ func searchPaths() []string {
 	}
 }
 
-// configBaseName is the file stem searched for, so the discovered file is
-// e.g. ~/.evm-tools/evm-tools.toml.
-const configBaseName = "evm-tools"
+// configBaseNames are the file stems searched within each directory, in
+// preference order: config.toml is the primary name (so the discovered file is
+// e.g. ~/.evm-tools/config.toml), and evm-tools.toml is accepted as a
+// backward-compatible fallback. Within a directory config.toml wins; across
+// directories the searchPaths() order wins, so a home/user config beats a
+// host-level /etc config regardless of which filename each uses.
+var configBaseNames = []string{"config", "evm-tools"}
+
+// configExt is the config file extension (TOML).
+const configExt = "toml"
 
 // Loader assembles a *viper.Viper with the suite's precedence rules wired up.
 // It is shared by both CLIs; each then strict-decodes its own subtree.
@@ -119,8 +125,9 @@ func New(opts Options) (*Loader, error) {
 	return &Loader{v: v, flagKeys: flagKeys}, nil
 }
 
-// readConfigFile loads an explicit file or searches the default paths. A
-// missing explicit file is fatal; a missing default file is not.
+// readConfigFile loads an explicit file or the first discovered default file. A
+// missing explicit file is fatal; a missing default file is not (flags/env/
+// defaults still apply).
 func readConfigFile(v *viper.Viper, explicit string) error {
 	if explicit != "" {
 		v.SetConfigFile(explicit)
@@ -130,19 +137,32 @@ func readConfigFile(v *viper.Viper, explicit string) error {
 		return nil
 	}
 
-	v.SetConfigName(configBaseName)
-	for _, p := range searchPaths() {
-		v.AddConfigPath(p)
+	path, ok := findDefaultConfig()
+	if !ok {
+		// No default file is fine: flags/env/defaults still apply.
+		return nil
 	}
+	v.SetConfigFile(path)
 	if err := v.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if errors.As(err, &notFound) {
-			// No default file is fine: flags/env/defaults still apply.
-			return nil
-		}
-		return fmt.Errorf("read config: %w", err)
+		return fmt.Errorf("read config %q: %w", path, err)
 	}
 	return nil
+}
+
+// findDefaultConfig returns the first existing default config file. It walks the
+// search directories in order and, within each, the preferred base names in
+// order (config.toml before evm-tools.toml), so directory precedence dominates
+// and config.toml wins a tie within one directory.
+func findDefaultConfig() (string, bool) {
+	for _, dir := range searchPaths() {
+		for _, name := range configBaseNames {
+			p := filepath.Join(dir, name+"."+configExt)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p, true
+			}
+		}
+	}
+	return "", false
 }
 
 // bindEnvKeys explicitly binds the nested keys we want overridable from the

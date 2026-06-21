@@ -264,23 +264,26 @@ func TestAllowExecThreaded(t *testing.T) {
 	}
 }
 
-// TestDefaultSearchDiscoversHomeDotDir verifies the default discovery path picks
-// up ~/.evm-tools/evm-tools.toml when --config is not given (HOME pointed at a
-// temp dir so the test is hermetic).
-func TestDefaultSearchDiscoversHomeDotDir(t *testing.T) {
+// discoverChain points HOME at a hermetic temp dir, writes the named files under
+// ~/.evm-tools/ (name -> chain value), runs default discovery (no --config), and
+// returns the decoded chain (or "" when no file was discovered).
+func discoverChain(t *testing.T, files map[string]string) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// Keep the XDG/OS user-config dir out of the way so the ~/.evm-tools path is
-	// unambiguously the one that wins on every platform.
+	// Keep the XDG/OS user-config dir out of the way so ~/.evm-tools is
+	// unambiguously the directory that wins on every platform.
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-empty"))
 
 	dir := filepath.Join(home, ".evm-tools")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	body := "chain = \"home-dot-dir\"\n[rpc]\nurl = \"https://rpc.example\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "evm-tools.toml"), []byte(body), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+	for name, chain := range files {
+		body := "chain = \"" + chain + "\"\n[rpc]\nurl = \"https://rpc.example\"\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
 	}
 
 	l, err := New(Options{}) // no ConfigFile -> default search
@@ -291,7 +294,33 @@ func TestDefaultSearchDiscoversHomeDotDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeStream: %v", err)
 	}
-	if cfg.Chain != "home-dot-dir" {
-		t.Errorf("expected config discovered from ~/.evm-tools, got chain=%q", cfg.Chain)
+	return cfg.Chain
+}
+
+// TestDefaultSearchDiscoversConfigToml verifies config.toml is the primary
+// discovered name in ~/.evm-tools when --config is not given.
+func TestDefaultSearchDiscoversConfigToml(t *testing.T) {
+	if got := discoverChain(t, map[string]string{"config.toml": "via-config"}); got != "via-config" {
+		t.Errorf("expected discovery of ~/.evm-tools/config.toml, got chain=%q", got)
+	}
+}
+
+// TestDefaultSearchFallbackEvmToolsToml verifies the legacy evm-tools.toml name is
+// still discovered as a backward-compatible fallback.
+func TestDefaultSearchFallbackEvmToolsToml(t *testing.T) {
+	if got := discoverChain(t, map[string]string{"evm-tools.toml": "via-legacy"}); got != "via-legacy" {
+		t.Errorf("expected fallback discovery of ~/.evm-tools/evm-tools.toml, got chain=%q", got)
+	}
+}
+
+// TestDefaultSearchConfigTomlWins verifies config.toml takes precedence over the
+// legacy evm-tools.toml when both are present in the same directory.
+func TestDefaultSearchConfigTomlWins(t *testing.T) {
+	got := discoverChain(t, map[string]string{
+		"config.toml":    "primary",
+		"evm-tools.toml": "legacy",
+	})
+	if got != "primary" {
+		t.Errorf("config.toml should win over evm-tools.toml, got chain=%q", got)
 	}
 }

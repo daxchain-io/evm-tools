@@ -55,7 +55,7 @@ checksums before installing — see
 
 ## Quick start
 
-1. Drop a config at `~/.evm-tools/evm-tools.toml` (it's auto-discovered, so no
+1. Drop a config at `~/.evm-tools/config.toml` (it's auto-discovered, so no
    `-c` flag is needed):
 
    ```toml
@@ -106,7 +106,7 @@ instead of the auto-discovered one.
 
 ## Configuration
 
-One shared `evm-tools.toml` serves every tool. The shared `[rpc]` / `[metrics]` /
+One shared config file serves every tool. The shared `[rpc]` / `[metrics]` /
 `[log]` settings sit at the top level; each tool then reads its own section and
 ignores the others:
 
@@ -121,9 +121,10 @@ ignores the others:
 | `evm-sink-postgres` | `[postgres]` |
 | `evm-sink-redis` | `[redis]` |
 
-Without `-c`, the file is auto-discovered (first match wins):
-`~/.evm-tools/evm-tools.toml`, then `~/.config/evm-tools/evm-tools.toml` (the OS
-user-config dir), then `/etc/evm-tools/evm-tools.toml`.
+Without `-c`, the file is auto-discovered by checking these directories in order
+(first match wins): `~/.evm-tools/`, then `~/.config/evm-tools/` (the OS
+user-config dir), then `/etc/evm-tools/`. In each, `config.toml` is the primary
+name and the legacy `evm-tools.toml` is still accepted as a fallback.
 
 **Secrets** — the Kafka SASL password, the webhook auth value, the Postgres DSN,
 the Redis URL — are sourced through `${VAR}` interpolation or a `_cmd` key, so
