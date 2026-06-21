@@ -25,6 +25,7 @@ const (
 	ToolSinkAWSSQS   SinkTool = "evm-sink-aws-sqs"
 	ToolSinkAWSSNS   SinkTool = "evm-sink-aws-sns"
 	ToolSinkPostgres SinkTool = "evm-sink-postgres"
+	ToolSinkRedis    SinkTool = "evm-sink-redis"
 )
 
 // sinkFlags holds the values bound to a sink's persistent flag set: the shared
@@ -58,6 +59,9 @@ type sinkFlags struct {
 
 	// Postgres-specific (dsn is secret -> config/env only, never a flag).
 	table string
+
+	// Redis-specific (url is secret -> config/env only, never a flag).
+	stream string
 }
 
 // sinkShortDesc returns the one-line description for a sink.
@@ -75,6 +79,8 @@ func (t SinkTool) sinkShortDesc() string {
 		return "Publish JSONL records from stdin to an AWS SNS topic (at-least-once, FIFO-aware)"
 	case ToolSinkPostgres:
 		return "Insert JSONL records from stdin into a PostgreSQL table (idempotent, exactly-once-in-table)"
+	case ToolSinkRedis:
+		return "Append JSONL records from stdin to a Redis Stream (at-least-once, idempotent via dedup_key)"
 	default:
 		return "An evm-tools sink"
 	}
@@ -109,6 +115,8 @@ func NewSinkRootCommand(tool SinkTool) *cobra.Command {
 		bindAWSSNSFlags(root, flags)
 	case ToolSinkPostgres:
 		bindPostgresFlags(root, flags)
+	case ToolSinkRedis:
+		bindRedisFlags(root, flags)
 	}
 
 	root.AddCommand(
@@ -175,6 +183,14 @@ func bindPostgresFlags(root *cobra.Command, f *sinkFlags) {
 	pf.StringVar(&f.table, "table", "", "destination table (default evm_records; may be schema.table)")
 }
 
+// bindRedisFlags installs the evm-sink-redis-specific flags. The connection URL is
+// a secret and is intentionally NOT a flag (it would leak via the process argv);
+// set it through [redis].url / url_cmd / ${VAR}.
+func bindRedisFlags(root *cobra.Command, f *sinkFlags) {
+	pf := root.PersistentFlags()
+	pf.StringVar(&f.stream, "stream", "", "destination Redis Stream key")
+}
+
 func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
@@ -204,6 +220,8 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return awsSNSRun(cmd, f)
 			case ToolSinkPostgres:
 				return postgresRun(cmd, f)
+			case ToolSinkRedis:
+				return redisRun(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
@@ -233,6 +251,8 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return awsSNSValidate(cmd, f)
 			case ToolSinkPostgres:
 				return postgresValidate(cmd, f)
+			case ToolSinkRedis:
+				return redisValidate(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}

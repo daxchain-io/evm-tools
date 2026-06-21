@@ -1,7 +1,7 @@
-# Multi-stage build for the evm-tools suite. The final image contains all eight
+# Multi-stage build for the evm-tools suite. The final image contains all nine
 # binaries (evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook,
-# evm-sink-file, evm-sink-aws-sqs, evm-sink-aws-sns, evm-sink-postgres) so one
-# image serves every tool in a producer | sink pipeline.
+# evm-sink-file, evm-sink-aws-sqs, evm-sink-aws-sns, evm-sink-postgres,
+# evm-sink-redis) so one image serves every tool in a producer | sink pipeline.
 #
 # Base image choice: the runtime stage uses alpine — an image WITH a shell —
 # on purpose. Config `_cmd` keys run via `sh -c` (see docs/design.md
@@ -42,7 +42,7 @@ RUN set -eux; \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version=${VERSION} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit=${COMMIT} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date=${DATE}"; \
-    for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres; do \
+    for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres evm-sink-redis; do \
       go build -trimpath -ldflags "${ldflags}" -o "/out/${tool}" "./cmd/${tool}"; \
     done
 
@@ -58,7 +58,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates dumb-init \
     && adduser -D -H -u 10001 evmtools
 
-COPY --from=build /out/evm-stream /out/evm-balance /out/evm-sink-kafka /out/evm-sink-webhook /out/evm-sink-file /out/evm-sink-aws-sqs /out/evm-sink-aws-sns /out/evm-sink-postgres /usr/local/bin/
+COPY --from=build /out/evm-stream /out/evm-balance /out/evm-sink-kafka /out/evm-sink-webhook /out/evm-sink-file /out/evm-sink-aws-sqs /out/evm-sink-aws-sns /out/evm-sink-postgres /out/evm-sink-redis /usr/local/bin/
 
 # Run as a non-root user; the tools need no privileges.
 USER evmtools
