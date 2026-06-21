@@ -22,6 +22,11 @@ type fakeClient struct {
 	// BlockNumber calls; the last value repeats.
 	heads   []uint64
 	headIdx int
+	// finalized / finalizedErr back FinalizedBlockNumber; finalizedCalls counts
+	// how many times it was invoked.
+	finalized      uint64
+	finalizedErr   error
+	finalizedCalls int
 
 	// logsByRange records the GetLogs filters seen and returns the configured
 	// logs for any range; a func lets tests scope logs to a range.
@@ -38,6 +43,19 @@ type fakeClient struct {
 }
 
 func (c *fakeClient) ChainID(context.Context) (int64, error) { return c.chainID, nil }
+
+func (c *fakeClient) FinalizedBlockNumber(context.Context) (uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.finalizedCalls++
+	return c.finalized, c.finalizedErr
+}
+
+func (c *fakeClient) finalizedCallCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.finalizedCalls
+}
 
 func (c *fakeClient) BlockNumber(context.Context) (uint64, error) {
 	c.mu.Lock()
@@ -331,6 +349,9 @@ func (c *failHeadClient) headCalls() int {
 }
 
 func (c *failHeadClient) ChainID(context.Context) (int64, error) { return 1, nil }
+func (c *failHeadClient) FinalizedBlockNumber(context.Context) (uint64, error) {
+	return 0, errors.New("unsupported")
+}
 func (c *failHeadClient) BlockNumber(context.Context) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

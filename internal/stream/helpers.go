@@ -110,6 +110,7 @@ func (e *blockTrackingEmitter) Emit(env record.Envelope) error {
 type noopMetrics struct{}
 
 func (noopMetrics) SetHead(uint64)                        {}
+func (noopMetrics) SetFinalizedBlock(uint64)              {}
 func (noopMetrics) SetHeadBlockTime(time.Time, time.Time) {}
 func (noopMetrics) SetLastProcessedBlock(uint64)          {}
 func (noopMetrics) SetLastEmittedBlock(uint64)            {}

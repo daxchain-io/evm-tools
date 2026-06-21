@@ -110,6 +110,18 @@ func (c *Client) BlockByNumberUint(ctx context.Context, n uint64, full bool) (*B
 	return c.BlockByNumber(ctx, BlockTag(n), full)
 }
 
+// FinalizedBlockNumber returns the height of the chain's most recent finalized
+// block via the "finalized" block tag. Chains without finality (some L2s, dev
+// nodes) reject the tag or return no block; the caller treats that as
+// "unsupported" rather than an error.
+func (c *Client) FinalizedBlockNumber(ctx context.Context) (uint64, error) {
+	blk, err := c.BlockByNumber(ctx, "finalized", false)
+	if err != nil {
+		return 0, err
+	}
+	return blk.NumberUint()
+}
+
 // BlockTag formats a block height as the 0x-hex tag eth_* methods expect.
 func BlockTag(n uint64) string { return "0x" + new(big.Int).SetUint64(n).Text(16) }
 

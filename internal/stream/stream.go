@@ -31,6 +31,7 @@ type Client interface {
 	ChainID(ctx context.Context) (int64, error)
 	BlockNumber(ctx context.Context) (uint64, error)
 	BlockByNumberUint(ctx context.Context, n uint64, full bool) (*rpc.Block, error)
+	FinalizedBlockNumber(ctx context.Context) (uint64, error)
 	GetLogs(ctx context.Context, f rpc.LogFilter) ([]rpc.Log, error)
 	TransactionReceipt(ctx context.Context, txHash string) (*rpc.Receipt, error)
 }
@@ -39,6 +40,7 @@ type Client interface {
 // is tolerated via the noopMetrics adapter so tests need not wire one.
 type Metrics interface {
 	SetHead(n uint64)
+	SetFinalizedBlock(n uint64)
 	SetHeadBlockTime(t time.Time, now time.Time)
 	SetLastProcessedBlock(n uint64)
 	SetLastEmittedBlock(n uint64)
@@ -132,6 +134,11 @@ type Stream struct {
 	// reorg tracks recent canonical block hashes for reorg detection; nil when
 	// reorg handling is disabled (ReorgDepth == 0). Single-goroutine access.
 	reorg *reorgTracker
+
+	// finalizedUnsupported is set once the node rejects the "finalized" block tag
+	// (a chain without finality, or a dev node), so the loop stops polling it and
+	// the finalized-block gauge stays at 0. Single-goroutine access.
+	finalizedUnsupported bool
 }
 
 // New builds a Stream from resolved options. It validates the derived state but
@@ -300,6 +307,7 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 	}
 	s.opts.Metrics.SetHead(head)
 	headBlk := s.updateHeadBlockTime(ctx, head)
+	s.updateFinalizedBlock(ctx)
 
 	// A backward step in head means the endpoint is serving a stale view (a
 	// load balancer routed to a lagging node, or a node rolled back). This is
@@ -384,6 +392,40 @@ func (s *Stream) updateHeadBlockTime(ctx context.Context, head uint64) *rpc.Bloc
 		s.opts.Health.SetHeadBlockTime(bt)
 	}
 	return blk
+}
+
+// updateFinalizedBlock publishes the chain's finalized block height to the
+// blockchain_chain_finalized_block_number gauge (design "Chain health"). It is
+// best-effort: a chain that does not support the "finalized" tag (some L2s, dev
+// nodes) disables further polling for the run so the loop neither wastes a call
+// per poll nor logs noise, leaving the gauge at 0. A transient failure on a
+// finality-capable chain is ignored this poll and retried next.
+func (s *Stream) updateFinalizedBlock(ctx context.Context) {
+	if s.finalizedUnsupported {
+		return
+	}
+	n, err := s.opts.Client.FinalizedBlockNumber(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return // shutdown; not a capability signal
+		}
+		// Distinguish "the chain has no finalized tag" from a transient blip: a
+		// timeout/connection error is retried next poll, while any other error
+		// (the node rejected the tag, or returned no such block) means the chain
+		// does not support finality — stop polling it so we neither waste a call
+		// per poll nor log noise.
+		switch rpc.Classify(err) {
+		case rpc.ErrorTimeout, rpc.ErrorConnection:
+			s.log.Debug("finalized block fetch failed (transient); retrying next poll",
+				"error_type", string(rpc.Classify(err)))
+		default:
+			s.finalizedUnsupported = true
+			s.log.Info("chain does not report a finalized block; finalized-block metric stays at 0",
+				"error_type", string(rpc.Classify(err)))
+		}
+		return
+	}
+	s.opts.Metrics.SetFinalizedBlock(n)
 }
 
 // processRange handles one inclusive [from,to] block range: it queries matching

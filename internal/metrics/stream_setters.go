@@ -23,13 +23,11 @@ func (s *Stream) SetWorkers(n int) { s.workers.Set(float64(n)) }
 // SetHead records the latest RPC head block number.
 func (s *Stream) SetHead(n uint64) { s.headBlock.Set(float64(n)) }
 
-// SetFinalizedBlock records the finalized block number when known.
-//
-// Reserved: finalized-block tracking depends on finality signaling, which is
-// deferred (design.md Open Question 4 — "Finality signaling"). The poll loop
-// does not call this yet, so blockchain_chain_finalized_block_number stays at 0
-// until finality lands. It is defined now so the metric name is stable and the
-// wiring is a one-line addition when that decision is made.
+// SetFinalizedBlock records the chain's finalized block number. The poll loop
+// fetches the "finalized" block tag each poll (best-effort) and publishes it
+// here; on a chain without finality (some L2s, dev nodes) the tag is unsupported
+// and the gauge stays at 0. The additive `finalized` envelope field remains
+// deferred (design.md Open Question 4 — "Finality signaling").
 func (s *Stream) SetFinalizedBlock(n uint64) { s.finalizedBlock.Set(float64(n)) }
 
 // SetHeadBlockTime records the head block timestamp and its wall-clock age.
@@ -72,7 +70,8 @@ func (s *Stream) IncNativeTransferRecord() {
 	s.nativeTransferRecords.Inc()
 }
 
-// IncReorgsDetected counts a detected reorg (reserved; reorg handling deferred).
+// IncReorgsDetected counts a chain reorg detected near the head (emitted with a
+// reorg marker and a re-scan of the canonical chain; see internal/stream/reorg.go).
 func (s *Stream) IncReorgsDetected() { s.reorgsDetected.Inc() }
 
 // IncReconnects counts an RPC reconnect after a transport error.
