@@ -1,0 +1,38 @@
+# Example Prometheus configuration for the evm-tools suite.
+#
+# Each tool serves /metrics on its own port (enable with --metrics, or
+# [<tool>.metrics].enabled = true in the config). The ports below are the suite
+# defaults; adjust the targets to your deployment. In Kubernetes prefer pod
+# annotations or a ServiceMonitor over static targets — the per-tool `tool` label
+# applied here is what the dashboard and alerts group by.
+#
+# Validate with:  promtool check config deploy/prometheus/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - rules.yml
+
+scrape_configs:
+  - job_name: evm-tools
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:9000"]
+        labels: { tool: evm-stream }
+      - targets: ["localhost:9001"]
+        labels: { tool: evm-balance }
+      - targets: ["localhost:9002"]
+        labels: { tool: evm-sink-kafka }
+      - targets: ["localhost:9003"]
+        labels: { tool: evm-sink-webhook }
+      - targets: ["localhost:9004"]
+        labels: { tool: evm-sink-file }
+      - targets: ["localhost:9005"]
+        labels: { tool: evm-sink-aws-sqs }
+      - targets: ["localhost:9006"]
+        labels: { tool: evm-sink-aws-sns }
+      - targets: ["localhost:9007"]
+        labels: { tool: evm-sink-postgres }
+      - targets: ["localhost:9008"]
+        labels: { tool: evm-sink-redis }

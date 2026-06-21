@@ -1,0 +1,92 @@
+# Prometheus recording + alerting rules for the evm-tools suite.
+#
+# Thresholds are conservative starting points — tune them to your chain's block
+# time and SLOs (e.g. lower `EvmChainHeadStale` for fast chains, raise
+# `EvmStreamLagHigh` if you intentionally backfill). Every expression references a
+# metric the suite actually exports; see deploy/README.md for the metric guide.
+#
+# Validate with:  promtool check rules deploy/prometheus/rules.yml
+groups:
+  - name: evm-tools.recording
+    interval: 30s
+    rules:
+      - record: evm_tools:rpc_errors:rate5m
+        expr: sum by (tool, blockchain, operation, error_type) (rate(blockchain_rpc_error_total[5m]))
+      - record: evm_tools:stream_records:rate5m
+        expr: sum by (tool, blockchain) (rate(evm_stream_records_emitted_total[5m]))
+      - record: evm_tools:balance_records:rate5m
+        expr: sum by (tool, blockchain) (rate(evm_balance_records_emitted_total[5m]))
+
+  - name: evm-tools.alerts
+    rules:
+      - alert: EvmToolsTargetDown
+        expr: up{job="evm-tools"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "evm-tools target down ({{ $labels.tool }})"
+          description: "{{ $labels.tool }} at {{ $labels.instance }} has been unreachable to Prometheus for 2m (process down or /metrics unreachable)."
+
+      - alert: EvmChainHeadStale
+        # Compute the head-block age LIVE (time() - the head-block timestamp gauge)
+        # rather than reading time_since_last_block_seconds: that gauge is only
+        # re-Set on a successful head fetch, so it FREEZES during an RPC outage —
+        # the exact failure this alert targets — and might never cross the
+        # threshold. time() keeps advancing, so this fires even when the producer
+        # has stopped updating. Aggregate by chain so a single stalled chain pages
+        # once even when both producers watch it. This mirrors the live age
+        # computation behind the head_staleness_threshold /readyz check.
+        expr: max by (blockchain, chain_id) (time() - blockchain_chain_head_block_timestamp_seconds) > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Chain head stale ({{ $labels.blockchain }})"
+          description: "The head block is {{ $value | humanizeDuration }} old — the chain or the RPC endpoint may have stopped advancing. Mirrors the head_staleness_threshold /readyz check (both compute head-block age live)."
+
+      - alert: EvmRpcErrorsElevated
+        # Reuse the recording rule so the alert and the dashboard/series can't drift.
+        expr: evm_tools:rpc_errors:rate5m > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated RPC errors on {{ $labels.tool }} ({{ $labels.operation }}/{{ $labels.error_type }})"
+          description: "{{ $labels.tool }} is seeing {{ printf \"%.2f\" $value }} {{ $labels.error_type }} errors/s on {{ $labels.operation }} over 5m."
+
+      - alert: EvmStreamLagHigh
+        expr: evm_stream_lag_blocks > 5000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "evm-stream lagging head ({{ $labels.blockchain }})"
+          description: "evm-stream is {{ $value }} blocks behind head for 10m — backfilling, a slow RPC, or stalled emission. /readyz trips above the configured lag threshold."
+
+      - alert: EvmProducerEmitBlocked
+        expr: evm_stream_emit_blocked_seconds > 30 or evm_balance_emit_blocked_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Producer stdout blocked on {{ $labels.tool }}"
+          description: "A producer's record emission has been blocked for {{ $value | humanizeDuration }} — the downstream sink (or pipe) is applying backpressure. Lossless by design, but throughput is stalled."
+
+      - alert: EvmSinkDeliveryBlocked
+        expr: |
+          (
+              evm_sink_kafka_publish_blocked
+            or evm_sink_webhook_post_blocked
+            or evm_sink_file_write_blocked
+            or evm_sink_aws_sqs_delivery_blocked
+            or evm_sink_aws_sns_delivery_blocked
+            or evm_sink_postgres_delivery_blocked
+            or evm_sink_redis_delivery_blocked
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sink delivery blocked ({{ $labels.tool }})"
+          description: "{{ $labels.tool }} ({{ $labels.__name__ }}) has been blocked retrying a failing destination for 5m — at-least-once means it is retrying, not dropping, but nothing is being delivered."
