@@ -121,6 +121,13 @@ ignores the others:
 | `evm-sink-postgres` | `[postgres]` |
 | `evm-sink-redis` | `[redis]` |
 
+Producers take a few extra knobs: `[stream].checkpoint_file` (a durable resume
+cursor — restart resumes gap-free instead of jumping to the head), `reorg_depth`,
+and `head_staleness_threshold`; `[balance]` has `max_concurrency` / `target_timeout`.
+Sending a tool **`SIGHUP`** re-reads the config and live-applies `log.level` /
+`log.format` (e.g. bump to `debug` during an incident without a restart); other
+changes need a restart.
+
 Without `-c`, the file is auto-discovered by checking these directories in order
 (first match wins): `~/.evm-tools/`, then `~/.config/evm-tools/` (the OS
 user-config dir), then `/etc/evm-tools/`. In each, `config.toml` is the primary

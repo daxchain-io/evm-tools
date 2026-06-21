@@ -74,6 +74,24 @@ type redisTarget struct {
 	Redis  RedisConfig `mapstructure:"redis"`
 }
 
+// sharedTarget decodes only the shared top-level keys (chain/rpc/metrics/log).
+type sharedTarget struct {
+	Shared `mapstructure:",squash"`
+}
+
+// DecodeShared strict-decodes only the shared keys (no tool subtree), applying the
+// same precedence and ${VAR}/_cmd interpolation as the per-tool decoders. It is
+// used to resolve cross-tool settings such as [log] consistently at startup and on
+// reload, so every path sees the same final values.
+func (l *Loader) DecodeShared(allowExec bool) (*Shared, error) {
+	var t sharedTarget
+	if err := l.strictDecode("", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &t.Shared, nil
+}
+
 // DecodeStream strict-decodes the shared keys plus the [stream] subtree into a
 // StreamFull. Unknown keys within those sections are a fatal error; the
 // [balance] section is ignored.

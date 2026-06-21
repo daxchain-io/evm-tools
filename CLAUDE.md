@@ -47,6 +47,7 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 - `internal/awssink` — shared AWS SQS/SNS sink core (FIFO-aware, 256 KB guard).
 - `internal/pgsink` — Postgres sink core (idempotent `ON CONFLICT` insert via pgx).
 - `internal/redissink` — Redis Streams sink core (dedup-gated `XADD` via go-redis).
+- `internal/checkpoint` — durable resume cursor for evm-stream (atomic temp+fsync+rename).
 - `internal/keyperm` — shared private-key file-mode warning.
 
 ## Load-bearing conventions

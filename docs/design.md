@@ -475,6 +475,7 @@ poll_interval = "2s"
 log_chunk_blocks = 2000
 reorg_depth = 64                    # max reorg (blocks) detected/rewound near head; 0 disables
 # head_staleness_threshold = "90s"  # /readyz not-ready when the head stops advancing; unset disables
+# checkpoint_file = "/var/lib/evm-tools/cursor.json"  # durable resume cursor; resumes gap-free on restart (overrides from_block)
 
 [stream.metrics]
 enabled = true
@@ -1170,6 +1171,7 @@ evm-tools/
     awssink/               # shared AWS SQS/SNS sink core
     pgsink/                # evm-sink-postgres core logic (pgx)
     redissink/             # evm-sink-redis core logic (go-redis; dedup-gated XADD)
+    checkpoint/            # evm-stream durable resume cursor (atomic temp+fsync+rename)
     keyperm/               # shared private-key file-mode warning
     kafkasink/             # evm-sink-kafka core logic
     webhooksink/           # evm-sink-webhook core logic
@@ -1449,11 +1451,25 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   will not dedup). Run exactly one producer per chain. For failover use
   active/passive (start a standby on failure) and accept the restart gap below, or
   shard contracts/address ranges across instances in config.
-- **Restart coverage gap.** `stream.from_block` defaults to `latest` and there is
-  no durable checkpoint, so a producer that restarts resumes at the current head
-  and does not backfill blocks missed while it was down. To avoid a gap across a
-  restart, set `from_block` to a known-safe height, or minimize downtime under a
-  supervisor. A checkpoint/resume cursor is a roadmap item (see Open Questions).
+- **Restart coverage gap (closed by a checkpoint).** By default `stream.from_block`
+  is `latest`, so a producer that restarts resumes at the current head and does not
+  backfill blocks missed while it was down. Set `stream.checkpoint_file` to a
+  durable path and the stream persists the highest processed block each poll
+  (atomic temp-file + fsync + rename) and resumes from cursor+1 on restart —
+  gap-free, re-emitting at most the boundary block (which sinks dedup via the
+  reorg-stable dedup key, so the at-least-once contract holds). The cursor takes
+  precedence over `from_block`, and a cursor whose `chain_id` does not match the
+  configured chain is ignored (a guard against a reused path). It is the producer's
+  own progress, not downstream confirmation, so a checkpoint plus a downstream sink
+  that dedups gives end-to-end no-loss. Without a checkpoint, set `from_block` to a
+  known-safe height or minimize downtime under a supervisor.
+- **Config reload (log level/format only).** `SIGHUP` makes a running tool re-read
+  its config and live-apply the resolved `log.level`/`log.format` (e.g. bump to
+  `debug` during an incident without a restart and without losing the resume
+  position). Connection-level and entry-list changes (RPC URL/TLS, chain, bind
+  address, contracts/targets, sink destinations) are **not** hot-applied — change
+  them in config and restart; with `checkpoint_file` set, that restart is gap-free.
+  A malformed config on reload is logged and the running configuration is kept.
 - **Reorg handling: detect-and-re-scan, bounded depth, no finality wait.** Near the
   head the stream tracks the canonical hash of each confirmed tip (bounded to
   `stream.reorg_depth` blocks, default 64). When its processing frontier is

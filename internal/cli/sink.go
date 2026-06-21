@@ -197,7 +197,7 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 		Short: "Read JSONL from stdin and deliver each record downstream (at-least-once)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(); err != nil {
+			if err := f.setupLogging(cmd); err != nil {
 				return err
 			}
 			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
@@ -205,6 +205,8 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 			// second signal force-exits a wedged shutdown.
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
+			// SIGHUP re-reads config and live-applies the log level/format.
+			defer watchReload(ctx, func() { reloadLogging(cmd, f.configFile, f.allowExecEnabled()) })()
 			cmd.SetContext(ctx)
 
 			switch tool {
@@ -235,7 +237,7 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 		Short: "Validate config (and destination/auth material) without connecting",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(); err != nil {
+			if err := f.setupLogging(cmd); err != nil {
 				return err
 			}
 			switch tool {
@@ -260,9 +262,15 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 	}
 }
 
-// setupLogging configures the slog default logger from the sink flags.
-func (f *sinkFlags) setupLogging() error {
-	_, err := logging.Setup(f.logLevel, f.logFormat)
+// setupLogging configures the slog default logger, honoring log.level/log.format
+// from the config file (full precedence + interpolation), falling back to the
+// flag/default values on a config error (which the subcommand then surfaces).
+func (f *sinkFlags) setupLogging(cmd *cobra.Command) error {
+	level, format := f.logLevel, f.logFormat
+	if l, fm, err := resolvedLog(cmd, f.configFile, f.allowExecEnabled()); err == nil {
+		level, format = l, fm
+	}
+	_, err := logging.Setup(level, format)
 	return err
 }
 

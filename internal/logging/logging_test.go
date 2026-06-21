@@ -72,6 +72,48 @@ func TestLevelFiltering(t *testing.T) {
 	}
 }
 
+// TestReloadLevelAndFormat verifies a live level change takes effect (debug
+// becomes visible), a format change switches to JSON, and a bad reload is
+// rejected without mutating the running logger.
+func TestReloadLevelAndFormat(t *testing.T) {
+	var buf bytes.Buffer
+	curMu.Lock()
+	prev := curWriter
+	curWriter = &buf
+	curMu.Unlock()
+	t.Cleanup(func() { curMu.Lock(); curWriter = prev; curMu.Unlock() })
+
+	if _, err := Setup("info", "text"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	slog.Default().Debug("dbg-hidden")
+	if strings.Contains(buf.String(), "dbg-hidden") {
+		t.Error("debug must be filtered at info level")
+	}
+
+	if err := Reload("debug", "text"); err != nil {
+		t.Fatalf("Reload to debug: %v", err)
+	}
+	slog.Default().Debug("dbg-shown")
+	if !strings.Contains(buf.String(), "dbg-shown") {
+		t.Errorf("debug must appear after live reload to debug: %s", buf.String())
+	}
+
+	buf.Reset()
+	if err := Reload("info", "json"); err != nil {
+		t.Fatalf("Reload to json: %v", err)
+	}
+	slog.Default().Info("as-json", "k", "v")
+	var m map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &m); err != nil {
+		t.Fatalf("expected JSON after format reload: %v\n%s", err, buf.String())
+	}
+
+	if err := Reload("nope", "text"); err == nil {
+		t.Error("a bad level on reload must error (and leave the logger intact)")
+	}
+}
+
 func TestSetupErrors(t *testing.T) {
 	if _, err := Setup("nope", "text"); err == nil {
 		t.Error("expected level error")

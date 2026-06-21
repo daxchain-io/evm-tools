@@ -41,16 +41,28 @@ private vulnerability reporting, org base permission read-only.
 Not yet built — each needs a design decision or is deliberately out of scope for
 now (see design [Open Questions](design.md#open-questions)):
 
-- **Internal/trace native transfers** (`include_internal`) — provider-dependent.
-- **Finality signaling** — an additive `finalized` envelope field and
-  finality-awaiting emission. Near-head reorg *detection* shipped in S7; *waiting*
-  for finality stays a non-goal for the low-latency default.
-- **Config reload** (+ metric reset) — config changes currently require a restart.
-- **Checkpointing / resume cursor** — closes the producer restart gap and would
-  enable active/passive HA (today: single producer per chain, no leader election).
-- **Live / integration test harness** — a docker-compose stack (a dev chain +
-  Kafka + Redis + Postgres + LocalStack) plus live tests for the sinks that lack
-  them, run as an optional CI job. The default suite is unit-level (fakes / golden
-  / httptest); this is the largest gap before a confident 1.0.
-- **Operator kit** — example Grafana dashboard, Prometheus alert rules, and a
-  runbook to ship alongside the stable metric names.
+- **Internal/trace native transfers** (`include_internal`) — provider-dependent
+  (needs a trace RPC many endpoints don't expose); intentionally not built.
+- **Finality signaling** — the additive `finalized` envelope field. Near-head reorg
+  *detection* shipped in S7 and the finalized-block *metric* shipped post-S7;
+  *waiting* for finality stays a non-goal for the low-latency default, so the field
+  itself is deferred.
+- **Config reload — log level/format only (shipped); entry reload deferred.**
+  `SIGHUP` live-applies `log.level`/`log.format`; hot-swapping contracts/targets
+  (and resetting their metrics) is deferred in favour of restart + resume, which is
+  now gap-free via the checkpoint cursor.
+- **Kafka exactly-once** — idempotent/transactional producer (the other half of
+  the old #6; checkpoint/resume below shipped).
+- **Consolidated metrics endpoint** — resolved at the scrape layer (one logical
+  endpoint per pod); documented in `deploy/README.md`, no code.
+
+Shipped since the milestones above:
+
+- **Checkpoint / resume cursor** (`internal/checkpoint`, `stream.checkpoint_file`):
+  durable atomic cursor; restart resumes gap-free instead of jumping to head.
+- **Live / integration test harness** — still open: a docker-compose stack (a dev
+  chain + Kafka + Redis + Postgres + LocalStack) plus live tests for the sinks that
+  lack them, as an optional CI job. The default suite is unit-level (fakes / golden
+  / httptest); the largest gap before a confident 1.0.
+- **Operator kit** — shipped in `deploy/` (Prometheus config + recording/alert
+  rules, Grafana dashboard, runbook).

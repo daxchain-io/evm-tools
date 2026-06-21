@@ -28,6 +28,23 @@ The example uses `localhost:9000`–`:9008` static targets. In Kubernetes, drop 
 static targets and scrape via pod annotations or a `ServiceMonitor`; keep a `tool`
 label on each target so the dashboard and alerts group correctly.
 
+### One logical endpoint per pod
+
+The suite runs as separate processes — a `producer | sink` pipeline — so each tool
+serves its own `/metrics` port; there is no single in-process endpoint to merge
+them. Consolidation belongs at the scrape layer, not the binary:
+
+- **A pod runs the whole pipeline.** Give each container/port its own scrape entry
+  (or a `PodMonitor` with one `port` per container) and a shared `pod`/`instance`
+  label plus the per-container `tool` label. Prometheus then treats the pod as one
+  logical source — the dashboard and rules here already group by `tool` and
+  `blockchain`, so a pod's producer and sink line up without any code change.
+- **Avoid a merge sidecar.** A proxy that fans in the local `:900x` endpoints and
+  re-serves one `/metrics` is possible but adds a process to run and keep in sync
+  with the ports; the scrape-layer approach above achieves the same view with no
+  extra moving parts. (This is why evm-tools keeps per-process endpoints rather
+  than a built-in aggregator.)
+
 ## Metric groups
 
 - **Common** (every tool): `go_*`, `process_*`, and `<tool>_build_info`

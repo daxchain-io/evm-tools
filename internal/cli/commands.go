@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -39,6 +40,63 @@ func signalContext(parent context.Context) (context.Context, func()) {
 	}
 }
 
+// watchReload calls reload on every SIGHUP until ctx is cancelled. Notifying on
+// SIGHUP also overrides its default (process-terminating) disposition, so an
+// operator can `kill -HUP` a running tool to re-read config without killing it.
+// The returned stop releases the handler; the watcher goroutine exits when ctx is
+// cancelled (the run context, cancelled on shutdown).
+func watchReload(ctx context.Context, reload func()) func() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGHUP)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ch:
+				reload()
+			}
+		}
+	}()
+	return func() { signal.Stop(ch) }
+}
+
+// resolvedLog resolves log.level/log.format through the full config pipeline —
+// flag > env > file > default precedence plus ${VAR}/_cmd interpolation — so
+// startup and reload apply exactly the values every other config consumer sees.
+// configFile is the explicit --config path ("" = default search).
+func resolvedLog(cmd *cobra.Command, configFile string, allowExec bool) (level, format string, err error) {
+	loader, err := config.New(config.Options{ConfigFile: configFile, Flags: cmd.Flags()})
+	if err != nil {
+		return "", "", err
+	}
+	sh, err := loader.DecodeShared(allowExec)
+	if err != nil {
+		return "", "", err
+	}
+	return sh.Log.Level, sh.Log.Format, nil
+}
+
+// reloadLogging re-reads the config (same precedence + interpolation as startup)
+// and live-applies the resolved log level/format. Only the log settings are
+// applied at runtime; connection-level and entry-list changes require a restart
+// (gapless when a resume cursor is configured). A bad or unreadable config is
+// logged and the running configuration is kept.
+func reloadLogging(cmd *cobra.Command, configFile string, allowExec bool) {
+	level, format, err := resolvedLog(cmd, configFile, allowExec)
+	if err != nil {
+		slog.Warn("config reload failed; keeping running configuration", "error", err.Error())
+		return
+	}
+	if rerr := logging.Reload(level, format); rerr != nil {
+		slog.Warn("config reload: invalid log settings; keeping running configuration", "error", rerr.Error())
+		return
+	}
+	slog.Info("config reloaded (SIGHUP)",
+		"log_level", level, "log_format", format,
+		"note", "only log level/format apply at runtime; other changes require a restart")
+}
+
 // allowExec resolves the effective --allow-exec value, honoring the
 // EVM_TOOLS_ALLOW_EXEC=1 environment fallback.
 func (f *sharedFlags) allowExecEnabled() bool {
@@ -48,10 +106,17 @@ func (f *sharedFlags) allowExecEnabled() bool {
 	return os.Getenv("EVM_TOOLS_ALLOW_EXEC") == "1"
 }
 
-// setupLogging configures the slog default logger from the shared flags. It is
-// called by every working subcommand before doing anything else.
-func (f *sharedFlags) setupLogging() error {
-	_, err := logging.Setup(f.logLevel, f.logFormat)
+// setupLogging configures the slog default logger, honoring log.level/log.format
+// from the config file (with full precedence + interpolation) so a file-only
+// deployment logs at its configured level immediately — not just after a SIGHUP.
+// On a config/parse error it falls back to the flag/default values; the real
+// config error then surfaces from the subcommand itself.
+func (f *sharedFlags) setupLogging(cmd *cobra.Command) error {
+	level, format := f.logLevel, f.logFormat
+	if l, fm, err := resolvedLog(cmd, f.configFile, f.allowExecEnabled()); err == nil {
+		level, format = l, fm
+	}
+	_, err := logging.Setup(level, format)
 	return err
 }
 
@@ -70,7 +135,7 @@ func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 		Short: "Run the producer, emitting JSONL records to stdout",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(); err != nil {
+			if err := f.setupLogging(cmd); err != nil {
 				return err
 			}
 			// Ignore SIGPIPE so a write to a broken stdout (a dead downstream sink)
@@ -84,6 +149,8 @@ func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 			// second signal force-exits a wedged shutdown.
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
+			// SIGHUP re-reads config and live-applies the log level/format.
+			defer watchReload(ctx, func() { reloadLogging(cmd, f.configFile, f.allowExecEnabled()) })()
 			cmd.SetContext(ctx)
 
 			switch tool {
@@ -104,7 +171,7 @@ func newValidateCommand(tool Tool, f *sharedFlags) *cobra.Command {
 		Short: "Validate config (and, later, mTLS material and ABI resolution) without connecting",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(); err != nil {
+			if err := f.setupLogging(cmd); err != nil {
 				return err
 			}
 			switch tool {
@@ -133,7 +200,7 @@ func newCheckCommand(tool Tool, f *sharedFlags) *cobra.Command {
 		Short: "One-shot RPC reachability check (exit 0 on success)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(); err != nil {
+			if err := f.setupLogging(cmd); err != nil {
 				return err
 			}
 			switch tool {
