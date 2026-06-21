@@ -1,30 +1,40 @@
 # EVM Tools
 
-A suite of composable command-line tools for observing EVM chains and moving
-that data into downstream systems. Each tool does one job and speaks a single
-common data contract — newline-delimited JSON on standard output — so they pipe
-together cleanly.
+Composable command-line tools for observing EVM chains and moving that data into
+downstream systems. Each tool does one job and speaks one data contract —
+newline-delimited JSON (JSONL) on stdout — so they pipe together cleanly:
 
-- `evm-stream` — live EVM activity monitoring (contract events and native ETH
-  transfers) as JSONL.
-- `evm-balance` — balance and contract-state polling as JSONL.
-- `evm-sink-kafka` — publish each record to Kafka topics, at-least-once.
-- `evm-sink-webhook` — forward each record over HTTP, at-least-once, with optional
-  filters.
-- `evm-sink-file` — append each record to a rotating local file, at-least-once,
-  with optional gzip compression and filters.
-- `evm-sink-aws-sqs` — send each record to an AWS SQS queue, at-least-once,
-  FIFO-aware (credentials from the AWS default chain).
-- `evm-sink-aws-sns` — publish each record to an AWS SNS topic, at-least-once,
-  FIFO-aware.
-- `evm-sink-postgres` — insert each record into a PostgreSQL table; idempotent
-  (`ON CONFLICT (dedup_key) DO NOTHING`), so at-least-once is effectively
-  exactly-once in the table.
-- `evm-sink-redis` — append each record to a Redis Stream (`XADD`), at-least-once;
-  idempotent by default (a dedup-gated append keyed on `dedup_key`), with optional
-  `MAXLEN` trimming.
+```text
+producer  →  JSONL on stdout  →  sink
+```
 
-All nine live in this repository and share one configuration namespace.
+A **producer** reads a chain over RPC and emits records. A **sink** reads those
+records on stdin and delivers them somewhere, at-least-once. Any producer pipes
+into any sink.
+
+## The tools
+
+### Producers — watch a chain, emit JSONL
+
+| Tool | What it does |
+| --- | --- |
+| `evm-stream` | Live activity: decoded contract events and native ETH transfers. |
+| `evm-balance` | Polls balances and contract state (native / ERC-20 / ERC-721). |
+
+### Sinks — read JSONL, deliver it
+
+| Tool | Delivers to | Notes |
+| --- | --- | --- |
+| `evm-sink-kafka` | Kafka topics | at-least-once; optional SASL/TLS |
+| `evm-sink-webhook` | an HTTP endpoint | at-least-once; optional filters |
+| `evm-sink-file` | a rotating local file | gzip + retention |
+| `evm-sink-aws-sqs` | an AWS SQS queue | FIFO-aware; SDK-chain credentials |
+| `evm-sink-aws-sns` | an AWS SNS topic | FIFO-aware |
+| `evm-sink-postgres` | a PostgreSQL table | idempotent (`ON CONFLICT`) |
+| `evm-sink-redis` | a Redis Stream (`XADD`) | idempotent via `dedup_key` |
+
+All nine live in this repository, share one config file, and speak the same JSONL
+contract.
 
 ## Install
 
@@ -34,77 +44,114 @@ One command installs the whole suite (all nine CLIs):
 # Homebrew (macOS / Linux)
 brew install --cask daxchain-io/tap/evm-tools
 
-# Or, without Homebrew — detects OS/arch, verifies a signed checksum, installs all eight:
+# Or without Homebrew — detects OS/arch, verifies a signed checksum, installs all nine:
 curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh
 ```
 
-To install a single CLI via the script, set `EVM_TOOLS_BIN` (e.g.
+To install just one CLI via the script, set `EVM_TOOLS_BIN` (e.g.
 `EVM_TOOLS_BIN=evm-stream`). The installer verifies the release's cosign-signed
 checksums before installing — see
 [docs/design.md](docs/design.md#release-and-distribution) for the trust model.
 
+## Quick start
+
+1. Drop a config at `~/.evm-tools/evm-tools.toml` (it's auto-discovered, so no
+   `-c` flag is needed):
+
+   ```toml
+   chain = "ethereum"
+
+   [rpc]
+   url = "https://my-rpc.example/v2/KEY"
+
+   # evm-stream: which contract events to watch.
+   [[stream.contracts]]
+   name = "usdc"
+   address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+   events = ["Transfer"]        # resolved from the built-in ERC-20 ABI
+
+   # evm-sink-file: where to write them.
+   [file]
+   path = "/var/log/evm-tools/events.jsonl"
+   ```
+
+2. Pipe a producer into a sink — or just inspect the stream:
+
+   ```sh
+   evm-stream run | evm-sink-file run
+   evm-stream run | jq
+   ```
+
+> **stdout is data, stderr is diagnostics — never merge them.** `2>&1` would
+> corrupt the JSONL. Keep the producer's stdout flowing straight into the sink.
+
 ## Pipelines
 
-The shape is always the same: a producer writes JSONL to stdout, and a sink
-reads it from stdin.
+The shape is always producer → sink. A few combinations:
 
 ```sh
-# Stream contract events straight into Kafka.
-evm-stream run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-kafka run -c ~/.config/evm-tools/my-chain.toml
+# Events straight into Kafka.
+evm-stream run | evm-sink-kafka run
 
-# Poll balances and forward changes to an alerting webhook.
-evm-balance run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-webhook run -c ~/.config/evm-tools/my-chain.toml
+# Balance changes to an alerting webhook.
+evm-balance run | evm-sink-webhook run
 
-# Override the destination on the command line.
-evm-stream run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-kafka --brokers broker:9093 --topic evm.events
-
-evm-balance run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-webhook --url https://hooks.internal.example.com/evm
-
-# Record the stream to a rotating, gzip-compressed local file.
-evm-stream run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-file --path /var/log/evm-tools/events.jsonl
-
-# Or just inspect the stream locally.
-evm-stream run -c ~/.config/evm-tools/my-chain.toml | jq
+# Override a destination on the command line (no config edit).
+evm-stream run | evm-sink-kafka --brokers broker:9093 --topic evm.events
+evm-stream run | evm-sink-file --path /var/log/evm-tools/events.jsonl
 ```
 
-stdout is the data stream and stderr is human-readable diagnostics, so the two
-never mix — keep the producer's stdout flowing into the sink (or a file) and do
-not merge stderr into it (`2>&1` would corrupt the JSONL).
+Every command also takes `-c`/`--config` to point at an explicit config file
+instead of the auto-discovered one.
 
 ## Configuration
 
-Every tool reads one shared `evm-tools` config file. Producers read the shared
-`[rpc]`/`[metrics]`/`[log]` settings plus their `[stream]`/`[balance]` section;
-sinks read the shared `[metrics]`/`[log]` settings plus their own section
-(`[kafka]`, `[webhook]`, `[file]`, `[aws_sqs]`, `[aws_sns]`, `[postgres]`, or
-`[redis]`), and ignore the producer-only sections.
+One shared `evm-tools.toml` serves every tool. The shared `[rpc]` / `[metrics]` /
+`[log]` settings sit at the top level; each tool then reads its own section and
+ignores the others:
 
-Without `-c`/`--config`, each tool auto-discovers a config file from these
-locations, in order (first match wins): `~/.evm-tools/evm-tools.toml`, then
-`~/.config/evm-tools/evm-tools.toml` (the OS user-config dir), then
-`/etc/evm-tools/evm-tools.toml`. So the simplest setup is to drop your file at
-`~/.evm-tools/evm-tools.toml` and just run `evm-stream run` (no `-c` needed).
+| Tool | Config section |
+| --- | --- |
+| `evm-stream` | `[stream]` (+ `[[stream.contracts]]`) |
+| `evm-balance` | `[balance]` (+ `[[balance.*]]` targets) |
+| `evm-sink-kafka` | `[kafka]` |
+| `evm-sink-webhook` | `[webhook]` |
+| `evm-sink-file` | `[file]` |
+| `evm-sink-aws-sqs` / `-sns` | `[aws_sqs]` / `[aws_sns]` |
+| `evm-sink-postgres` | `[postgres]` |
+| `evm-sink-redis` | `[redis]` |
+
+Without `-c`, the file is auto-discovered (first match wins):
+`~/.evm-tools/evm-tools.toml`, then `~/.config/evm-tools/evm-tools.toml` (the OS
+user-config dir), then `/etc/evm-tools/evm-tools.toml`.
+
+**Secrets** — the Kafka SASL password, the webhook auth value, the Postgres DSN,
+the Redis URL — are sourced through `${VAR}` interpolation or a `_cmd` key, so
+they never live in the config file or the logs.
+
+The complete, commented options for every tool — each sink's full settings,
+TLS/SASL, filters, and the producer tuning knobs (`reorg_depth`,
+`head_staleness_threshold`, balance `max_concurrency` / `target_timeout`) — are
+documented in [docs/design.md](docs/design.md#configuration).
+
+<details>
+<summary>Per-sink configuration reference (click to expand)</summary>
 
 ```toml
 # evm-sink-kafka
 [kafka]
 brokers = ["broker:9093"]
 topic = "evm.events"
-required_acks = "all"          # only "all" — the at-least-once contract
+required_acks = "all"             # only "all" — the at-least-once contract
 readiness_probe_interval = "15s"  # active broker probe keeps /readyz live while idle; "0" disables
 
 [kafka.sasl]
-mechanism = "scram-sha-512"    # plain | scram-sha-256 | scram-sha-512
+mechanism = "scram-sha-512"       # plain | scram-sha-256 | scram-sha-512
 username = "evm-tools"
 password_cmd = "vault read -field=password secret/evm-tools/kafka"
 
 [kafka.tls]
-enabled = true                 # SASL requires TLS
+enabled = true                    # SASL requires TLS
 
 # evm-sink-webhook
 [webhook]
@@ -120,7 +167,7 @@ value_cmd = "printf 'Bearer %s' \"$(vault read -field=token secret/evm-tools/web
 [webhook.filters]
 include_types = ["balance_change", "native_transfer"]
 
-[webhook.filters.field]        # a single simple condition: eq | gt | lt
+[webhook.filters.field]           # a single simple condition: eq | gt | lt
 field = "balance"
 op = "gt"
 value = "1000"
@@ -128,20 +175,20 @@ value = "1000"
 # evm-sink-file — append each record to a rotating local file.
 [file]
 path = "/var/log/evm-tools/events.jsonl"
-max_size_mb = 100              # rotate at this size; 0 disables size rotation
-rotation_interval = "24h"      # also rotate at this age; "off" disables
-max_backups = 7                # keep this many rotated segments; 0 keeps all
-compress = true                # gzip rotated segments (.jsonl.gz)
-fsync = false                  # fsync each line (durability vs throughput)
+max_size_mb = 100                 # rotate at this size; 0 disables size rotation
+rotation_interval = "24h"         # also rotate at this age; "off" disables
+max_backups = 7                   # keep this many rotated segments; 0 keeps all
+compress = true                   # gzip rotated segments (.jsonl.gz)
+fsync = false                     # fsync each line (durability vs throughput)
 
-[file.filters]                 # type/name allow/deny lists (no field condition)
+[file.filters]                    # type/name allow/deny lists (no field condition)
 include_types = ["event", "native_transfer"]
 
 # evm-sink-aws-sqs — send each record to SQS (credentials from the AWS default
 # chain: env, shared config, IRSA/web identity, or instance role — never here).
 [aws_sqs]
 queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/evm-events"
-region = "us-east-1"           # optional; SDK resolves from env if unset
+region = "us-east-1"              # optional; SDK resolves from env if unset
 # A .fifo queue_url auto-enables MessageGroupId/MessageDeduplicationId.
 
 # evm-sink-aws-sns — publish each record to an SNS topic.
@@ -152,28 +199,18 @@ topic_arn = "arn:aws:sns:us-east-1:123456789012:evm-events"
 [postgres]
 dsn_cmd = "vault read -field=dsn secret/evm-tools/postgres"  # secret; never in the file
 table = "evm_records"
-create_table = true            # CREATE TABLE IF NOT EXISTS on startup
+create_table = true               # CREATE TABLE IF NOT EXISTS on startup
 
 # evm-sink-redis — append to a Redis Stream (XADD), idempotent via dedup_key.
 [redis]
 url_cmd = "vault read -field=url secret/evm-tools/redis"  # secret (may carry a password); never in the file
-stream = "evm.events"          # destination stream key
-max_len = 1000000              # approximate MAXLEN cap; 0 keeps all
-dedup = true                   # dedup-gated append (effectively once-in-stream)
-dedup_ttl = "24h"              # marker lifetime; "0"/"off" = never expire
+stream = "evm.events"             # destination stream key
+max_len = 1000000                 # approximate MAXLEN cap; 0 keeps all
+dedup = true                      # dedup-gated append (effectively once-in-stream)
+dedup_ttl = "24h"                 # marker lifetime; "0"/"off" = never expire
 ```
 
-Producers expose a few extra knobs: `[stream].reorg_depth` (max reorg depth the
-stream detects and rewinds across near the head; 0 disables), and a
-`head_staleness_threshold` on both `[stream]` and `[balance]` that flips `/readyz`
-to not-ready when the chain head stops advancing (set it to roughly 5–10× the
-chain's block time; unset disables it). `[balance].max_concurrency` and
-`[balance].target_timeout` bound the parallel per-target sampling.
-
-Secrets (the Kafka SASL password, the webhook auth value, the Postgres DSN) are
-sourced through env interpolation (`${VAR}`) or a `_cmd` key, so they never live
-in the file or
-the logs.
+</details>
 
 ## Container image
 
