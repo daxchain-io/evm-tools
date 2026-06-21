@@ -76,6 +76,9 @@ var flagBindings = map[string]string{
 
 	// evm-sink-postgres flag (dsn is secret -> config/env only, never argv).
 	"table": "postgres.table",
+
+	// evm-sink-redis flag (url is secret -> config/env only, never argv).
+	"stream": "redis.stream",
 }
 
 // New builds a Loader, reading the config file (if any) and wiring env binding.
@@ -144,7 +147,11 @@ func bindEnvKeys(v *viper.Viper) {
 		"rpc.require_mtls",
 		"metrics.enabled", "metrics.addr", "metrics.path",
 		"log.level", "log.format",
+		"stream.from_block", "stream.poll_interval", "stream.log_chunk_blocks",
+		"stream.reorg_depth", "stream.head_staleness_threshold",
 		"stream.metrics.enabled", "stream.metrics.addr", "stream.metrics.path",
+		"balance.interval", "balance.every_blocks",
+		"balance.max_concurrency", "balance.target_timeout", "balance.head_staleness_threshold",
 		"balance.metrics.enabled", "balance.metrics.addr", "balance.metrics.path",
 		"kafka.brokers", "kafka.topic", "kafka.partition_key", "kafka.required_acks",
 		"kafka.readiness_probe_interval",
@@ -169,6 +176,10 @@ func bindEnvKeys(v *viper.Viper) {
 		"postgres.dsn", "postgres.table", "postgres.create_table",
 		"postgres.backoff_base", "postgres.backoff_max", "postgres.readiness_probe_interval",
 		"postgres.metrics.enabled", "postgres.metrics.addr", "postgres.metrics.path",
+		"redis.url", "redis.stream", "redis.field", "redis.max_len",
+		"redis.dedup", "redis.dedup_ttl",
+		"redis.backoff_base", "redis.backoff_max", "redis.readiness_probe_interval",
+		"redis.metrics.enabled", "redis.metrics.addr", "redis.metrics.path",
 	}
 	for _, k := range keys {
 		// Error only occurs with an empty key; ignore safely.
@@ -208,6 +219,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stream.poll_interval", "2s")
 	v.SetDefault("stream.log_chunk_blocks", 2000)
 	v.SetDefault("stream.from_block", "latest")
+	v.SetDefault("stream.reorg_depth", 64)
 	v.SetDefault("stream.metrics.path", "/metrics")
 	v.SetDefault("stream.metrics.addr", ":9000")
 
@@ -255,6 +267,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("postgres.readiness_probe_interval", "15s")
 	v.SetDefault("postgres.metrics.path", "/metrics")
 	v.SetDefault("postgres.metrics.addr", ":9007")
+
+	v.SetDefault("redis.field", "data")
+	v.SetDefault("redis.dedup", true)
+	v.SetDefault("redis.backoff_base", "500ms")
+	v.SetDefault("redis.backoff_max", "30s")
+	v.SetDefault("redis.readiness_probe_interval", "15s")
+	v.SetDefault("redis.metrics.path", "/metrics")
+	v.SetDefault("redis.metrics.addr", ":9008")
 }
 
 // userConfigDir returns the user-level config directory, defaulting to

@@ -22,6 +22,11 @@ type fakeClient struct {
 	heads   []uint64
 	headIdx int
 
+	// balanceAtHook, when set, handles BalanceAt outside the mutex so a test can
+	// block a specific target (e.g. to exercise the per-target read timeout)
+	// without serializing the other concurrent reads on the lock.
+	balanceAtHook func(ctx context.Context, address string) (*big.Int, error)
+
 	// balances maps lowercased address -> wei balance (eth_getBalance).
 	balances map[string]*big.Int
 	// calls maps lowercased "to|data" -> 0x-hex result (eth_call).
@@ -63,10 +68,15 @@ func (c *fakeClient) BlockByNumberUint(_ context.Context, n uint64, _ bool) (*rp
 	return &rpc.Block{Number: rpc.BlockTag(n), Hash: "0xblk", Timestamp: ts}, nil
 }
 
-func (c *fakeClient) BalanceAt(_ context.Context, address, _ string) (*big.Int, error) {
+func (c *fakeClient) BalanceAt(ctx context.Context, address, _ string) (*big.Int, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if v, ok := c.balances[lower(address)]; ok {
+	hook := c.balanceAtHook
+	v, ok := c.balances[lower(address)]
+	c.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, lower(address))
+	}
+	if ok {
 		return new(big.Int).Set(v), nil
 	}
 	return big.NewInt(0), nil

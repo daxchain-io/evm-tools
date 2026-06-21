@@ -85,7 +85,12 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		return err
 	}
 
+	headStaleness, err := parseDisableableDuration(cfg.Stream.HeadStalenessThreshold, "stream.head_staleness_threshold")
+	if err != nil {
+		return err
+	}
 	health := metrics.NewHealth(readyEmitBlockedThreshold, readyLagThreshold)
+	health.SetHeadStalenessThreshold(headStaleness)
 	health.SetRPCReachable(true)
 
 	mc := f.streamMetricsConfig(cmd, cfg)
@@ -130,6 +135,7 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		PollInterval:   pollInterval,
 		LogChunkBlocks: uint64(cfg.Stream.LogChunkBlocks),
 		FromBlock:      cfg.Stream.FromBlock,
+		ReorgDepth:     uint64(cfg.Stream.ReorgDepth),
 	})
 	if err != nil {
 		return err
@@ -203,6 +209,12 @@ func validateStream(cfg *config.StreamFull) error {
 	}
 	if _, err := time.ParseDuration(cfg.Stream.PollInterval); err != nil {
 		return fmt.Errorf("invalid stream.poll_interval %q: %w", cfg.Stream.PollInterval, err)
+	}
+	if cfg.Stream.ReorgDepth < 0 {
+		return fmt.Errorf("stream.reorg_depth must be >= 0 (got %d; 0 disables reorg handling)", cfg.Stream.ReorgDepth)
+	}
+	if _, err := parseDisableableDuration(cfg.Stream.HeadStalenessThreshold, "stream.head_staleness_threshold"); err != nil {
+		return err
 	}
 	if len(cfg.Stream.Contracts) == 0 && !cfg.Stream.NativeTransfers.Enabled {
 		return fmt.Errorf("nothing to monitor: configure [[stream.contracts]] or enable [stream.native_transfers]")

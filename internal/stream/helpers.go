@@ -118,6 +118,7 @@ func (noopMetrics) SetEmitBlockedSeconds(float64)         {}
 func (noopMetrics) IncEventRecord(string, string, string) {}
 func (noopMetrics) IncSkippedLog()                        {}
 func (noopMetrics) IncNativeTransferRecord()              {}
+func (noopMetrics) IncReorgsDetected()                    {}
 func (noopMetrics) IncReconnects()                        {}
 func (noopMetrics) ObserveLoop(time.Duration)             {}
 func (noopMetrics) SetConsecutiveFailures(int)            {}
@@ -130,3 +131,4 @@ type noopHealth struct{}
 func (noopHealth) SetRPCReachable(bool)         {}
 func (noopHealth) SetEmitBlocked(time.Duration) {}
 func (noopHealth) SetLag(uint64)                {}
+func (noopHealth) SetHeadBlockTime(time.Time)   {}

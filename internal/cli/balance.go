@@ -72,12 +72,22 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 		return err
 	}
 
+	headStaleness, err := parseDisableableDuration(cfg.Balance.HeadStalenessThreshold, "balance.head_staleness_threshold")
+	if err != nil {
+		return err
+	}
+	targetTimeout, err := parseDisableableDuration(cfg.Balance.TargetTimeout, "balance.target_timeout")
+	if err != nil {
+		return err
+	}
+
 	// Lag is informational for the balance poller (a sampler is expected to be
 	// behind head between samples — that gap is the configured cadence, not an
 	// unhealthy state), so the lag dimension of /readyz is disabled here. The
 	// evm_balance_lag_blocks gauge still reports real staleness for dashboards;
 	// emit-blocked (a stalled stdout) remains the meaningful readiness signal.
 	health := metrics.NewHealth(readyEmitBlockedThreshold, 0)
+	health.SetHeadStalenessThreshold(headStaleness)
 	health.SetRPCReachable(true)
 
 	mc := f.balanceMetricsConfig(cmd, cfg)
@@ -115,6 +125,8 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 		Contracts:       resolved.Contracts,
 		ERC721Balances:  resolved.ERC721Balances,
 		ERC721Ownership: resolved.ERC721Ownership,
+		MaxConcurrency:  cfg.Balance.MaxConcurrency,
+		TargetTimeout:   targetTimeout,
 	})
 	if err != nil {
 		return err
@@ -172,6 +184,15 @@ func balanceCheckRPC(cmd *cobra.Command, f *sharedFlags) error {
 func validateBalance(cfg *config.BalanceFull) (balance.Resolved, error) {
 	if cfg.RPC.URL == "" {
 		return balance.Resolved{}, fmt.Errorf("rpc.url is required")
+	}
+	if cfg.Balance.MaxConcurrency < 0 {
+		return balance.Resolved{}, fmt.Errorf("balance.max_concurrency must be >= 0 (got %d; 0 uses the built-in default)", cfg.Balance.MaxConcurrency)
+	}
+	if _, err := parseDisableableDuration(cfg.Balance.TargetTimeout, "balance.target_timeout"); err != nil {
+		return balance.Resolved{}, err
+	}
+	if _, err := parseDisableableDuration(cfg.Balance.HeadStalenessThreshold, "balance.head_staleness_threshold"); err != nil {
+		return balance.Resolved{}, err
 	}
 	resolved, err := balance.Resolve(cfg.Balance)
 	if err != nil {

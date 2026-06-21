@@ -28,6 +28,7 @@ type Type string
 const (
 	TypeEvent           Type = "event"
 	TypeNativeTransfer  Type = "native_transfer"
+	TypeReorg           Type = "reorg"
 	TypeBalanceSample   Type = "balance_sample"
 	TypeBalanceChange   Type = "balance_change"
 	TypeOwnershipSample Type = "ownership_sample"
@@ -114,6 +115,40 @@ type NativeTransferData struct {
 	// ContractCreation is true when the transaction created a contract (To is
 	// null). Omitted otherwise.
 	ContractCreation bool `json:"contract_creation,omitempty"`
+}
+
+// ReorgData is the payload for a "reorg" record: evm-stream detected that one or
+// more blocks it had already processed were orphaned by a chain reorganization.
+// The producer emits this marker over the orphaned range, then re-scans the new
+// canonical chain from ForkBlock+1 — re-emitting the canonical events and native
+// transfers (which carry reorg-stable dedup keys, so a re-included transaction
+// dedups against its first emission). A sink can use this marker to retract the
+// records of transactions that did NOT survive the reorg (those whose block in
+// [FromBlock, ToBlock] is now orphaned and which were not re-emitted on the
+// canonical chain). All block numbers are small bounded integers (JSON numbers),
+// consistent with the envelope's BlockNumber; the hashes are strings.
+type ReorgData struct {
+	// ForkBlock is the highest block that is still canonical (the common ancestor);
+	// the orphaned range begins at ForkBlock+1.
+	ForkBlock uint64 `json:"fork_block"`
+	// FromBlock and ToBlock are the inclusive orphaned range (FromBlock=ForkBlock+1,
+	// ToBlock the highest block the producer had processed before the reorg).
+	FromBlock uint64 `json:"from_block"`
+	ToBlock   uint64 `json:"to_block"`
+	// Depth is the number of orphaned blocks (ToBlock-FromBlock+1).
+	Depth int `json:"depth"`
+	// OldHash is the block hash the producer had recorded at ToBlock (now orphaned).
+	// NewHash is the canonical block hash now at ToBlock; it is best-effort and is
+	// empty only when the reorg shortened the chain past ToBlock so no canonical
+	// block exists there (or the re-resolve fetch failed). It is populated whenever
+	// the block still exists, independent of DepthExceeded.
+	OldHash string `json:"old_hash"`
+	NewHash string `json:"new_hash,omitempty"`
+	// DepthExceeded is true when the reorg ran deeper than the producer's tracked
+	// depth, so ForkBlock is the floor of the tracked window rather than a proven
+	// common ancestor — a signal to a sink that records below FromBlock may also be
+	// affected.
+	DepthExceeded bool `json:"depth_exceeded,omitempty"`
 }
 
 // BalanceData is the payload for "balance_sample" / "balance_change" records.

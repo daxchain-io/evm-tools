@@ -83,6 +83,7 @@ A single binary release and a single shared config file cover the whole suite.
 | `evm-sink-aws-sqs` | Sink — send records to an AWS SQS queue (FIFO-aware) | Built (S5) |
 | `evm-sink-aws-sns` | Sink — publish records to an AWS SNS topic (FIFO-aware) | Built (S5) |
 | `evm-sink-postgres` | Sink — idempotent insert into a PostgreSQL table | Built (S6) |
+| `evm-sink-redis` | Sink — append records to a Redis Stream (XADD, idempotent) | Built (S7) |
 
 The pipeline shape is always the same: a producer writes JSONL to stdout, and a
 sink reads it from stdin.
@@ -154,13 +155,21 @@ actually unique and reorg-stable for each:
   entry can ignore it.
 - **Change records** (`*_change`): `chain_id` + `type` + `name` +
   `block_number` (the block at which the new value was first observed).
+- **Reorg markers** (`reorg`): `chain_id` + `type` + `block_number` (the orphaned
+  tip) + `block_hash` (the canonical hash now at that height); a later re-reorg
+  over the same range resolves to a different canonical hash and so a distinct
+  key.
 
 Head records are best-effort and non-final: `evm-stream` follows the chain head
-and may emit records that a later reorg removes (reorg handling is deferred —
-see [Build Milestones](#build-milestones)). Schema version 1 carries no finality
-or `removed` flag; sinks must treat head records as non-final. An optional
-`finalized`/`removed` field may be added later as an additive change without a
-version bump.
+and may emit records that a later reorg removes. The stream now *detects* reorgs
+near the head and emits a [`reorg` marker](#record-types-and-payloads) over the
+orphaned range before re-scanning the new canonical chain (see [Operational Notes
+and Known Limitations](#operational-notes-and-known-limitations)); a re-included
+transaction dedups against its first emission because event/native dedup keys are
+reorg-stable. Schema version 1 still carries no per-record finality flag, so a
+sink must treat head records as non-final until it sees them confirmed (or acts on
+the `reorg` marker). An optional `finalized` field may be added later as an
+additive change without a version bump.
 
 ### Numeric encoding
 
@@ -223,6 +232,24 @@ Envelope carries `tx_hash`, `log_index`, and `block_hash`.
   contract (`to` is null).
 
 Envelope carries `tx_hash`; no `log_index`.
+
+**`reorg`** (evm-stream) — a chain reorganization the stream detected near the
+head. It marks an orphaned block range so a sink can retract the records of
+transactions that did not survive the reorg, before the stream re-scans the new
+canonical chain.
+
+- `fork_block` (number): highest still-canonical block (the common ancestor); the
+  orphaned range begins at `fork_block + 1`.
+- `from_block` / `to_block` (numbers): inclusive orphaned range.
+- `depth` (number): orphaned block count (`to_block - from_block + 1`).
+- `old_hash` (string): the block hash the stream had recorded at `to_block`.
+- `new_hash` (string, optional): the canonical hash now at `to_block` (empty when
+  the reorg shortened the chain past it).
+- `depth_exceeded` (bool, optional): true when the reorg ran deeper than the
+  tracked depth, so `fork_block` is the floor of the tracked window rather than a
+  proven ancestor (records below `from_block` may also be affected).
+
+Envelope carries `block_number` (= `to_block`) and `block_hash` (= `new_hash`).
 
 **`balance_sample` / `balance_change`** (evm-balance) — an account/wallet
 balance.
@@ -437,6 +464,8 @@ path = "/metrics"
 from_block = "latest"
 poll_interval = "2s"
 log_chunk_blocks = 2000
+reorg_depth = 64                    # max reorg (blocks) detected/rewound near head; 0 disables
+# head_staleness_threshold = "90s"  # /readyz not-ready when the head stops advancing; unset disables
 
 [stream.metrics]
 enabled = true
@@ -462,6 +491,9 @@ include_internal = false
 interval = "1m"
 # Or sample on a block cadence instead of a time interval (set exactly one):
 # every_blocks = 50
+# max_concurrency = 8               # parallel per-target reads each tick (0 = default)
+# target_timeout = "15s"           # per-target read bound so one slow target can't stall the cycle
+# head_staleness_threshold = "5m"  # /readyz not-ready when the head stops advancing; unset disables
 
 [balance.metrics]
 enabled = true
@@ -503,14 +535,14 @@ token_id = "1234"
 The sinks read from the same shared file. They use the shared `[metrics]`/`[log]`
 defaults and their own namespaced section — `[kafka]` for `evm-sink-kafka`,
 `[webhook]` for `evm-sink-webhook`, `[file]` for `evm-sink-file`, `[aws_sqs]` /
-`[aws_sns]` for the AWS sinks, and `[postgres]` for `evm-sink-postgres` — and
-ignore the producer-only `[rpc]`, `[stream]`, and `[balance]` sections. Each
-sources its secrets (the Kafka SASL password, the webhook auth-header value, the
-Postgres DSN) through the same [value interpolation](#value-interpolation) /
-`_cmd` machinery as the producers, so nothing secret lands in the file. The AWS
-sinks take no credentials in config at all — the AWS SDK default chain
-(environment, shared config, IRSA/web identity, or an instance role) supplies
-them.
+`[aws_sns]` for the AWS sinks, `[postgres]` for `evm-sink-postgres`, and `[redis]`
+for `evm-sink-redis` — and ignore the producer-only `[rpc]`, `[stream]`, and
+`[balance]` sections. Each sources its secrets (the Kafka SASL password, the
+webhook auth-header value, the Postgres DSN, the Redis URL) through the same
+[value interpolation](#value-interpolation) / `_cmd` machinery as the producers,
+so nothing secret lands in the file. The AWS sinks take no credentials in config
+at all — the AWS SDK default chain (environment, shared config, IRSA/web identity,
+or an instance role) supplies them.
 
 ```toml
 # evm-sink-kafka — publish each stdin record to Kafka, at-least-once.
@@ -625,6 +657,22 @@ create_table = true                        # CREATE TABLE IF NOT EXISTS on start
 [postgres.metrics]
 enabled = true
 addr = ":9007"
+
+# evm-sink-redis — append each stdin record to a Redis Stream (XADD),
+# at-least-once and (with dedup on) effectively exactly-once in the stream.
+[redis]
+# URL is a secret (it may carry a password): source it via _cmd/${VAR}, never
+# inline. Never logged; rediss:// enables TLS.
+url_cmd = "vault read -field=url secret/evm-tools/redis"
+stream = "evm.events"                      # --stream overrides; required
+# field = "data"                           # stream-entry field carrying the record JSON
+# max_len = 1000000                        # approximate XADD MAXLEN cap; 0 keeps all
+# dedup = true                             # dedup-gated append keyed on dedup_key
+# dedup_ttl = "24h"                        # marker lifetime; "0"/"off" = never expire
+
+[redis.metrics]
+enabled = true
+addr = ":9008"
 ```
 
 ### evm-sink-kafka
@@ -1099,6 +1147,7 @@ evm-tools/
     evm-sink-aws-sqs/      # thin entrypoint
     evm-sink-aws-sns/      # thin entrypoint
     evm-sink-postgres/     # thin entrypoint
+    evm-sink-redis/        # thin entrypoint
   internal/
     config/                # shared loading, precedence, interpolation, per-tool decoding
     rpc/                   # TLS RPC transport + client (server-auth by default, optional mTLS)
@@ -1111,6 +1160,7 @@ evm-tools/
     balance/               # evm-balance core logic
     awssink/               # shared AWS SQS/SNS sink core
     pgsink/                # evm-sink-postgres core logic (pgx)
+    redissink/             # evm-sink-redis core logic (go-redis; dedup-gated XADD)
     keyperm/               # shared private-key file-mode warning
     kafkasink/             # evm-sink-kafka core logic
     webhooksink/           # evm-sink-webhook core logic
@@ -1221,8 +1271,9 @@ Initial `evm-balance` scope:
   metrics.
 
 Deferred until the shared spine is stable: native transfer streaming, ERC-721
-ownership checks, config reload, reorg handling, checkpointing, richer event
-decoding, and the downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`).
+ownership checks, config reload, checkpointing, richer event decoding, and the
+downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`). (Near-head reorg
+detection landed in S7 — see [Operational Notes](#operational-notes-and-known-limitations).)
 
 ## Quality and CI
 
@@ -1394,15 +1445,37 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   and does not backfill blocks missed while it was down. To avoid a gap across a
   restart, set `from_block` to a known-safe height, or minimize downtime under a
   supervisor. A checkpoint/resume cursor is a roadmap item (see Open Questions).
-- **At-head, no finality / reorg handling.** The stream follows the latest head
-  and advances monotonically; it does not await finality or re-scan reorged
-  heights. Logs the node marks `removed` (reorged out) are skipped, but events
-  already emitted under an orphaned block are not retracted and replacement blocks
-  at the same heights are not re-scanned. On chains that reorg (Ethereum mainnet
-  and most L1s/L2s), sinks can therefore retain records for transactions that were
-  reorged out. For reorg-sensitive consumers, dedup/replace downstream by
-  `(chain_id, block_hash, tx_hash, log_index)` or run behind a confirmation lag.
-  Finality-aware emission is a roadmap item.
+- **Reorg handling: detect-and-re-scan, bounded depth, no finality wait.** Near the
+  head the stream tracks the canonical hash of each confirmed tip (bounded to
+  `stream.reorg_depth` blocks, default 64). When its processing frontier is
+  orphaned it emits a [`reorg` marker](#record-types-and-payloads) over the orphaned
+  range and re-scans the new canonical chain from the fork point; re-included
+  transactions dedup against their first emission because event/native dedup keys
+  are reorg-stable. Limitations remain: it does not *await* finality, so a record
+  can still be emitted and then retracted by a later `reorg`; a reorg deeper than
+  `reorg_depth` sets `depth_exceeded` and rewinds only to the tracked floor (records
+  below `from_block` may be affected); and an in-place tip replacement is detected
+  (the frontier is clamped to the head, so a reorg that does not advance the head is
+  still caught), but blocks that were processed *above* the current head after the
+  chain shortened are only re-scanned once the head climbs back. A reorg-sensitive
+  sink should act on the `reorg` marker
+  (retract the orphaned range) or run behind a confirmation lag; `reorg_depth = 0`
+  disables the feature for chains where it is unneeded.
+- **Head-staleness readiness.** Both producers expose `head_staleness_threshold`
+  (unset/`0`/`off` disables it). When set, `/readyz` flips to not-ready once the
+  latest chain head block ages past the threshold — catching a halted chain or a
+  load balancer pinned to a frozen/lagging node even while RPC calls still succeed.
+  The age is computed against the wall clock at probe time, so it also trips if the
+  poll loop itself wedges. It is chain-agnostic and has no default; set it to
+  roughly 5–10× the chain's block time to avoid flapping on normal block jitter.
+- **Balance per-target parallelism.** `evm-balance` reads its targets in parallel
+  each tick (bounded by `max_concurrency`, default 8) with an optional
+  `target_timeout`, so the cycle's wall-clock is the slowest single target rather
+  than the sum, and one hung target is bounded by the timeout instead of stalling
+  the cycle. Reads run concurrently but emission and change detection stay
+  sequential and deterministic, and a failed read aborts the whole tick before any
+  record is emitted — so a tick is all-or-nothing and no change is silently
+  swallowed. On rate-limited RPC, lower `max_concurrency` to avoid 429s.
 - **Native-transfer cost.** Native-transfer detection fetches one receipt per
   value-bearing transaction (bounded-parallel, capped per block). On a high-volume
   chain with an unfiltered `[stream.native_transfers]` allowlist this is the
@@ -1441,6 +1514,16 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   SDK's own retryer (throttling, request timeouts, retryable 5xx, and connection
   errors are retried with blocking backoff), so only a genuine client fault
   (access denied, a non-existent queue/topic, a bad request) fails fast.
+- **Redis sink idempotency is TTL-bounded.** `evm-sink-redis` is at-least-once;
+  with `dedup` on (the default) an atomic dedup-gated `XADD` makes it effectively
+  exactly-once *in the stream*. The connection URL is a secret (`_cmd`/`${VAR}`
+  only, never a flag) and is never logged. Two caveats: dedup markers expire after
+  `dedup_ttl` (default: never), so a duplicate arriving after the TTL — e.g. an
+  overlapping re-run hours later — can re-append; setting no TTL makes dedup exact
+  but grows marker-key memory unboundedly, so size it against your retention. And a
+  `WRONGTYPE`/auth error fails fast (the stream key must be a stream and the
+  credentials must permit `XADD`); transient states (`LOADING`, `CLUSTERDOWN`,
+  network/timeouts) retry with blocking backoff.
 
 ## Open Questions
 
@@ -1469,6 +1552,9 @@ These are unresolved and worth deciding before or during the build:
 3. **Internal native transfers.** Confirm when trace-RPC-based internal transfer
    detection (`include_internal`) is in scope, given it is provider-dependent
    and deferred from the first milestone.
-4. **Finality signaling.** Once reorg handling lands, decide whether to add the
-   additive `finalized`/`removed` envelope field (and `evm_stream` reorg
-   re-emission) so sinks can distinguish final from reorganizable records.
+4. **Finality signaling.** Near-head reorg detection landed in S7 (the `reorg`
+   marker + canonical re-scan). Still open: whether to add an additive
+   `finalized` envelope field so sinks can distinguish final from
+   still-reorganizable records, instead of acting on the `reorg` marker or a
+   confirmation lag. Awaiting finality (vs. detect-and-retract) remains a
+   deliberate non-goal for the low-latency default.

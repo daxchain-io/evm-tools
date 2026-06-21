@@ -132,3 +132,4 @@ type noopHealth struct{}
 func (noopHealth) SetRPCReachable(bool)         {}
 func (noopHealth) SetEmitBlocked(time.Duration) {}
 func (noopHealth) SetLag(uint64)                {}
+func (noopHealth) SetHeadBlockTime(time.Time)   {}

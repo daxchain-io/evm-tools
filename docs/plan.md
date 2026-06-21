@@ -415,14 +415,44 @@ NOTHING), so at-least-once is effectively exactly-once in the table.
 - [x] **Tests**: fake Inserter — insert-all, permanent/transient Classify,
       context-cancel, table-name validation. Verified `-race`.
 
+## S7 — Reorg handling, head-staleness readiness, balance parallelism, Redis sink
+
+Goal: close the readiness-audit follow-ups and add the Redis Streams sink.
+
+- [x] **Reorg handling (`internal/stream/reorg.go` + `record`)**: a `reorg` record
+      type; near-head canonical-tip tracking bounded by `stream.reorg_depth`
+      (default 64, 0 disables); frontier parent-hash check (free in the
+      advance-by-one case, else one header fetch); fork resolution; a `reorg`
+      marker over the orphaned range then a re-scan of the new canonical chain.
+      Tests: 1-block reorg detection + linear-chain no-op.
+- [x] **Head-staleness readiness (`internal/metrics`)**: `Health.SetHeadBlockTime`
+      + `SetHeadStalenessThreshold`; `/readyz` flips not-ready when the head ages
+      past `stream`/`balance.head_staleness_threshold` (computed vs wall clock, so
+      a wedged loop trips it). Test: fresh→stale transition.
+- [x] **Balance parallelism (`internal/balance`)**: concurrent per-target reads
+      bounded by `max_concurrency` (default 8) with an optional `target_timeout`;
+      sequential deterministic apply (change detection + emit); all-or-nothing per
+      tick. Tests: per-target timeout bound, error selection, parallel emit, `-race`.
+- [x] **Redis sink (`internal/redissink`)**: run loop + `Appender`; atomic
+      dedup-gated `XADD` Lua script (effectively once-in-stream), optional
+      `MAXLEN`/`dedup_ttl`; redis.Error-class Classify (WRONGTYPE/auth permanent,
+      else transient); secret URL redaction. `[redis]` config (url secret via
+      `_cmd`/`${VAR}`), `cli/redis.go`, `cmd/evm-sink-redis`, `:9008`; `--stream`
+      flag. Tests: append-all, dedup-advance, permanent/transient Classify,
+      context-cancel.
+- [x] **Wiring/release**: goreleaser build+archive+cask, `install.sh`, `Dockerfile`
+      (nine binaries); README/design.md/CLAUDE.md updated.
+
 ## Deferred (post-spine, per design)
 
-Native transfer internal/trace transfers; config reload (+ metric reset); reorg
-handling and the additive `finalized`/`removed` field; checkpointing/resume. See
-design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
+Native transfer internal/trace transfers; config reload (+ metric reset); the
+additive `finalized` field and finality-awaiting emission; checkpointing/resume.
+See design [Open Questions](design.md#open-questions). (ERC-721 balance/ownership
 runtime is done — see M4; the `evm-sink-kafka` sink is done — see S1; the
 `evm-sink-webhook` sink is done — see S2; the `evm-sink-file` sink is done — see
-S4; the AWS SQS/SNS sinks — see S5; the `evm-sink-postgres` sink — see S6.)
+S4; the AWS SQS/SNS sinks — see S5; the `evm-sink-postgres` sink — see S6;
+near-head reorg handling, head-staleness readiness, balance parallelism, and the
+`evm-sink-redis` sink are done — see S7.)
 
 ## Post-M4 follow-ups
 

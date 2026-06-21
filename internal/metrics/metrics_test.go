@@ -298,3 +298,37 @@ func TestKafkaHealthReadiness(t *testing.T) {
 		t.Errorf("/readyz should report blocked, got %d %s", code, body)
 	}
 }
+
+// TestHeadStalenessReadiness verifies the head-staleness dimension of /readyz: it
+// is inert until a threshold is set and a first head block is observed, ready
+// while the head is fresh, and not-ready once the head block ages past the
+// threshold (the chain head stopped advancing).
+func TestHeadStalenessReadiness(t *testing.T) {
+	h := NewHealth(0, 0)
+	h.SetRPCReachable(true)
+
+	// Disabled by default: the dimension never trips.
+	if _, ok := h.readyReason(); !ok {
+		t.Fatalf("ready expected when head-staleness is disabled")
+	}
+
+	h.SetHeadStalenessThreshold(90 * time.Second)
+	// Still ready: no head block observed yet, so the check is gated off.
+	if _, ok := h.readyReason(); !ok {
+		t.Fatalf("ready expected before any head block is observed")
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	h.nowFn = func() time.Time { return now }
+
+	h.SetHeadBlockTime(now.Add(-30 * time.Second)) // fresh head
+	if _, ok := h.readyReason(); !ok {
+		t.Fatalf("ready expected while the head block is fresh")
+	}
+
+	h.SetHeadBlockTime(now.Add(-120 * time.Second)) // stale head
+	reason, ok := h.readyReason()
+	if ok || !strings.Contains(reason, "stale") {
+		t.Fatalf("not-ready with a staleness reason expected, got ok=%v reason=%q", ok, reason)
+	}
+}

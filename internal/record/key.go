@@ -33,6 +33,14 @@ func (e Envelope) DedupKey() string {
 		return strings.Join([]string{chainID, e.TxHash, logIndexStr(e.LogIndex)}, sep)
 	case TypeNativeTransfer:
 		return strings.Join([]string{chainID, e.TxHash}, sep)
+	case TypeReorg:
+		// A detected reorg is identified by the orphaned tip (block_number) and the
+		// canonical hash now at that height (block_hash); a later re-reorg over the
+		// same range resolves to a different canonical hash and so a distinct key.
+		return strings.Join([]string{
+			chainID, string(e.Type),
+			strconv.FormatUint(e.BlockNumber, 10), e.BlockHash,
+		}, sep)
 	case TypeBalanceSample, TypeOwnershipSample, TypeContractSample:
 		return strings.Join([]string{
 			chainID, string(e.Type), e.Name,
@@ -70,6 +78,10 @@ func (e Envelope) PartitionIdentity() string {
 		return strings.Join([]string{chainID, e.TxHash, logIndexStr(e.LogIndex)}, sep)
 	case TypeNativeTransfer:
 		return strings.Join([]string{chainID, e.TxHash}, sep)
+	case TypeReorg:
+		// All reorg markers for a chain share one partition so their relative order
+		// (and order against the records they retract) is preserved.
+		return strings.Join([]string{chainID, string(e.Type)}, sep)
 	default:
 		// Sampled and change records: order is meaningful per configured entry,
 		// so partition by (chain, type, name) — every record for one entry stays

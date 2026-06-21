@@ -20,12 +20,15 @@ together cleanly.
 - `evm-sink-postgres` — insert each record into a PostgreSQL table; idempotent
   (`ON CONFLICT (dedup_key) DO NOTHING`), so at-least-once is effectively
   exactly-once in the table.
+- `evm-sink-redis` — append each record to a Redis Stream (`XADD`), at-least-once;
+  idempotent by default (a dedup-gated append keyed on `dedup_key`), with optional
+  `MAXLEN` trimming.
 
-All eight live in this repository and share one configuration namespace.
+All nine live in this repository and share one configuration namespace.
 
 ## Install
 
-One command installs the whole suite (all eight CLIs):
+One command installs the whole suite (all nine CLIs):
 
 ```sh
 # Homebrew (macOS / Linux)
@@ -78,8 +81,8 @@ not merge stderr into it (`2>&1` would corrupt the JSONL).
 Every tool reads one shared `evm-tools` config file. Producers read the shared
 `[rpc]`/`[metrics]`/`[log]` settings plus their `[stream]`/`[balance]` section;
 sinks read the shared `[metrics]`/`[log]` settings plus their own section
-(`[kafka]`, `[webhook]`, `[file]`, `[aws_sqs]`, `[aws_sns]`, or `[postgres]`), and
-ignore the producer-only sections.
+(`[kafka]`, `[webhook]`, `[file]`, `[aws_sqs]`, `[aws_sns]`, `[postgres]`, or
+`[redis]`), and ignore the producer-only sections.
 
 ```toml
 # evm-sink-kafka
@@ -144,7 +147,22 @@ topic_arn = "arn:aws:sns:us-east-1:123456789012:evm-events"
 dsn_cmd = "vault read -field=dsn secret/evm-tools/postgres"  # secret; never in the file
 table = "evm_records"
 create_table = true            # CREATE TABLE IF NOT EXISTS on startup
+
+# evm-sink-redis — append to a Redis Stream (XADD), idempotent via dedup_key.
+[redis]
+url_cmd = "vault read -field=url secret/evm-tools/redis"  # secret (may carry a password); never in the file
+stream = "evm.events"          # destination stream key
+max_len = 1000000              # approximate MAXLEN cap; 0 keeps all
+dedup = true                   # dedup-gated append (effectively once-in-stream)
+dedup_ttl = "24h"              # marker lifetime; "0"/"off" = never expire
 ```
+
+Producers expose a few extra knobs: `[stream].reorg_depth` (max reorg depth the
+stream detects and rewinds across near the head; 0 disables), and a
+`head_staleness_threshold` on both `[stream]` and `[balance]` that flips `/readyz`
+to not-ready when the chain head stops advancing (set it to roughly 5–10× the
+chain's block time; unset disables it). `[balance].max_concurrency` and
+`[balance].target_timeout` bound the parallel per-target sampling.
 
 Secrets (the Kafka SASL password, the webhook auth value, the Postgres DSN) are
 sourced through env interpolation (`${VAR}`) or a `_cmd` key, so they never live
@@ -153,7 +171,7 @@ the logs.
 
 ## Container image
 
-A multi-stage `Dockerfile` builds an `alpine`-based image with all eight binaries.
+A multi-stage `Dockerfile` builds an `alpine`-based image with all nine binaries.
 The base ships a shell on purpose so config `_cmd` keys keep working; a
 distroless/scratch base has no shell, so use `${VAR}` interpolation or mounted
 secrets there instead.

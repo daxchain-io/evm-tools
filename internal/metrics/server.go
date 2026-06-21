@@ -29,11 +29,23 @@ type Health struct {
 	emitBlockedMillis atomic.Int64
 	// lagBlocks is head-minus-processed.
 	lagBlocks atomic.Uint64
+	// headBlockUnixMillis is the timestamp of the latest observed chain head block;
+	// headBlockKnown gates the staleness check until the first head block is seen.
+	headBlockUnixMillis atomic.Int64
+	headBlockKnown      atomic.Bool
 
 	// emitBlockedThreshold is the blocked duration beyond which /readyz flips to
 	// not-ready. lagThreshold is the lag bound. Both are set at construction.
 	emitBlockedThreshold time.Duration
 	lagThreshold         uint64
+	// headStalenessThreshold is the max age of the latest chain head block before
+	// /readyz flips not-ready; 0 disables the check. Set once at startup (before the
+	// server serves) via SetHeadStalenessThreshold, so it needs no synchronization.
+	headStalenessThreshold time.Duration
+
+	// nowFn supplies the wall clock for the staleness age computation; it is
+	// time.Now in production and overridable in tests. Set once at construction.
+	nowFn func() time.Time
 }
 
 // NewHealth builds a Health with the given readiness thresholds. A zero
@@ -42,9 +54,25 @@ func NewHealth(emitBlockedThreshold time.Duration, lagThreshold uint64) *Health 
 	h := &Health{
 		emitBlockedThreshold: emitBlockedThreshold,
 		lagThreshold:         lagThreshold,
+		nowFn:                time.Now,
 	}
 	h.live.Store(true)
 	return h
+}
+
+// SetHeadStalenessThreshold sets the maximum age of the latest chain head block
+// before /readyz reports not-ready; 0 (the default) disables the check. It is
+// configured once at startup before the server begins serving.
+func (h *Health) SetHeadStalenessThreshold(d time.Duration) { h.headStalenessThreshold = d }
+
+// SetHeadBlockTime records the timestamp of the latest observed chain head block.
+// The head-staleness readiness check compares this against the wall clock at probe
+// time, so /readyz flips not-ready once the chain head stops advancing — even if
+// the poll loop itself wedges, since the age grows by wall clock rather than by
+// poll updates.
+func (h *Health) SetHeadBlockTime(t time.Time) {
+	h.headBlockUnixMillis.Store(t.UnixMilli())
+	h.headBlockKnown.Store(true)
 }
 
 // SetLive marks the process live or unrecoverably dead.
@@ -78,6 +106,12 @@ func (h *Health) readyReason() (string, bool) {
 	}
 	if h.lagThreshold > 0 && h.lagBlocks.Load() > h.lagThreshold {
 		return "lag beyond threshold", false
+	}
+	if h.headStalenessThreshold > 0 && h.headBlockKnown.Load() {
+		headTime := time.UnixMilli(h.headBlockUnixMillis.Load())
+		if h.nowFn().Sub(headTime) >= h.headStalenessThreshold {
+			return "chain head stale (no new block within threshold)", false
+		}
 	}
 	return "", true
 }

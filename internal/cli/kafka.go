@@ -306,6 +306,31 @@ func parseProbeInterval(s, name string) (time.Duration, error) {
 	return d, nil
 }
 
+// parseDisableableDuration parses an optional duration that defaults to disabled:
+// "" / "0" / "0s" / "off" / "none" / "disabled" return 0 (feature off); anything
+// else must be a positive duration. Used for opt-in knobs such as the head-
+// staleness threshold, the per-target read timeout, and the redis dedup TTL.
+func parseDisableableDuration(s, name string) (time.Duration, error) {
+	t := strings.ToLower(strings.TrimSpace(s))
+	switch t {
+	case "", "0", "0s", "off", "none", "disabled":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(t)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", name, s, err)
+	}
+	// A negative duration is never a legitimate "disable" spelling — it is a typo
+	// for a positive value, and silently treating it as disabled would quietly turn
+	// off the safety knob the operator meant to enable. Reject it (matching
+	// parseRotationInterval / parseDurationDefault); 0 is reachable only via the
+	// explicit disable spellings above.
+	if d < 0 {
+		return 0, fmt.Errorf("%s: duration must be positive or a disable spelling (\"\"/\"0\"/\"off\"), got %q", name, s)
+	}
+	return d, nil
+}
+
 // topicSet returns the deduped, non-empty set of topics the sink may write to:
 // the default topic plus every per-type override. Used to scope the readiness
 // probe's metadata request to exactly what the sink produces to.

@@ -68,6 +68,12 @@ type postgresTarget struct {
 	Postgres PostgresConfig `mapstructure:"postgres"`
 }
 
+// redisTarget is the decode shape for evm-sink-redis.
+type redisTarget struct {
+	Shared `mapstructure:",squash"`
+	Redis  RedisConfig `mapstructure:"redis"`
+}
+
 // DecodeStream strict-decodes the shared keys plus the [stream] subtree into a
 // StreamFull. Unknown keys within those sections are a fatal error; the
 // [balance] section is ignored.
@@ -160,6 +166,16 @@ func (l *Loader) DecodePostgres(allowExec bool) (*PostgresFull, error) {
 	}
 	t.AllowExec = allowExec
 	return &PostgresFull{Shared: t.Shared, Postgres: t.Postgres}, nil
+}
+
+// DecodeRedis strict-decodes the shared keys plus the [redis] subtree.
+func (l *Loader) DecodeRedis(allowExec bool) (*RedisFull, error) {
+	var t redisTarget
+	if err := l.strictDecode("redis", &t, allowExec); err != nil {
+		return nil, err
+	}
+	t.AllowExec = allowExec
+	return &RedisFull{Shared: t.Shared, Redis: t.Redis}, nil
 }
 
 // strictDecode builds a settings map containing only the shared keys and the

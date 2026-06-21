@@ -80,6 +80,7 @@ func (t Transaction) ValueBig() (*big.Int, error) { return hexBig(t.Value) }
 type Block struct {
 	Number       string        `json:"number"`
 	Hash         string        `json:"hash"`
+	ParentHash   string        `json:"parentHash"`
 	Timestamp    string        `json:"timestamp"`
 	Transactions []Transaction `json:"transactions"`
 }

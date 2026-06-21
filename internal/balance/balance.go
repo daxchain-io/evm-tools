@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -74,6 +75,9 @@ type Healther interface {
 	SetRPCReachable(v bool)
 	SetEmitBlocked(d time.Duration)
 	SetLag(n uint64)
+	// SetHeadBlockTime feeds the latest chain head block timestamp to the
+	// head-staleness readiness check.
+	SetHeadBlockTime(t time.Time)
 }
 
 // Emitter is the record sink (record.Writer satisfies it). It returns an error
@@ -109,6 +113,13 @@ type Options struct {
 	Contracts       []ContractTarget
 	ERC721Balances  []ERC721BalanceTarget
 	ERC721Ownership []ERC721OwnershipTarget
+
+	// MaxConcurrency bounds how many targets are read (their RPC calls) in
+	// parallel within one sampling tick. <=0 falls back to a built-in default.
+	MaxConcurrency int
+	// TargetTimeout bounds a single target's read within a tick, so one slow or
+	// hung target cannot stall the whole cycle. 0 disables the per-target bound.
+	TargetTimeout time.Duration
 
 	// Backoff parameters for transient RPC failures.
 	BackoffBase time.Duration
@@ -164,12 +175,23 @@ type ERC721OwnershipTarget struct {
 	TokenID string // decimal or 0x-hex token ID, carried verbatim in the record
 }
 
+// defaultMaxConcurrency bounds parallel per-target reads when none is configured.
+const defaultMaxConcurrency = 8
+
 // Poller is a configured, ready-to-run state sampler.
 type Poller struct {
 	opts Options
 	log  *slog.Logger
 	now  func() time.Time
 
+	// maxConcurrency / targetTimeout govern the parallel per-target read phase.
+	maxConcurrency int
+	targetTimeout  time.Duration
+
+	// mu guards the prior/priorOwner change-detection maps. Reads run in parallel
+	// per tick, but change detection is applied sequentially; the lock keeps the
+	// maps safe even so (and makes changed/ownerChanged safe under any caller).
+	mu sync.Mutex
 	// prior holds the last-observed value per target key for change detection.
 	prior map[string]*big.Int
 	// priorOwner holds the last-observed ERC-721 owner per ownership target key.
@@ -214,16 +236,23 @@ func New(opts Options) (*Poller, error) {
 		opts.BackoffMax = 30 * time.Second
 	}
 
+	maxConcurrency := opts.MaxConcurrency
+	if maxConcurrency <= 0 {
+		maxConcurrency = defaultMaxConcurrency
+	}
+
 	// Wrap the emitter so every stdout write's blocked duration feeds the
 	// emit-blocked gauge and the readiness signal (lossless: measure only).
 	opts.Emitter = newBlockTrackingEmitter(opts.Emitter, opts.Metrics, opts.Health, nowFn)
 
 	return &Poller{
-		opts:       opts,
-		log:        logger,
-		now:        nowFn,
-		prior:      map[string]*big.Int{},
-		priorOwner: map[string]string{},
+		opts:           opts,
+		log:            logger,
+		now:            nowFn,
+		maxConcurrency: maxConcurrency,
+		targetTimeout:  opts.TargetTimeout,
+		prior:          map[string]*big.Int{},
+		priorOwner:     map[string]string{},
 	}, nil
 }
 
@@ -353,7 +382,7 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
-	var lastSampled uint64
+	var lastSampled, lastHeadTime uint64
 	haveSampled := false
 	for {
 		head, err := p.opts.Client.BlockNumber(ctx)
@@ -372,6 +401,15 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 		// otherwise the "rpc recovered" log never fires and the consecutive-failure
 		// /backoff gauges stay pinned at their failure values between samples.
 		p.onSuccess(&consecutiveFailures)
+		// Feed the head block timestamp to the chain-health gauge and the head-
+		// staleness readiness check on EVERY new block, not only when a sample is
+		// due — otherwise, with a large every_blocks cadence, the staleness clock
+		// would be pinned to the last SAMPLED block and /readyz could flip not-ready
+		// on a perfectly healthy, advancing chain between samples.
+		if head != lastHeadTime {
+			p.refreshHeadTime(ctx, head)
+			lastHeadTime = head
+		}
 		// Publish real lag — how far head has advanced since the last sample — so
 		// evm_balance_lag_blocks reflects sampling staleness rather than a constant
 		// 0. sampleAll resets it to 0 when a fresh sample is taken.
@@ -460,6 +498,18 @@ func (p *Poller) handleFailure(ctx context.Context, consecutiveFailures *int, er
 // sampleAll samples every configured target at the given head block, emitting a
 // *_sample for each and a *_change when the value moved. The block timestamp is
 // fetched once and shared by every record from this tick.
+//
+// Targets are read in parallel (bounded by MaxConcurrency, each read bounded by
+// TargetTimeout) so the tick's wall-clock is the slowest single target rather
+// than the sum of all of them, and one hung target cannot stall the cycle. The
+// read phase only performs RPC, sets gauges, and builds each *_sample plus a
+// deferred change-detection closure; emission and change detection then run
+// sequentially in a deterministic target order, so the synchronized writer sees
+// ordered, lossless output. Change detection only PEEKS at the prior value during
+// apply and the prior is COMMITTED forward only after a target's records have
+// emitted successfully, so a tick that fails (a read error, or a recoverable emit
+// error that backs off and retries) re-detects the change rather than silently
+// swallowing it.
 func (p *Poller) sampleAll(ctx context.Context, head uint64) error {
 	tag := rpc.BlockTag(head)
 
@@ -470,35 +520,34 @@ func (p *Poller) sampleAll(ctx context.Context, head uint64) error {
 		if bt, ok := chain.BlockTime(blk); ok {
 			ts = record.RFC3339(bt)
 			p.opts.Metrics.SetHeadBlockTime(bt, p.now())
+			p.opts.Health.SetHeadBlockTime(bt)
 		}
 	} else {
 		p.log.Debug("head header fetch failed; record timestamp omitted this tick",
 			"block", head, "error_type", string(rpc.Classify(err)))
 	}
 
-	for _, n := range p.opts.Native {
-		if err := p.sampleNative(ctx, n, head, tag, ts, blockHash); err != nil {
-			return err
-		}
+	tasks := p.buildTasks(head, tag, ts, blockHash)
+	results, err := p.readConcurrently(ctx, tasks)
+	if err != nil {
+		return err
 	}
-	for _, e := range p.opts.ERC20 {
-		if err := p.sampleERC20(ctx, e, head, tag, ts, blockHash); err != nil {
-			return err
-		}
-	}
-	for _, b := range p.opts.ERC721Balances {
-		if err := p.sampleERC721Balance(ctx, b, head, tag, ts, blockHash); err != nil {
-			return err
-		}
-	}
-	for _, o := range p.opts.ERC721Ownership {
-		if err := p.sampleERC721Ownership(ctx, o, head, tag, ts, blockHash); err != nil {
-			return err
-		}
-	}
-	for _, c := range p.opts.Contracts {
-		if err := p.sampleContract(ctx, c, head, tag, ts, blockHash); err != nil {
-			return err
+
+	// Apply (emit) in deterministic target order. Change detection peeks here and
+	// the prior is committed forward only after the sample and change have emitted,
+	// so an emit failure that backs off and retries re-detects the change.
+	for _, rs := range results {
+		for _, r := range rs {
+			if eerr := p.emitEnv(r.sample); eerr != nil {
+				return eerr
+			}
+			changeEnv, hasChange, commit := r.applyChange()
+			if hasChange {
+				if eerr := p.emitEnv(changeEnv); eerr != nil {
+					return eerr // prior NOT committed: a retry re-detects the change
+				}
+			}
+			commit()
 		}
 	}
 
@@ -507,6 +556,168 @@ func (p *Poller) sampleAll(ctx context.Context, head uint64) error {
 	p.opts.Metrics.SetLagBlocks(0)
 	p.opts.Health.SetLag(0)
 	return nil
+}
+
+// reading is one target observation produced by the concurrent read phase: the
+// *_sample envelope to emit unconditionally, plus applyChange which (run in the
+// sequential apply phase) performs change detection against the prior value and
+// returns the *_change envelope when the value moved.
+type reading struct {
+	sample record.Envelope
+	// applyChange runs in the sequential apply phase: it peeks the prior value,
+	// returns the *_change envelope (when the value moved) and a commit func that
+	// the apply loop calls only AFTER the sample and change have emitted, advancing
+	// the change-detection prior. Deferring the commit keeps a failed-and-retried
+	// tick from skipping an undelivered change.
+	applyChange func() (changeEnv record.Envelope, hasChange bool, commit func())
+}
+
+// sampleTask reads one target and returns its readings (a contract target with
+// several observed fields yields several). It performs only RPC and gauge/sample
+// construction; it never emits.
+type sampleTask func(ctx context.Context) ([]reading, error)
+
+// buildTasks assembles one read task per configured target, in the deterministic
+// emission order (native, erc20, erc721 balances, erc721 ownership, contracts).
+func (p *Poller) buildTasks(head uint64, tag, ts, blockHash string) []sampleTask {
+	var tasks []sampleTask
+	for _, n := range p.opts.Native {
+		tasks = append(tasks, func(ctx context.Context) ([]reading, error) {
+			r, err := p.readNative(ctx, n, head, tag, ts, blockHash)
+			if err != nil {
+				return nil, err
+			}
+			return []reading{r}, nil
+		})
+	}
+	for _, e := range p.opts.ERC20 {
+		tasks = append(tasks, func(ctx context.Context) ([]reading, error) {
+			r, err := p.readERC20(ctx, e, head, tag, ts, blockHash)
+			if err != nil {
+				return nil, err
+			}
+			return []reading{r}, nil
+		})
+	}
+	for _, b := range p.opts.ERC721Balances {
+		tasks = append(tasks, func(ctx context.Context) ([]reading, error) {
+			r, err := p.readERC721Balance(ctx, b, head, tag, ts, blockHash)
+			if err != nil {
+				return nil, err
+			}
+			return []reading{r}, nil
+		})
+	}
+	for _, o := range p.opts.ERC721Ownership {
+		tasks = append(tasks, func(ctx context.Context) ([]reading, error) {
+			r, err := p.readERC721Ownership(ctx, o, head, tag, ts, blockHash)
+			if err != nil {
+				return nil, err
+			}
+			return []reading{r}, nil
+		})
+	}
+	for _, c := range p.opts.Contracts {
+		tasks = append(tasks, func(ctx context.Context) ([]reading, error) {
+			return p.readContract(ctx, c, head, tag, ts, blockHash)
+		})
+	}
+	return tasks
+}
+
+// readConcurrently runs the read tasks with bounded parallelism, each bounded by
+// the per-target timeout, and returns their readings in task order. If any task
+// failed, no readings are returned and the most-severe error is surfaced (a
+// permanent misconfiguration outranks a transient failure) so the caller's
+// handler fails fast or backs off exactly as the sequential path did — and,
+// crucially, nothing is emitted and no prior value is advanced on a failed tick.
+func (p *Poller) readConcurrently(ctx context.Context, tasks []sampleTask) ([][]reading, error) {
+	results := make([][]reading, len(tasks))
+	errs := make([]error, len(tasks))
+
+	limit := p.maxConcurrency
+	if limit <= 0 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, task := range tasks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, task sampleTask) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			tctx := ctx
+			if p.targetTimeout > 0 {
+				var cancel context.CancelFunc
+				tctx, cancel = context.WithTimeout(ctx, p.targetTimeout)
+				defer cancel()
+			}
+			rs, err := task(tctx)
+			results[i] = rs
+			errs[i] = err
+		}(i, task)
+	}
+	wg.Wait()
+
+	if err := selectError(errs); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// selectError reduces per-target read errors to the one the caller should act on:
+// a permanent misconfiguration (fail fast) outranks any transient failure
+// (backoff). Read tasks never produce an emit error, so only those two classes
+// occur here. Returns nil when every task succeeded.
+func selectError(errs []error) error {
+	var first error
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		var pe *permanentErr
+		if errors.As(err, &pe) {
+			return err
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// emitEnv emits one envelope through the synchronized writer and counts it,
+// wrapping a write failure as an emitErr so a broken downstream is terminal.
+func (p *Poller) emitEnv(env record.Envelope) error {
+	if err := p.opts.Emitter.Emit(env); err != nil {
+		return &emitErr{err: err}
+	}
+	switch env.Type {
+	case record.TypeBalanceChange, record.TypeContractChange, record.TypeOwnershipChange:
+		p.opts.Metrics.IncChangeRecord()
+	default:
+		p.opts.Metrics.IncSampleRecord()
+	}
+	return nil
+}
+
+// refreshHeadTime fetches the head block header and publishes its timestamp to the
+// chain-health gauge and the head-staleness readiness check. It is best-effort: a
+// header fetch failure is logged at debug and never fails the poll. Block cadence
+// calls this on every new block so the staleness clock tracks the actual head even
+// between samples (interval cadence does the same inside sampleAll every tick).
+func (p *Poller) refreshHeadTime(ctx context.Context, head uint64) {
+	blk, err := p.opts.Client.BlockByNumberUint(ctx, head, false)
+	if err != nil {
+		p.log.Debug("head header fetch failed; chain-health/staleness gauges not updated this poll",
+			"block", head, "error_type", string(rpc.Classify(err)))
+		return
+	}
+	if bt, ok := chain.BlockTime(blk); ok {
+		p.opts.Metrics.SetHeadBlockTime(bt, p.now())
+		p.opts.Health.SetHeadBlockTime(bt)
+	}
 }
 
 // redactedEndpoint returns the log-safe RPC endpoint, or "" when the client does
@@ -525,13 +736,15 @@ func (p *Poller) cadenceDesc() string {
 	return p.opts.Cadence.Interval.String()
 }
 
-// changed reports whether a target's value moved since the last tick and updates
-// the stored prior. The first observation is never a change (there is nothing to
-// compare against); it returns (false, nil) and seeds the prior. Subsequent
-// observations return (moved, previousValue).
-func (p *Poller) changed(key string, cur *big.Int) (bool, *big.Int) {
+// peekChanged reports whether cur differs from the stored prior WITHOUT advancing
+// the prior. The first observation (no prior) is never a change. Pair it with
+// commitValue, which advances the prior only after the tick's records have been
+// emitted — so a tick that fails and is retried re-detects the change rather than
+// silently swallowing it.
+func (p *Poller) peekChanged(key string, cur *big.Int) (bool, *big.Int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	prev, ok := p.prior[key]
-	p.prior[key] = new(big.Int).Set(cur)
 	if !ok {
 		return false, nil
 	}
@@ -541,6 +754,15 @@ func (p *Poller) changed(key string, cur *big.Int) (bool, *big.Int) {
 	return true, prev
 }
 
+// commitValue advances the stored prior to cur. It is called only after a target's
+// sample (and change, if any) have been successfully emitted, so the change-
+// detection state never moves past an undelivered record.
+func (p *Poller) commitValue(key string, cur *big.Int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.prior[key] = new(big.Int).Set(cur)
+}
+
 // ownerChanged reports whether an ERC-721 token's owner moved since the last
 // tick and updates the stored prior. Like changed, the first observation is
 // never a change: it returns (false, "") and seeds the prior. Owners are
@@ -548,8 +770,17 @@ func (p *Poller) changed(key string, cur *big.Int) (bool, *big.Int) {
 // is not mistaken for a transfer. Subsequent observations return
 // (moved, previousOwner) with the previous owner in its originally observed form.
 func (p *Poller) ownerChanged(key, cur string) (bool, string) {
+	moved, prev := p.peekOwnerChanged(key, cur)
+	p.commitOwner(key, cur)
+	return moved, prev
+}
+
+// peekOwnerChanged is the ownership analogue of peekChanged: it reports whether
+// the owner moved without advancing the prior. Owners compare case-insensitively.
+func (p *Poller) peekOwnerChanged(key, cur string) (bool, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	prev, ok := p.priorOwner[key]
-	p.priorOwner[key] = cur
 	if !ok {
 		return false, ""
 	}
@@ -557,6 +788,13 @@ func (p *Poller) ownerChanged(key, cur string) (bool, string) {
 		return false, prev
 	}
 	return true, prev
+}
+
+// commitOwner advances the stored owner prior, called only after a tick emits.
+func (p *Poller) commitOwner(key, cur string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.priorOwner[key] = cur
 }
 
 // backoffFor computes the exponential backoff (base * 2^(n-1), capped) with full

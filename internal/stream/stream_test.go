@@ -29,6 +29,10 @@ type fakeClient struct {
 	// blocks maps block number -> block (for native transfer tests).
 	blocks   map[uint64]*rpc.Block
 	receipts map[string]*rpc.Receipt
+	// blockByNum, when set, takes precedence over blocks and lets a test return a
+	// different block (hash/parentHash) per call — used to simulate a reorg where a
+	// height's canonical hash changes between polls.
+	blockByNum func(n uint64) *rpc.Block
 
 	getLogsCalls []rpc.LogFilter
 }
@@ -49,6 +53,9 @@ func (c *fakeClient) BlockNumber(context.Context) (uint64, error) {
 func (c *fakeClient) BlockByNumberUint(_ context.Context, n uint64, _ bool) (*rpc.Block, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.blockByNum != nil {
+		return c.blockByNum(n), nil
+	}
 	if b, ok := c.blocks[n]; ok {
 		return b, nil
 	}

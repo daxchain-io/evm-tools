@@ -88,12 +88,21 @@ type NativeTransfersConfig struct {
 
 // StreamConfig is the [stream] section for evm-stream.
 type StreamConfig struct {
-	FromBlock       string                `mapstructure:"from_block"`
-	PollInterval    string                `mapstructure:"poll_interval"`
-	LogChunkBlocks  int                   `mapstructure:"log_chunk_blocks"`
-	Metrics         MetricsConfig         `mapstructure:"metrics"`
-	Contracts       []StreamContract      `mapstructure:"contracts"`
-	NativeTransfers NativeTransfersConfig `mapstructure:"native_transfers"`
+	FromBlock      string `mapstructure:"from_block"`
+	PollInterval   string `mapstructure:"poll_interval"`
+	LogChunkBlocks int    `mapstructure:"log_chunk_blocks"`
+	// ReorgDepth is the maximum chain reorganization (in blocks) the stream
+	// detects and rewinds across near the head; on a detected reorg it emits a
+	// reorg marker and re-scans the new canonical chain. 0 disables reorg handling.
+	ReorgDepth int `mapstructure:"reorg_depth"`
+	// HeadStalenessThreshold flips /readyz to not-ready when the chain head block
+	// ages past this duration (the head stopped advancing). A duration like "90s";
+	// "" / "0" / "off" disables the check. Chain-agnostic, so it has no default —
+	// set it to roughly 5-10x the chain's block time.
+	HeadStalenessThreshold string                `mapstructure:"head_staleness_threshold"`
+	Metrics                MetricsConfig         `mapstructure:"metrics"`
+	Contracts              []StreamContract      `mapstructure:"contracts"`
+	NativeTransfers        NativeTransfersConfig `mapstructure:"native_transfers"`
 }
 
 // BalanceNative is one configured [[balance.native]] entry.
@@ -138,14 +147,22 @@ type BalanceERC721Ownership struct {
 // BalanceConfig is the [balance] section for evm-balance. Sampling cadence is
 // either Interval or EveryBlocks; exactly one must be set (validated later).
 type BalanceConfig struct {
-	Interval        string                   `mapstructure:"interval"`
-	EveryBlocks     int                      `mapstructure:"every_blocks"`
-	Metrics         MetricsConfig            `mapstructure:"metrics"`
-	Native          []BalanceNative          `mapstructure:"native"`
-	ERC20           []BalanceERC20           `mapstructure:"erc20"`
-	Contracts       []BalanceContract        `mapstructure:"contracts"`
-	ERC721Balances  []BalanceERC721Balances  `mapstructure:"erc721_balances"`
-	ERC721Ownership []BalanceERC721Ownership `mapstructure:"erc721_ownership"`
+	Interval    string `mapstructure:"interval"`
+	EveryBlocks int    `mapstructure:"every_blocks"`
+	// MaxConcurrency bounds how many targets are read in parallel each tick; <=0
+	// uses a built-in default. TargetTimeout bounds a single target's read so one
+	// slow/hung target cannot stall the cycle ("" / "0" / "off" disables it).
+	MaxConcurrency int    `mapstructure:"max_concurrency"`
+	TargetTimeout  string `mapstructure:"target_timeout"`
+	// HeadStalenessThreshold flips /readyz to not-ready when the chain head block
+	// ages past this duration. A duration like "90s"; "" / "0" / "off" disables it.
+	HeadStalenessThreshold string                   `mapstructure:"head_staleness_threshold"`
+	Metrics                MetricsConfig            `mapstructure:"metrics"`
+	Native                 []BalanceNative          `mapstructure:"native"`
+	ERC20                  []BalanceERC20           `mapstructure:"erc20"`
+	Contracts              []BalanceContract        `mapstructure:"contracts"`
+	ERC721Balances         []BalanceERC721Balances  `mapstructure:"erc721_balances"`
+	ERC721Ownership        []BalanceERC721Ownership `mapstructure:"erc721_ownership"`
 }
 
 // KafkaSASLConfig holds the optional SASL authentication for the Kafka sink.
@@ -377,6 +394,36 @@ type PostgresConfig struct {
 	Metrics                MetricsConfig `mapstructure:"metrics"`
 }
 
+// RedisConfig is the [redis] section for evm-sink-redis. URL is the minimum and is
+// a SECRET (it may carry a password): source it through the shared env-interpolation
+// / _cmd machinery (url_cmd or ${VAR}) so it never lands in the file, and it is
+// never logged. Stream is the destination stream key.
+type RedisConfig struct {
+	// URL is the connection URL (redis:// or rediss:// for TLS); a secret.
+	URL string `mapstructure:"url"`
+	// Stream is the destination Redis Stream key (required).
+	Stream string `mapstructure:"stream"`
+	// Field is the stream-entry field that carries the JSONL record (default "data").
+	Field string `mapstructure:"field"`
+	// MaxLen approximately caps the stream length (XADD MAXLEN ~ N); 0 keeps all.
+	MaxLen int `mapstructure:"max_len"`
+	// Dedup enables idempotent delivery: a per-record dedup marker keyed on the
+	// record's dedup identity gates the XADD so a retry (or overlapping re-run) does
+	// not append a duplicate entry. On by default.
+	Dedup *bool `mapstructure:"dedup"`
+	// DedupTTL bounds how long dedup markers live ("" / "0" / "off" = no expiry, so
+	// dedup holds forever at the cost of growing key memory). A duration like "24h".
+	DedupTTL string `mapstructure:"dedup_ttl"`
+	// BackoffBase / BackoffMax bound the blocking retry backoff on a transient
+	// failure. Strings so "500ms" / "30s" parse; empty uses built-in defaults.
+	BackoffBase string `mapstructure:"backoff_base"`
+	BackoffMax  string `mapstructure:"backoff_max"`
+	// ReadinessProbeInterval is how often an active PING refreshes /readyz while
+	// idle. A duration like "15s" (default); "0"/"off" disables it.
+	ReadinessProbeInterval string        `mapstructure:"readiness_probe_interval"`
+	Metrics                MetricsConfig `mapstructure:"metrics"`
+}
+
 // StreamFull is the fully decoded configuration for evm-stream: shared keys
 // plus the [stream] subtree.
 type StreamFull struct {
@@ -427,6 +474,13 @@ type AWSSNSFull struct {
 type PostgresFull struct {
 	Shared
 	Postgres PostgresConfig
+}
+
+// RedisFull is the fully decoded configuration for evm-sink-redis: shared keys
+// plus the [redis] subtree.
+type RedisFull struct {
+	Shared
+	Redis RedisConfig
 }
 
 // BalanceFull is the fully decoded configuration for evm-balance: shared keys

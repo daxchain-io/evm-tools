@@ -47,6 +47,7 @@ type Metrics interface {
 	IncEventRecord(contractName, contractAddr, eventName string)
 	IncNativeTransferRecord()
 	IncSkippedLog()
+	IncReorgsDetected()
 	IncReconnects()
 	ObserveLoop(d time.Duration)
 	SetConsecutiveFailures(n int)
@@ -59,6 +60,9 @@ type Healther interface {
 	SetRPCReachable(v bool)
 	SetEmitBlocked(d time.Duration)
 	SetLag(n uint64)
+	// SetHeadBlockTime feeds the latest chain head block timestamp to the
+	// head-staleness readiness check.
+	SetHeadBlockTime(t time.Time)
 }
 
 // emitErr marks a failure that originated from the output Emitter (a broken
@@ -94,6 +98,10 @@ type Options struct {
 	LogChunkBlocks uint64
 	FromBlock      string // "latest" or a decimal block number
 
+	// ReorgDepth is the maximum chain reorganization (in blocks) the stream
+	// detects and rewinds across near the head. 0 disables reorg handling.
+	ReorgDepth uint64
+
 	// Backoff parameters for transient RPC failures.
 	BackoffBase time.Duration
 	BackoffMax  time.Duration
@@ -120,6 +128,10 @@ type Stream struct {
 	// undecodable log, so the warning is logged once per pair (then debug) rather
 	// than flooding stderr on every matched log. Single-goroutine access.
 	skippedSeen map[string]bool
+
+	// reorg tracks recent canonical block hashes for reorg detection; nil when
+	// reorg handling is disabled (ReorgDepth == 0). Single-goroutine access.
+	reorg *reorgTracker
 }
 
 // New builds a Stream from resolved options. It validates the derived state but
@@ -168,6 +180,7 @@ func New(opts Options) (*Stream, error) {
 		now:         nowFn,
 		byAddrTopic: map[string]map[string]eventABI{},
 		skippedSeen: map[string]bool{},
+		reorg:       newReorgTracker(opts.ReorgDepth),
 	}
 	topicSeen := map[string]bool{}
 	for _, c := range opts.Contracts {
@@ -286,7 +299,7 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 		return nextBlock, err
 	}
 	s.opts.Metrics.SetHead(head)
-	s.updateHeadBlockTime(ctx, head)
+	headBlk := s.updateHeadBlockTime(ctx, head)
 
 	// A backward step in head means the endpoint is serving a stale view (a
 	// load balancer routed to a lagging node, or a node rolled back). This is
@@ -298,6 +311,21 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 			"from", s.lastHead, "to", head)
 	}
 	s.lastHead = head
+
+	// Reorg check at the processing frontier before extending it — and BEFORE the
+	// no-op short-circuit below, so an in-place tip reorg (the head not advancing
+	// past the orphaned tip) is still detected rather than skipped. A detected
+	// reorg emits a reorg marker over the orphaned range and rewinds nextBlock to
+	// one past the fork point, so the loop below re-scans the new canonical chain
+	// (re-emitting canonical events/transfers, which carry reorg-stable dedup keys
+	// and so dedup against their first emission).
+	if s.reorgEnabled() {
+		nb, _, rerr := s.handleReorgIfAny(ctx, nextBlock, head, headBlk)
+		if rerr != nil {
+			return nextBlock, rerr
+		}
+		nextBlock = nb
+	}
 
 	if nextBlock > head {
 		// Ahead of head (e.g. from_block in the future, or a transient
@@ -326,6 +354,12 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 		s.opts.Metrics.SetLastProcessedBlock(end)
 		cur = end + 1
 	}
+	// Record the canonical head hash now that [.., head] is fully processed, so
+	// the next poll can reorg-check the new frontier against it. Tracking only the
+	// confirmed tip keeps reorg detection nearly free in steady state.
+	if headBlk != nil {
+		s.reorg.recordHash(head, headBlk.Hash, head)
+	}
 	return cur, nil
 }
 
@@ -336,16 +370,20 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 // detectable from metrics alone (design.md, "Chain health"). This is a
 // best-effort health signal: a header fetch failure is logged at debug and does
 // not fail the poll, since core progress does not depend on it.
-func (s *Stream) updateHeadBlockTime(ctx context.Context, head uint64) {
+func (s *Stream) updateHeadBlockTime(ctx context.Context, head uint64) *rpc.Block {
 	blk, err := s.opts.Client.BlockByNumberUint(ctx, head, false)
 	if err != nil {
 		s.log.Debug("head block header fetch failed; chain-health gauges not updated",
 			"block", head, "error_type", string(rpc.Classify(err)))
-		return
+		return nil
 	}
 	if bt, ok := chain.BlockTime(blk); ok {
 		s.opts.Metrics.SetHeadBlockTime(bt, s.now())
+		// Feed the head-staleness readiness check: /readyz flips not-ready when the
+		// head block ages past the configured threshold.
+		s.opts.Health.SetHeadBlockTime(bt)
 	}
+	return blk
 }
 
 // processRange handles one inclusive [from,to] block range: it queries matching
@@ -445,11 +483,12 @@ func (s *Stream) emitLog(l rpc.Log) error {
 		return nil
 	}
 	if l.Removed {
-		// A log the node is retracting because its block was reorged out. The loop
-		// advances head monotonically and does not re-scan, so emitting it would
-		// record an event for a transaction that no longer exists; skip it. (Full
-		// reorg handling — retraction + re-scan of replacement blocks — is a
-		// documented limitation; see docs/design.md "Operational notes".)
+		// A log the node is retracting because its block was reorged out. Reorgs are
+		// handled at the head level (see reorg.go): when the processing frontier is
+		// orphaned the stream emits a reorg marker over the orphaned range and
+		// re-scans the new canonical chain. Emitting this retraction log here would
+		// double-count, so skip it — the head-level handler is the single source of
+		// reorg truth.
 		s.log.Debug("skipping removed (reorged) log", "contract", l.Address, "block", l.BlockNumber)
 		return nil
 	}
