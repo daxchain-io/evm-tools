@@ -21,6 +21,8 @@ go test ./...                  # unit tests (golden + httptest); live-node tests
 go vet ./...
 golangci-lint run              # v2 config in .golangci.yml
 gofmt -l . && go mod tidy      # must be clean
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...   # CI runs this as a job
+go test ./internal/record -run='^$' -fuzz=FuzzReaderNext -fuzztime=20s  # fuzz the JSONL parser
 goreleaser check               # validate release config
 goreleaser release --snapshot --clean   # local release dry-run
 ```

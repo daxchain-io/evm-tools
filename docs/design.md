@@ -1303,6 +1303,8 @@ The CI baseline:
 - `go test ./...`.
 - `go build ./...`.
 - `golangci-lint run` once the first Go packages exist.
+- `govulncheck ./...` (a separate job) to fail on a known vulnerability in the
+  module or its dependencies.
 - Markdown linting (`markdownlint-cli2`) for README and docs.
 - Shell linting (`shellcheck`) for installer scripts.
 - `goreleaser check` to validate the release config, plus a
@@ -1320,7 +1322,10 @@ omitted-empty fields, and `schema_version` — so the contract cannot drift
 silently. RPC-dependent code (mTLS transport, chunked `eth_getLogs`, the metrics
 endpoint) is unit-tested against an in-process `httptest` server with generated
 certs in the default `go test ./...` run; tests that need a real node
-(`anvil`/`geth --dev`) live behind a build tag and run in a separate CI job.
+(`anvil`/`geth --dev`) live behind a build tag and run in a separate CI job. The
+JSONL `record.Reader` — the parser for untrusted producer output — additionally
+has a `go test -fuzz` target (`FuzzReaderNext`) whose seed corpus runs as
+regression cases in the default test run.
 
 ## Release and Distribution
 
