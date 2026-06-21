@@ -15,14 +15,22 @@ import (
 // EVM_TOOLS_RPC_URL binds rpc.url.
 const EnvPrefix = "EVM_TOOLS"
 
-// Default config file locations searched when --config is not given. A
-// user-level workstation config takes precedence over a host-level one.
-var defaultSearchPaths = []string{
-	filepath.Join(userConfigDir(), "evm-tools"),
-	"/etc/evm-tools",
+// searchPaths returns the directories searched, in order, for the config file
+// when --config is not given; the first one containing an evm-tools config file
+// wins. A home-directory ~/.evm-tools takes precedence, then the OS/XDG user
+// config directory, then a host-level /etc location. It is computed per call (not
+// a package var) so a HOME set after process start — common in containers — is
+// honored.
+func searchPaths() []string {
+	return []string{
+		filepath.Join(homeDir(), ".evm-tools"),
+		filepath.Join(userConfigDir(), "evm-tools"),
+		"/etc/evm-tools",
+	}
 }
 
-// configBaseName is the file stem searched for (e.g. evm-tools.toml).
+// configBaseName is the file stem searched for, so the discovered file is
+// e.g. ~/.evm-tools/evm-tools.toml.
 const configBaseName = "evm-tools"
 
 // Loader assembles a *viper.Viper with the suite's precedence rules wired up.
@@ -123,7 +131,7 @@ func readConfigFile(v *viper.Viper, explicit string) error {
 	}
 
 	v.SetConfigName(configBaseName)
-	for _, p := range defaultSearchPaths {
+	for _, p := range searchPaths() {
 		v.AddConfigPath(p)
 	}
 	if err := v.ReadInConfig(); err != nil {
@@ -284,4 +292,13 @@ func userConfigDir() string {
 		return d
 	}
 	return filepath.Join(os.Getenv("HOME"), ".config")
+}
+
+// homeDir returns the user's home directory, defaulting to $HOME when
+// os.UserHomeDir fails.
+func homeDir() string {
+	if d, err := os.UserHomeDir(); err == nil {
+		return d
+	}
+	return os.Getenv("HOME")
 }

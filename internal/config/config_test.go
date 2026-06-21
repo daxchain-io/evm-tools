@@ -263,3 +263,35 @@ func TestAllowExecThreaded(t *testing.T) {
 		t.Error("AllowExec should be true")
 	}
 }
+
+// TestDefaultSearchDiscoversHomeDotDir verifies the default discovery path picks
+// up ~/.evm-tools/evm-tools.toml when --config is not given (HOME pointed at a
+// temp dir so the test is hermetic).
+func TestDefaultSearchDiscoversHomeDotDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Keep the XDG/OS user-config dir out of the way so the ~/.evm-tools path is
+	// unambiguously the one that wins on every platform.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-empty"))
+
+	dir := filepath.Join(home, ".evm-tools")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := "chain = \"home-dot-dir\"\n[rpc]\nurl = \"https://rpc.example\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "evm-tools.toml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	l, err := New(Options{}) // no ConfigFile -> default search
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg, err := l.DecodeStream(false)
+	if err != nil {
+		t.Fatalf("DecodeStream: %v", err)
+	}
+	if cfg.Chain != "home-dot-dir" {
+		t.Errorf("expected config discovered from ~/.evm-tools, got chain=%q", cfg.Chain)
+	}
+}

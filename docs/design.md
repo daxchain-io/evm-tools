@@ -423,13 +423,18 @@ metrics settings live at the top level; each tool owns a namespaced section.
 shared settings plus `[balance]`. Unknown sections owned by another tool must
 not prevent the current command from running.
 
-Default config locations:
+Default config locations, searched in this order (the first directory holding an
+`evm-tools.toml` wins):
 
-- `~/.config/evm-tools/` for a user-level workstation config.
+- `~/.evm-tools/` — the primary home-directory location (e.g.
+  `~/.evm-tools/evm-tools.toml`).
+- `~/.config/evm-tools/` (or the OS user-config dir) for an XDG-style workstation
+  config.
 - `/etc/evm-tools/` for a host-level or container config.
 
-Every command also accepts `-c`/`--config` so scripts and deployments can point
-at an explicit file.
+The home directory is resolved at startup, so a `HOME` set after the process
+starts (common in containers) is honored. Every command also accepts
+`-c`/`--config` so scripts and deployments can point at an explicit file.
 
 ### Precedence
 

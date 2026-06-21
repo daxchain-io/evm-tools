@@ -84,6 +84,12 @@ sinks read the shared `[metrics]`/`[log]` settings plus their own section
 (`[kafka]`, `[webhook]`, `[file]`, `[aws_sqs]`, `[aws_sns]`, `[postgres]`, or
 `[redis]`), and ignore the producer-only sections.
 
+Without `-c`/`--config`, each tool auto-discovers a config file from these
+locations, in order (first match wins): `~/.evm-tools/evm-tools.toml`, then
+`~/.config/evm-tools/evm-tools.toml` (the OS user-config dir), then
+`/etc/evm-tools/evm-tools.toml`. So the simplest setup is to drop your file at
+`~/.evm-tools/evm-tools.toml` and just run `evm-stream run` (no `-c` needed).
+
 ```toml
 # evm-sink-kafka
 [kafka]
