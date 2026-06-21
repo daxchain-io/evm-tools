@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/chain"
+	"github.com/daxchain-io/evm-tools/internal/checkpoint"
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
@@ -84,6 +85,14 @@ type Emitter interface {
 	Emit(env record.Envelope) error
 }
 
+// Checkpointer persists and restores the resume cursor. *checkpoint.Store
+// satisfies it; a nil Checkpointer disables resume (the stream starts from
+// from_block). Tests substitute a fake.
+type Checkpointer interface {
+	Load() (checkpoint.Cursor, bool, error)
+	Save(checkpoint.Cursor) error
+}
+
 // Options configures a Stream.
 type Options struct {
 	Client    Client
@@ -103,6 +112,11 @@ type Options struct {
 	// ReorgDepth is the maximum chain reorganization (in blocks) the stream
 	// detects and rewinds across near the head. 0 disables reorg handling.
 	ReorgDepth uint64
+
+	// Checkpoint, when set, persists the resume cursor each poll and restores it
+	// on startup so a restart resumes gap-free instead of jumping to the head. nil
+	// disables it (the stream starts from FromBlock).
+	Checkpoint Checkpointer
 
 	// Backoff parameters for transient RPC failures.
 	BackoffBase time.Duration
@@ -243,6 +257,9 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
+	// lastSaved is the highest block already persisted to the checkpoint, so an
+	// idle poll (no new blocks) does not rewrite the cursor file every interval.
+	lastSaved := from
 	// Run an initial poll immediately rather than waiting a full interval.
 	for {
 		loopStart := s.now()
@@ -288,6 +305,20 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 		s.opts.Metrics.SetConsecutiveFailures(0)
 		s.opts.Metrics.SetBackoffSeconds(0)
 		nextBlock = next
+		// Persist the resume cursor: the highest fully-processed block (next-1).
+		// Save whenever the frontier CHANGED — crucially including a DECREASE after a
+		// chain-shortening reorg (which rewinds next below the last save). Persisting
+		// the lowered value keeps a restart from resuming past the now-orphaned
+		// blocks and silently skipping them. An unchanged frontier (an idle poll) is
+		// skipped so the cursor file is not rewritten every interval. Best-effort: a
+		// save failure is logged and re-attempted next poll.
+		if s.opts.Checkpoint != nil && shouldSaveCheckpoint(next, lastSaved) {
+			if serr := s.opts.Checkpoint.Save(checkpoint.Cursor{ChainID: s.opts.ChainID, LastBlock: next - 1}); serr != nil {
+				s.log.Warn("checkpoint save failed; will retry next poll", "error", serr.Error())
+			} else {
+				lastSaved = next
+			}
+		}
 
 		select {
 		case <-ctx.Done():
@@ -295,6 +326,14 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// shouldSaveCheckpoint reports whether the resume cursor should be (re)written for
+// the new frontier next (the next unprocessed block). It persists any CHANGE to
+// the frontier — including a decrease after a chain-shortening reorg — while
+// skipping an unchanged idle poll, and guards next == 0 so next-1 never underflows.
+func shouldSaveCheckpoint(next, lastSaved uint64) bool {
+	return next > 0 && next != lastSaved
 }
 
 // pollOnce reads the head, processes [nextBlock, head] (chunked when behind),
@@ -673,6 +712,24 @@ func (s *Stream) emitNative(blk *rpc.Block, blkNum uint64, ts string, t nativeTr
 // a new block arrives, which the loop already handles (nextBlock > head is a
 // no-op).
 func (s *Stream) resolveStart(ctx context.Context) (uint64, error) {
+	// A persisted cursor wins over from_block so a restart resumes gap-free. It is
+	// ignored (with a warning) when it belongs to a different chain — e.g. a reused
+	// path after a config change — so a stale cursor can never silently misalign
+	// the stream. A missing cursor (first run) falls through to from_block.
+	if s.opts.Checkpoint != nil {
+		cur, ok, err := s.opts.Checkpoint.Load()
+		switch {
+		case err != nil:
+			s.log.Warn("checkpoint load failed; falling back to from_block", "error", err.Error())
+		case ok && cur.ChainID != 0 && cur.ChainID != s.opts.ChainID:
+			s.log.Warn("ignoring checkpoint from a different chain",
+				"checkpoint_chain_id", cur.ChainID, "configured_chain_id", s.opts.ChainID)
+		case ok:
+			s.log.Info("resuming from checkpoint", "from_block", cur.LastBlock+1)
+			return cur.LastBlock + 1, nil
+		}
+	}
+
 	fb := strings.TrimSpace(s.opts.FromBlock)
 	if fb == "" || strings.EqualFold(fb, "latest") {
 		head, err := s.opts.Client.BlockNumber(ctx)

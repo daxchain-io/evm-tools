@@ -99,10 +99,15 @@ type StreamConfig struct {
 	// ages past this duration (the head stopped advancing). A duration like "90s";
 	// "" / "0" / "off" disables the check. Chain-agnostic, so it has no default —
 	// set it to roughly 5-10x the chain's block time.
-	HeadStalenessThreshold string                `mapstructure:"head_staleness_threshold"`
-	Metrics                MetricsConfig         `mapstructure:"metrics"`
-	Contracts              []StreamContract      `mapstructure:"contracts"`
-	NativeTransfers        NativeTransfersConfig `mapstructure:"native_transfers"`
+	HeadStalenessThreshold string `mapstructure:"head_staleness_threshold"`
+	// CheckpointFile is the path to a durable resume cursor. When set, the stream
+	// persists the highest processed block each poll and resumes from it on
+	// restart (gap-free) instead of jumping to the head; the cursor takes
+	// precedence over from_block. Empty (the default) disables resume.
+	CheckpointFile  string                `mapstructure:"checkpoint_file"`
+	Metrics         MetricsConfig         `mapstructure:"metrics"`
+	Contracts       []StreamContract      `mapstructure:"contracts"`
+	NativeTransfers NativeTransfersConfig `mapstructure:"native_transfers"`
 }
 
 // BalanceNative is one configured [[balance.native]] entry.

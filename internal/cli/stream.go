@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/daxchain-io/evm-tools/internal/chain"
+	"github.com/daxchain-io/evm-tools/internal/checkpoint"
 	"github.com/daxchain-io/evm-tools/internal/config"
 	"github.com/daxchain-io/evm-tools/internal/metrics"
 	"github.com/daxchain-io/evm-tools/internal/record"
@@ -122,6 +124,14 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 
 	writer := record.NewWriter(cmd.OutOrStdout())
 
+	// Durable resume cursor: when configured, the stream persists progress each
+	// poll and resumes from it on restart (gap-free) instead of jumping to head.
+	var cp stream.Checkpointer
+	if path := strings.TrimSpace(cfg.Stream.CheckpointFile); path != "" {
+		cp = checkpoint.NewStore(path)
+		logger.Info("checkpoint/resume enabled", "checkpoint_file", path)
+	}
+
 	s, err := stream.New(stream.Options{
 		Client:         client,
 		Emitter:        writer,
@@ -136,6 +146,7 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		LogChunkBlocks: uint64(cfg.Stream.LogChunkBlocks),
 		FromBlock:      cfg.Stream.FromBlock,
 		ReorgDepth:     uint64(cfg.Stream.ReorgDepth),
+		Checkpoint:     cp,
 	})
 	if err != nil {
 		return err

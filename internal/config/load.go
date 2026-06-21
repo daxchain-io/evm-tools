@@ -176,7 +176,7 @@ func bindEnvKeys(v *viper.Viper) {
 		"metrics.enabled", "metrics.addr", "metrics.path",
 		"log.level", "log.format",
 		"stream.from_block", "stream.poll_interval", "stream.log_chunk_blocks",
-		"stream.reorg_depth", "stream.head_staleness_threshold",
+		"stream.reorg_depth", "stream.head_staleness_threshold", "stream.checkpoint_file",
 		"stream.metrics.enabled", "stream.metrics.addr", "stream.metrics.path",
 		"balance.interval", "balance.every_blocks",
 		"balance.max_concurrency", "balance.target_timeout", "balance.head_staleness_threshold",
