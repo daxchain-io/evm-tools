@@ -73,17 +73,17 @@ All tools live in this one repository as separate binaries under `cmd/`,
 sharing the internal packages described in [Implementation](#implementation).
 A single binary release and a single shared config file cover the whole suite.
 
-| Tool | Role | Status |
-| --- | --- | --- |
-| `evm-stream` | Producer — live contract events and native ETH transfers | Building first |
-| `evm-balance` | Producer — native/ERC-20/ERC-721 balance and contract-state polling | Building first |
-| `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics | Built (S1) |
-| `evm-sink-webhook` | Sink — forward records over HTTP with optional filters | Built (S2) |
-| `evm-sink-file` | Sink — append records to a rotating local file (gzip, retention) | Built (S3) |
-| `evm-sink-aws-sqs` | Sink — send records to an AWS SQS queue (FIFO-aware) | Built (S5) |
-| `evm-sink-aws-sns` | Sink — publish records to an AWS SNS topic (FIFO-aware) | Built (S5) |
-| `evm-sink-postgres` | Sink — idempotent insert into a PostgreSQL table | Built (S6) |
-| `evm-sink-redis` | Sink — append records to a Redis Stream (XADD, idempotent) | Built (S7) |
+| Tool | Role |
+| --- | --- |
+| `evm-stream` | Producer — live contract events and native ETH transfers |
+| `evm-balance` | Producer — native/ERC-20/ERC-721 balance and contract-state polling |
+| `evm-sink-kafka` | Sink — publish JSONL records to Kafka topics |
+| `evm-sink-webhook` | Sink — forward records over HTTP with optional filters |
+| `evm-sink-file` | Sink — append records to a rotating local file (gzip, retention) |
+| `evm-sink-aws-sqs` | Sink — send records to an AWS SQS queue (FIFO-aware) |
+| `evm-sink-aws-sns` | Sink — publish records to an AWS SNS topic (FIFO-aware) |
+| `evm-sink-postgres` | Sink — idempotent insert into a PostgreSQL table |
+| `evm-sink-redis` | Sink — append records to a Redis Stream (XADD, idempotent) |
 
 The pipeline shape is always the same: a producer writes JSONL to stdout, and a
 sink reads it from stdin.
@@ -1335,7 +1335,7 @@ checksums file (cosign), publishes GitHub releases, and updates the shared
 Daxchain Homebrew tap from one workflow.
 
 Homebrew publishes a single `evm-tools` cask to `daxchain-io/homebrew-tap` that
-bundles all four binaries, so one command installs the whole suite:
+bundles all nine binaries, so one command installs the whole suite:
 
 ```sh
 brew install --cask daxchain-io/tap/evm-tools

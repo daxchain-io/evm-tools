@@ -15,6 +15,9 @@ coverage.html
 .idea/
 .vscode/
 
+# Claude Code session artifacts (workflow scripts, transcripts, memory)
+.claude/
+
 # Local env / secrets — never commit
 *.local
 .env
