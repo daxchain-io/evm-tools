@@ -51,10 +51,15 @@ type sharedFlags struct {
 	// evm-stream-only: let the producer run config-free. streamContracts are
 	// contract addresses to watch (each resolved against the built-in standard
 	// ABIs using streamEvents); streamNativeTransfers enables native ETH transfer
-	// monitoring. Applied on top of any config file.
+	// monitoring. These three merge on top of any config file via applyStreamFlags.
+	// streamFromBlock / streamPollInterval override stream.from_block /
+	// stream.poll_interval and bind through flagBindings like the other scalars, so
+	// backfill height and head-poll cadence are reachable without a config file too.
 	streamContracts       []string
 	streamEvents          []string
 	streamNativeTransfers bool
+	streamFromBlock       string
+	streamPollInterval    string
 }
 
 // shortDesc returns the one-line description for a tool.
@@ -134,4 +139,6 @@ func bindStreamFlags(root *cobra.Command, f *sharedFlags) {
 	pf.StringArrayVar(&f.streamContracts, "contract", nil, "contract address to watch (repeatable); resolves --events against the built-in ERC-20/721/1155 ABIs")
 	pf.StringSliceVar(&f.streamEvents, "events", nil, "comma-separated event names for --contract addresses (default: Transfer)")
 	pf.BoolVar(&f.streamNativeTransfers, "native-transfers", false, "emit native ETH transfers (enable without any config file)")
+	pf.StringVar(&f.streamFromBlock, "from-block", "", `start block: "latest" (new activity only) or a block number to backfill from (default: latest; a checkpoint cursor still wins)`)
+	pf.StringVar(&f.streamPollInterval, "poll-interval", "", "head-poll cadence, e.g. 2s (default: 2s)")
 }

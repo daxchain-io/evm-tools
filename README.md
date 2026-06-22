@@ -116,9 +116,17 @@ config-**file** values; a value passed as a flag is taken verbatim.)
 
 `--chain` sets the record/metric label (the chain id is always resolved from
 RPC), event names resolve against the built-in ERC-20/721/1155 ABIs, and flags
-merge on top of a config file when both are present. With no config the stream
-starts at the chain head (new blocks only) — set `[stream].from_block` in a
-config file to backfill from a specific height.
+merge on top of a config file when both are present. By default the stream starts
+at the chain head (new blocks only); add `--from-block <number>` to backfill from
+a specific height and `--poll-interval <dur>` to tune the head-poll cadence — so
+backfilling needs no config file either:
+
+```sh
+# Backfill USDT transfers from block 19,000,000, polling every second:
+evm-stream run --rpc-url "${RPC_URL}" --chain ethereum \
+  --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --from-block 19000000 --poll-interval 1s | jq
+```
 
 > **stdout is data, stderr is diagnostics — never merge them.** `2>&1` would
 > corrupt the JSONL. Keep the producer's stdout flowing straight into the sink.

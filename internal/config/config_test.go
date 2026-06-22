@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/pflag"
 )
 
 // writeConfig writes a TOML file in a temp dir and returns its path.
@@ -323,4 +325,71 @@ func TestDefaultSearchConfigTomlWins(t *testing.T) {
 	if got != "primary" {
 		t.Errorf("config.toml should win over evm-tools.toml, got chain=%q", got)
 	}
+}
+
+// TestStreamScalarFlagsBindAndPreserve verifies the evm-stream --from-block /
+// --poll-interval bindings at the precedence layer: a flag the user *set* must
+// override the config file, and a flag left *unset* must not clobber the file
+// value (the binding fires only for changed flags). It decodes and compares the
+// resolved values rather than relying on validate succeeding, which would pass
+// under both correct and clobbered behavior.
+func TestStreamScalarFlagsBindAndPreserve(t *testing.T) {
+	const body = `
+[rpc]
+url = "https://x"
+
+[stream]
+from_block = "12345"
+poll_interval = "7s"
+
+[[stream.contracts]]
+name = "t"
+address = "0xtoken"
+events = ["Transfer"]
+`
+	// streamFlags mirrors the pflag names bound in internal/cli (bindStreamFlags)
+	// to the stream.from_block / stream.poll_interval keys via flagBindings.
+	streamFlags := func() *pflag.FlagSet {
+		fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		fs.String("from-block", "", "")
+		fs.String("poll-interval", "", "")
+		return fs
+	}
+
+	t.Run("unset flags preserve the file values", func(t *testing.T) {
+		l, err := New(Options{ConfigFile: writeConfig(t, body), Flags: streamFlags()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		cfg, err := l.DecodeStream(false)
+		if err != nil {
+			t.Fatalf("DecodeStream: %v", err)
+		}
+		if cfg.Stream.FromBlock != "12345" || cfg.Stream.PollInterval != "7s" {
+			t.Errorf("unset flags clobbered the file: from_block=%q poll_interval=%q (want 12345/7s)",
+				cfg.Stream.FromBlock, cfg.Stream.PollInterval)
+		}
+	})
+
+	t.Run("set flags override the file values", func(t *testing.T) {
+		fs := streamFlags()
+		if err := fs.Set("from-block", "999"); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Set("poll-interval", "30s"); err != nil {
+			t.Fatal(err)
+		}
+		l, err := New(Options{ConfigFile: writeConfig(t, body), Flags: fs})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		cfg, err := l.DecodeStream(false)
+		if err != nil {
+			t.Fatalf("DecodeStream: %v", err)
+		}
+		if cfg.Stream.FromBlock != "999" || cfg.Stream.PollInterval != "30s" {
+			t.Errorf("set flags did not override the file: from_block=%q poll_interval=%q (want 999/30s)",
+				cfg.Stream.FromBlock, cfg.Stream.PollInterval)
+		}
+	})
 }

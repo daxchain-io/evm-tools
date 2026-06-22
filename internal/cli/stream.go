@@ -227,6 +227,11 @@ func validateStream(cfg *config.StreamFull) error {
 	if _, err := time.ParseDuration(cfg.Stream.PollInterval); err != nil {
 		return fmt.Errorf("invalid stream.poll_interval %q: %w", cfg.Stream.PollInterval, err)
 	}
+	// Reject a malformed from_block offline so `validate` is a true preflight for
+	// --from-block / stream.from_block, agreeing with what run's resolveStart accepts.
+	if err := stream.ValidateFromBlock(cfg.Stream.FromBlock); err != nil {
+		return err
+	}
 	if cfg.Stream.ReorgDepth < 0 {
 		return fmt.Errorf("stream.reorg_depth must be >= 0 (got %d; 0 disables reorg handling)", cfg.Stream.ReorgDepth)
 	}

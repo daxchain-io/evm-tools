@@ -75,6 +75,11 @@ var flagBindings = map[string]string{
 	"log-level":        "log.level",
 	"log-format":       "log.format",
 
+	// evm-stream scalar flags (the additive --contract/--events/--native-transfers
+	// are merged separately in applyStreamFlags, not bound here).
+	"from-block":    "stream.from_block",
+	"poll-interval": "stream.poll_interval",
+
 	// evm-sink-kafka flags.
 	"brokers": "kafka.brokers",
 	"topic":   "kafka.topic",

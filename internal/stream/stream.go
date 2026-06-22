@@ -738,11 +738,39 @@ func (s *Stream) resolveStart(ctx context.Context) (uint64, error) {
 		}
 		return head + 1, nil
 	}
-	v, ok := new(big.Int).SetString(fb, 10)
-	if !ok || v.Sign() < 0 || !v.IsUint64() {
-		return 0, fmt.Errorf("invalid from_block %q (want \"latest\" or a non-negative block number)", fb)
+	v, ok := parseFromBlock(fb)
+	if !ok {
+		return 0, ValidateFromBlock(fb) // single source for the message
 	}
-	return v.Uint64(), nil
+	return v, nil
+}
+
+// parseFromBlock parses a numeric from_block (already known not to be empty or
+// "latest") into a uint64, reporting ok=false for anything that is not a
+// non-negative decimal that fits in a uint64. Shared by resolveStart and the
+// offline ValidateFromBlock so the run and preflight paths accept identical forms.
+func parseFromBlock(fb string) (uint64, bool) {
+	v, ok := new(big.Int).SetString(strings.TrimSpace(fb), 10)
+	if !ok || v.Sign() < 0 || !v.IsUint64() {
+		return 0, false
+	}
+	return v.Uint64(), true
+}
+
+// ValidateFromBlock reports whether a from_block string is well-formed without
+// contacting the chain: empty or "latest" (case-insensitive), or a non-negative
+// uint64 block number. It deliberately does not resolve "latest" (that needs the
+// head), so `validate` can reject a malformed height offline and stay in agreement
+// with the value resolveStart would accept at run time.
+func ValidateFromBlock(fromBlock string) error {
+	fb := strings.TrimSpace(fromBlock)
+	if fb == "" || strings.EqualFold(fb, "latest") {
+		return nil
+	}
+	if _, ok := parseFromBlock(fb); !ok {
+		return fmt.Errorf("invalid from_block %q (want \"latest\" or a non-negative block number)", fb)
+	}
+	return nil
 }
 
 func (s *Stream) contractNameFor(addr string) string {
