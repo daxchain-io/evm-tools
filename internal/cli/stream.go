@@ -126,7 +126,8 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		return fmt.Errorf("invalid stream.poll_interval %q: %w", cfg.Stream.PollInterval, err)
 	}
 
-	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout())
+	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout(),
+		transport.WriterOptions{BlockUntilConsumer: f.blockUntilConsumer})
 	if err != nil {
 		return fmt.Errorf("open output: %w", err)
 	}

@@ -114,7 +114,8 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	}()
 	logger.Info("health/metrics server listening", "addr", srv.Addr(), "metrics_enabled", mc.Enabled)
 
-	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout())
+	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout(),
+		transport.WriterOptions{BlockUntilConsumer: f.blockUntilConsumer})
 	if err != nil {
 		return fmt.Errorf("open output: %w", err)
 	}

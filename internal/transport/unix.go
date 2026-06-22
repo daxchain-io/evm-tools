@@ -16,11 +16,18 @@ import (
 // file (left by an unclean exit) from one a peer is actively listening on.
 const dialProbeTimeout = 200 * time.Millisecond
 
-// listenUnix listens on a Unix-domain socket and blocks until the first consumer
-// connects (block-until-consumer), returning a writer over that connection. A
-// stale socket left by an unclean exit is removed first; a live one is left alone
-// so net.Listen fails rather than stealing another instance's address.
-func listenUnix(ctx context.Context, path string) (io.WriteCloser, error) {
+// errWriterClosed is returned by a fan-out writer's Write after Close (with no
+// ctx cancellation to report instead).
+var errWriterClosed = errors.New("transport: writer closed")
+
+// listenUnix listens on a Unix-domain socket and returns a fan-out writer that
+// delivers each record to every connected consumer. With blockUntilConsumer it
+// waits for the first consumer before returning (so a sink that starts shortly
+// after the producer loses nothing) and blocks writes while no consumer is
+// connected (lossless); without it, it returns immediately and drops a write that
+// has no consumer (fire-and-forget). A stale socket from an unclean exit is
+// removed first; a live one is left alone so net.Listen reports the conflict.
+func listenUnix(ctx context.Context, path string, blockUntilConsumer bool) (io.WriteCloser, error) {
 	if path == "" {
 		return nil, errors.New("transport: empty unix socket path in --output")
 	}
@@ -29,43 +36,145 @@ func listenUnix(ctx context.Context, path string) (io.WriteCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("transport: listen %s: %w", path, err)
 	}
-	// Closing the listener unblocks Accept, so a ctx cancel while we wait for the
-	// first consumer returns promptly.
-	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
-	conn, err := ln.Accept()
-	stop()
-	if err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		if cerr := ctx.Err(); cerr != nil {
-			return nil, cerr
-		}
-		return nil, fmt.Errorf("transport: accept %s: %w", path, err)
+	w := &unixFanoutWriter{
+		ctx:        ctx,
+		ln:         ln,
+		path:       path,
+		blockUntil: blockUntilConsumer,
+		conns:      make(map[net.Conn]struct{}),
 	}
-	return &unixWriter{conn: conn, ln: ln, path: path}, nil
+	w.cond = sync.NewCond(&w.mu)
+	// On ctx cancel, tear everything down and wake any blocked Write / waiter.
+	w.stopWatch = context.AfterFunc(ctx, w.shutdown)
+	go w.acceptLoop()
+	if blockUntilConsumer {
+		if err := w.waitForConns(1); err != nil {
+			_ = w.Close()
+			return nil, err
+		}
+	}
+	return w, nil
 }
 
-// unixWriter writes records to the single connected consumer. A failed Write
-// (consumer gone) surfaces to record.Writer.Emit exactly like a broken pipe, so
-// the producer stops cleanly — matching stdout-pipe semantics for 1:1.
-// (Fan-out to multiple consumers arrives in a later phase.)
-type unixWriter struct {
-	conn net.Conn
-	ln   net.Listener
-	path string
-	once sync.Once
+// unixFanoutWriter delivers each record (one Write per line from record.Writer)
+// to every connected consumer. A slow consumer applies backpressure to the
+// producer (lockstep — lossless); a consumer whose write fails is dropped without
+// affecting the others; a consumer that connects mid-stream receives the live
+// tail. It is safe for concurrent use (record.Writer already serializes Write).
+type unixFanoutWriter struct {
+	ctx        context.Context
+	ln         net.Listener
+	path       string
+	blockUntil bool
+
+	mu        sync.Mutex
+	cond      *sync.Cond
+	conns     map[net.Conn]struct{}
+	closed    bool
+	stopWatch func() bool
 }
 
-func (w *unixWriter) Write(p []byte) (int, error) { return w.conn.Write(p) }
+// acceptLoop registers each new consumer until the listener is closed.
+func (w *unixFanoutWriter) acceptLoop() {
+	for {
+		c, err := w.ln.Accept()
+		if err != nil {
+			return // listener closed
+		}
+		w.mu.Lock()
+		if w.closed {
+			w.mu.Unlock()
+			_ = c.Close()
+			return
+		}
+		w.conns[c] = struct{}{}
+		w.cond.Broadcast() // wake waitForConns / a Write blocked on zero consumers
+		w.mu.Unlock()
+	}
+}
 
-// Close tears down the connection and listener and removes the socket file. It is
-// idempotent.
-func (w *unixWriter) Close() error {
-	w.once.Do(func() {
-		_ = w.conn.Close()
-		_ = w.ln.Close() // a UnixListener unlinks the socket file on Close
-		_ = os.Remove(w.path)
-	})
+// waitForConns blocks until at least n consumers are connected, or the writer is
+// closed / ctx is cancelled.
+func (w *unixFanoutWriter) waitForConns(n int) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for len(w.conns) < n && !w.closed {
+		w.cond.Wait()
+	}
+	if w.closed {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
+		return errWriterClosed
+	}
+	return nil
+}
+
+// Write delivers p to every connected consumer.
+func (w *unixFanoutWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	for len(w.conns) == 0 && w.blockUntil && !w.closed {
+		w.cond.Wait()
+	}
+	if w.closed {
+		w.mu.Unlock()
+		if err := w.ctx.Err(); err != nil {
+			return 0, err
+		}
+		return 0, errWriterClosed
+	}
+	snapshot := make([]net.Conn, 0, len(w.conns))
+	for c := range w.conns {
+		snapshot = append(snapshot, c)
+	}
+	w.mu.Unlock()
+
+	// Write outside the lock so a slow consumer doesn't block accept or teardown;
+	// it still blocks this Write, which is the lockstep backpressure to the producer.
+	var dead []net.Conn
+	for _, c := range snapshot {
+		if _, err := c.Write(p); err != nil {
+			dead = append(dead, c)
+		}
+	}
+	if len(dead) > 0 {
+		w.mu.Lock()
+		for _, c := range dead {
+			if _, ok := w.conns[c]; ok {
+				delete(w.conns, c)
+				_ = c.Close()
+			}
+		}
+		w.mu.Unlock()
+	}
+	return len(p), nil
+}
+
+// shutdown closes the listener and every consumer, removes the socket file, and
+// wakes any blocked Write/waiter. It is idempotent.
+func (w *unixFanoutWriter) shutdown() {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
+	w.closed = true
+	_ = w.ln.Close() // a UnixListener unlinks the socket file on Close
+	for c := range w.conns {
+		_ = c.Close()
+		delete(w.conns, c)
+	}
+	w.cond.Broadcast()
+	w.mu.Unlock()
+	_ = os.Remove(w.path)
+}
+
+// Close tears down the writer (idempotent).
+func (w *unixFanoutWriter) Close() error {
+	if w.stopWatch != nil {
+		w.stopWatch()
+	}
+	w.shutdown()
 	return nil
 }
 

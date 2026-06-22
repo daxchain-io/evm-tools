@@ -75,7 +75,7 @@ func TestSinkRunInputUnix(t *testing.T) {
 	// Producer: listen on the socket, write the records once a consumer connects,
 	// then hold the connection open until shutdown.
 	go func() {
-		out, err := transport.OpenWriter(ctx, "unix:"+sock, os.Stdout)
+		out, err := transport.OpenWriter(ctx, "unix:"+sock, os.Stdout, transport.WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			return
 		}

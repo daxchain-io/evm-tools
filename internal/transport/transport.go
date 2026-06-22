@@ -33,17 +33,27 @@ import (
 // unixScheme prefixes a Unix-domain-socket address, e.g. "unix:/run/evm.sock".
 const unixScheme = "unix:"
 
+// WriterOptions tunes a "unix:" output. It is ignored for stdout.
+type WriterOptions struct {
+	// BlockUntilConsumer makes the producer wait for the first consumer before
+	// emitting and block (lossless) while no consumer is connected. With it false
+	// the producer never blocks and drops a write that has no consumer
+	// (fire-and-forget broadcast).
+	BlockUntilConsumer bool
+}
+
 // OpenWriter resolves a producer's --output spec to the io.WriteCloser a
 // record.Writer wraps. "", "-", and "stdout" return std (the caller passes
 // cmd.OutOrStdout() so cobra's redirection and the process's stdout are
 // preserved; Close is a no-op so std is never closed). "unix:/path" listens on
-// the socket and blocks until the first consumer connects (or ctx is cancelled).
-func OpenWriter(ctx context.Context, spec string, std io.Writer) (io.WriteCloser, error) {
+// the socket and fans each record out to every connected consumer (see
+// WriterOptions for the block-until-consumer behavior).
+func OpenWriter(ctx context.Context, spec string, std io.Writer, opts WriterOptions) (io.WriteCloser, error) {
 	switch {
 	case isStdAlias(spec, "stdout"):
 		return nopWriteCloser{std}, nil
 	case strings.HasPrefix(spec, unixScheme):
-		return listenUnix(ctx, strings.TrimPrefix(spec, unixScheme))
+		return listenUnix(ctx, strings.TrimPrefix(spec, unixScheme), opts.BlockUntilConsumer)
 	default:
 		return nil, fmt.Errorf("transport: unsupported --output %q (use %q, %q, or %q)", spec, "-", "stdout", "unix:/path")
 	}

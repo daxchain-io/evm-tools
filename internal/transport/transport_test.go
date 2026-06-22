@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestOpenStdDefaults(t *testing.T) {
 	// cmd.OutOrStdout redirection is preserved) and Close is a no-op.
 	for _, s := range []string{"", "-", "stdout"} {
 		var buf bytes.Buffer
-		w, err := OpenWriter(ctx, s, &buf)
+		w, err := OpenWriter(ctx, s, &buf, WriterOptions{})
 		if err != nil {
 			t.Fatalf("OpenWriter(%q): %v", s, err)
 		}
@@ -59,7 +60,7 @@ func TestOpenStdDefaults(t *testing.T) {
 		}
 		_ = r.Close()
 	}
-	if _, err := OpenWriter(ctx, "tcp://x", io.Discard); err == nil {
+	if _, err := OpenWriter(ctx, "tcp://x", io.Discard, WriterOptions{}); err == nil {
 		t.Error("OpenWriter with unsupported spec: want error")
 	}
 	if _, err := OpenReader(ctx, "bogus:/x", strings.NewReader("")); err == nil {
@@ -75,7 +76,7 @@ func TestUnixRoundTrip(t *testing.T) {
 
 	werr := make(chan error, 1)
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout) // blocks until the reader connects
+		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true}) // blocks until the reader connects
 		if err != nil {
 			werr <- err
 			return
@@ -120,7 +121,7 @@ func TestUnixReconnectAcrossPeerRestart(t *testing.T) {
 	serveOnce := func(line string) <-chan error {
 		done := make(chan error, 1)
 		go func() {
-			w, err := OpenWriter(ctx, "unix:"+path, os.Stdout)
+			w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
 			if err != nil {
 				done <- err
 				return
@@ -196,6 +197,100 @@ func TestRemoveStaleSocket(t *testing.T) {
 	})
 }
 
+// TestUnixFanOut verifies one producer delivers every record to multiple
+// connected consumers.
+func TestUnixFanOut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	path := socketPath(t)
+	const n = 5
+	want := make([]string, n)
+	for i := range n {
+		want[i] = fmt.Sprintf("rec-%d", i)
+	}
+
+	werr := make(chan error, 1)
+	go func() {
+		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		if err != nil {
+			werr <- err
+			return
+		}
+		defer func() { _ = w.Close() }()
+		// Wait until both consumers are registered so both receive every record.
+		if err := w.(*unixFanoutWriter).waitForConns(2); err != nil {
+			werr <- err
+			return
+		}
+		for i := range n {
+			if _, err := io.WriteString(w, want[i]+"\n"); err != nil {
+				werr <- err
+				return
+			}
+		}
+		werr <- nil
+	}()
+
+	r1, err := OpenReader(ctx, "unix:"+path, os.Stdin)
+	if err != nil {
+		t.Fatalf("reader1: %v", err)
+	}
+	defer func() { _ = r1.Close() }()
+	r2, err := OpenReader(ctx, "unix:"+path, os.Stdin)
+	if err != nil {
+		t.Fatalf("reader2: %v", err)
+	}
+	defer func() { _ = r2.Close() }()
+
+	readN := func(r io.Reader) []string {
+		sc := bufio.NewScanner(r)
+		got := make([]string, 0, n)
+		for i := 0; i < n && sc.Scan(); i++ {
+			got = append(got, sc.Text())
+		}
+		return got
+	}
+	got := make([][]string, 2)
+	done := make(chan struct{}, 2)
+	go func() { got[0] = readN(r1); done <- struct{}{} }()
+	go func() { got[1] = readN(r2); done <- struct{}{} }()
+	<-done
+	<-done
+	if err := <-werr; err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+	for i, g := range got {
+		if !slices.Equal(g, want) {
+			t.Errorf("reader%d got %v, want %v", i+1, g, want)
+		}
+	}
+}
+
+// TestUnixFireAndForget verifies that with block-until-consumer off, a write with
+// no connected consumer returns immediately (dropped) instead of blocking.
+func TestUnixFireAndForget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	path := socketPath(t)
+
+	w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: false})
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	done := make(chan error, 1)
+	go func() { _, werr := io.WriteString(w, "dropped\n"); done <- werr }()
+	select {
+	case werr := <-done:
+		if werr != nil {
+			t.Errorf("fire-and-forget write: %v", werr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("write blocked with no consumer despite block-until-consumer=false")
+	}
+}
+
 func TestReaderCtxCancelUnblocksRead(t *testing.T) {
 	path := socketPath(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,7 +298,7 @@ func TestReaderCtxCancelUnblocksRead(t *testing.T) {
 
 	// Producer accepts but sends nothing, holding the connection open until ctx.
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout)
+		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			return
 		}

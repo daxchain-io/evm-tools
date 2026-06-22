@@ -36,6 +36,9 @@ type sharedFlags struct {
 	// JSONL to stdout; "unix:/path" listens on a Unix-domain socket. Resolved with
 	// config (top-level [output]) by outputSpec.
 	output string
+	// blockUntilConsumer applies to a "unix:" output: wait for a consumer before
+	// emitting and block (lossless) while none are connected. Default true.
+	blockUntilConsumer bool
 
 	rpcURL         string
 	rpcClientCert  string
@@ -131,6 +134,8 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 	pf.StringVar(&f.chain, "chain", "", `chain label for records/metrics (default: derived from the resolved chain id, e.g. "ethereum"; the chain id always comes from RPC)`)
 
 	pf.StringVar(&f.output, "output", "", `record destination: "-"/"stdout" (default) or "unix:/path" to listen for a sink to connect`)
+
+	pf.BoolVar(&f.blockUntilConsumer, "block-until-consumer", true, `for a "unix:" --output: wait for a consumer and block (lossless) while none are connected; =false drops records with no consumer (fire-and-forget)`)
 
 	pf.StringVar(&f.rpcURL, "rpc-url", "", "full EVM RPC endpoint URL (including port when needed)")
 	pf.StringVar(&f.rpcClientCert, "rpc-client-cert", "", "path to the mTLS client certificate")
