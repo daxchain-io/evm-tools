@@ -83,12 +83,15 @@ checksums before installing — see
    ```
 
 **No config file?** `evm-stream` can run entirely from flags — point it at an RPC
-endpoint and say what to watch. For example, to stream live Tether (USDT)
-transfers on Ethereum mainnet:
+endpoint and say what to watch. Keep the endpoint (it usually carries an API key)
+out of your shell history by exporting it first, then referencing `$RPC_URL`. For
+example, to stream live Tether (USDT) transfers on Ethereum mainnet:
 
 ```sh
+export RPC_URL="https://eth-mainnet.example/v2/<your-key>"   # the secret lives here, not in the command
+
 evm-stream run \
-  --rpc-url https://eth-mainnet.example/v2/KEY \
+  --rpc-url "${RPC_URL}" \
   --chain ethereum \
   --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
   --events Transfer | jq
@@ -101,11 +104,15 @@ swap in `--native-transfers` to follow native ETH instead:
 
 ```sh
 # Shorter (Transfer is the default), and the native-ETH variant:
-evm-stream run --rpc-url https://eth-mainnet.example/v2/KEY \
+evm-stream run --rpc-url "${RPC_URL}" \
   --chain ethereum --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 | jq
 
-evm-stream run --rpc-url https://eth-mainnet.example/v2/KEY --native-transfers | jq
+evm-stream run --rpc-url "${RPC_URL}" --native-transfers | jq
 ```
+
+The shell expands `${RPC_URL}` before `evm-stream` sees it — use double quotes (or
+no quotes), not single quotes. (`evm-tools`' own `${VAR}` interpolation applies to
+config-**file** values; a value passed as a flag is taken verbatim.)
 
 `--chain` sets the record/metric label (the chain id is always resolved from
 RPC), event names resolve against the built-in ERC-20/721/1155 ABIs, and flags
