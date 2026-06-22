@@ -38,6 +38,9 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 	if err != nil {
 		return err
 	}
+	if err := applyStreamFlags(cmd, f, cfg); err != nil {
+		return err
+	}
 	if err := validateStream(cfg); err != nil {
 		return err
 	}
@@ -180,6 +183,9 @@ func streamValidate(cmd *cobra.Command, f *sharedFlags) error {
 	if err != nil {
 		return err
 	}
+	if err := applyStreamFlags(cmd, f, cfg); err != nil {
+		return err
+	}
 	if err := validateStream(cfg); err != nil {
 		return err
 	}
@@ -228,7 +234,40 @@ func validateStream(cfg *config.StreamFull) error {
 		return err
 	}
 	if len(cfg.Stream.Contracts) == 0 && !cfg.Stream.NativeTransfers.Enabled {
-		return fmt.Errorf("nothing to monitor: configure [[stream.contracts]] or enable [stream.native_transfers]")
+		return fmt.Errorf("nothing to monitor: pass --contract (with --events) and/or --native-transfers, " +
+			"or configure [[stream.contracts]] / [stream.native_transfers]")
+	}
+	return nil
+}
+
+// applyStreamFlags merges the evm-stream config-free flags (--contract/--events/
+// --native-transfers) onto the decoded config, so the producer can run with no
+// config file. Flags add to any configured contracts. A bool/list flag is only
+// applied when the user actually set it, so it never overrides config with a zero
+// default. Each --contract becomes a contract resolved against the built-in
+// standard ABIs (no per-contract abi), with --events (default "Transfer") as its
+// event set; the address doubles as the record/metric name.
+func applyStreamFlags(cmd *cobra.Command, f *sharedFlags, cfg *config.StreamFull) error {
+	if cmd.Flags().Changed("native-transfers") {
+		cfg.Stream.NativeTransfers.Enabled = f.streamNativeTransfers
+	}
+	if cmd.Flags().Changed("events") && len(f.streamContracts) == 0 {
+		return fmt.Errorf("--events requires at least one --contract")
+	}
+	events := f.streamEvents
+	if len(events) == 0 {
+		events = []string{"Transfer"} // the common token case
+	}
+	for _, addr := range f.streamContracts {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		cfg.Stream.Contracts = append(cfg.Stream.Contracts, config.StreamContract{
+			Name:    addr,
+			Address: addr,
+			Events:  events,
+		})
 	}
 	return nil
 }

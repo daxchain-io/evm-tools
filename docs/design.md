@@ -372,7 +372,19 @@ evm-stream run -c ~/.config/evm-tools/my-chain.toml
 evm-stream validate -c ~/.config/evm-tools/my-chain.toml
 evm-stream check rpc -c ~/.config/evm-tools/my-chain.toml
 evm-stream version
+
+# Config-free: drive evm-stream entirely from flags (no config file).
+evm-stream run --rpc-url https://rpc.example/KEY --contract 0xToken --events Transfer
+evm-stream run --rpc-url https://rpc.example/KEY --native-transfers
 ```
+
+`evm-stream` can run with no config file at all: `--rpc-url` gives the endpoint
+and `--contract` (repeatable) / `--events` (default `Transfer`, resolved against
+the built-in standard ABIs) and/or `--native-transfers` give it something to
+monitor; `--chain` sets the record/metric label (the chain id is always resolved
+from RPC). These flags merge on top of a config file when both are present, so a
+file's contracts and a `--contract` are additive. For custom ABIs, per-contract
+event sets, or the balance poller, use the config file.
 
 `validate` loads and checks the configuration — including mTLS material and
 event/ABI resolution — and exits without connecting to monitor, which makes it

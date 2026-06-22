@@ -82,6 +82,22 @@ checksums before installing — see
    evm-stream run | jq
    ```
 
+**No config file?** `evm-stream` can run entirely from flags — point it at an RPC
+endpoint and say what to watch:
+
+```sh
+# Watch a token's Transfer events (events resolve from the built-in ERC-20 ABI):
+evm-stream run --rpc-url https://my-rpc.example/v2/KEY \
+  --contract 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --events Transfer | jq
+
+# Or watch native ETH transfers:
+evm-stream run --rpc-url https://my-rpc.example/v2/KEY --native-transfers | jq
+```
+
+`--contract` is repeatable, `--events` defaults to `Transfer`, and `--chain` sets
+the label (the chain id is always resolved from RPC). Flags merge on top of a
+config file when both are present.
+
 > **stdout is data, stderr is diagnostics — never merge them.** `2>&1` would
 > corrupt the JSONL. Keep the producer's stdout flowing straight into the sink.
 

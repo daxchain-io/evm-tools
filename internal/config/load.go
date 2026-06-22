@@ -65,6 +65,7 @@ type Options struct {
 // the explicit wiring the design calls for: env/flag binding to nested keys is
 // never automatic.
 var flagBindings = map[string]string{
+	"chain":            "chain",
 	"rpc-url":          "rpc.url",
 	"rpc-client-cert":  "rpc.client_cert",
 	"rpc-client-key":   "rpc.client_key",

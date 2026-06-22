@@ -30,6 +30,8 @@ const (
 type sharedFlags struct {
 	configFile string
 
+	chain string
+
 	rpcURL         string
 	rpcClientCert  string
 	rpcClientKey   string
@@ -45,6 +47,14 @@ type sharedFlags struct {
 	logFormat string
 
 	allowExec bool
+
+	// evm-stream-only: let the producer run config-free. streamContracts are
+	// contract addresses to watch (each resolved against the built-in standard
+	// ABIs using streamEvents); streamNativeTransfers enables native ETH transfer
+	// monitoring. Applied on top of any config file.
+	streamContracts       []string
+	streamEvents          []string
+	streamNativeTransfers bool
 }
 
 // shortDesc returns the one-line description for a tool.
@@ -75,6 +85,9 @@ func NewRootCommand(tool Tool) *cobra.Command {
 	}
 
 	bindSharedFlags(root, flags)
+	if tool == ToolStream {
+		bindStreamFlags(root, flags)
+	}
 
 	root.AddCommand(
 		newRunCommand(tool, flags),
@@ -93,6 +106,8 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 
 	pf.StringVarP(&f.configFile, "config", "c", "", "path to the evm-tools TOML config file")
 
+	pf.StringVar(&f.chain, "chain", "", "chain label for records/metrics (the chain id is always resolved from RPC)")
+
 	pf.StringVar(&f.rpcURL, "rpc-url", "", "full EVM RPC endpoint URL (including port when needed)")
 	pf.StringVar(&f.rpcClientCert, "rpc-client-cert", "", "path to the mTLS client certificate")
 	pf.StringVar(&f.rpcClientKey, "rpc-client-key", "", "path to the mTLS client private key")
@@ -108,4 +123,15 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 	pf.StringVar(&f.logFormat, "log-format", "text", "log format: text|json")
 
 	pf.BoolVar(&f.allowExec, "allow-exec", false, "allow config _cmd keys to execute (also EVM_TOOLS_ALLOW_EXEC=1)")
+}
+
+// bindStreamFlags installs the evm-stream-only flags that let it run config-free:
+// point it at one or more contracts (resolved against the built-in standard ABIs)
+// and/or enable native transfers. They merge on top of any config file, so they
+// add to — rather than replace — configured contracts.
+func bindStreamFlags(root *cobra.Command, f *sharedFlags) {
+	pf := root.PersistentFlags()
+	pf.StringArrayVar(&f.streamContracts, "contract", nil, "contract address to watch (repeatable); resolves --events against the built-in ERC-20/721/1155 ABIs")
+	pf.StringSliceVar(&f.streamEvents, "events", nil, "comma-separated event names for --contract addresses (default: Transfer)")
+	pf.BoolVar(&f.streamNativeTransfers, "native-transfers", false, "emit native ETH transfers (enable without any config file)")
 }
