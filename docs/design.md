@@ -425,6 +425,22 @@ emitted only when the polled value moves. Sampling cadence is time-based
 (`[balance].interval`, e.g. `"1m"`) or block-based (`[balance].every_blocks`,
 e.g. `50`); set exactly one.
 
+Like `evm-stream`, `evm-balance` can run with no config file: `--rpc-url` gives
+the endpoint, `--native <address>` and `--erc20 <token>:<holder>` (both
+repeatable) name the targets, `--interval` / `--every-blocks` set the cadence
+(exactly one), and `--chain` sets the record/metric label. These flags merge on
+top of a config file, so flag targets add to configured ones. The ERC-721 and
+contract-state targets stay config-file-only (the analog of `evm-stream` keeping
+custom ABIs in the file).
+
+```sh
+# Config-free: sample one address's native + USDT balance every 30s.
+export RPC_URL="https://rpc.example/v2/<your-key>"
+evm-balance run --rpc-url "${RPC_URL}" --chain ethereum --interval 30s \
+  --native 0xADDR \
+  --erc20 0xdAC17F958D2ee523a2206206994597C13D831ec7:0xADDR | jq
+```
+
 **Token decimals.** To produce human-readable balances and the
 `decimals`/`total_supply` fields, `evm-balance` calls each token's `decimals()`
 once at startup and caches it for the run. `decimals()` is optional in ERC-20;

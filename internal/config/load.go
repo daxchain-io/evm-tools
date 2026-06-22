@@ -80,6 +80,11 @@ var flagBindings = map[string]string{
 	"from-block":    "stream.from_block",
 	"poll-interval": "stream.poll_interval",
 
+	// evm-balance scalar cadence flags (the additive --native/--erc20 are merged
+	// separately in applyBalanceFlags, not bound here).
+	"interval":     "balance.interval",
+	"every-blocks": "balance.every_blocks",
+
 	// evm-sink-kafka flags.
 	"brokers": "kafka.brokers",
 	"topic":   "kafka.topic",

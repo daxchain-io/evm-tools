@@ -60,6 +60,15 @@ type sharedFlags struct {
 	streamNativeTransfers bool
 	streamFromBlock       string
 	streamPollInterval    string
+
+	// evm-balance-only: let the poller run config-free. balanceNative / balanceERC20
+	// are additive targets merged via applyBalanceFlags (--erc20 is "token:holder");
+	// balanceInterval / balanceEveryBlocks set the sampling cadence (interval XOR
+	// every_blocks) and bind through flagBindings like the other scalars.
+	balanceNative      []string
+	balanceERC20       []string
+	balanceInterval    string
+	balanceEveryBlocks int
 }
 
 // shortDesc returns the one-line description for a tool.
@@ -90,8 +99,11 @@ func NewRootCommand(tool Tool) *cobra.Command {
 	}
 
 	bindSharedFlags(root, flags)
-	if tool == ToolStream {
+	switch tool {
+	case ToolStream:
 		bindStreamFlags(root, flags)
+	case ToolBalance:
+		bindBalanceFlags(root, flags)
 	}
 
 	root.AddCommand(
@@ -141,4 +153,16 @@ func bindStreamFlags(root *cobra.Command, f *sharedFlags) {
 	pf.BoolVar(&f.streamNativeTransfers, "native-transfers", false, "emit native ETH transfers (enable without any config file)")
 	pf.StringVar(&f.streamFromBlock, "from-block", "", `start block: "latest" (new activity only) or a block number to backfill from (default: latest; a checkpoint cursor still wins)`)
 	pf.StringVar(&f.streamPollInterval, "poll-interval", "", "head-poll cadence, e.g. 2s (default: 2s)")
+}
+
+// bindBalanceFlags installs the evm-balance-only flags that let it run config-free:
+// --native / --erc20 name targets to poll (merged on top of any config file by
+// applyBalanceFlags, so they add to — rather than replace — configured targets),
+// and --interval / --every-blocks set the sampling cadence (exactly one).
+func bindBalanceFlags(root *cobra.Command, f *sharedFlags) {
+	pf := root.PersistentFlags()
+	pf.StringArrayVar(&f.balanceNative, "native", nil, "report the native balance of this address (repeatable)")
+	pf.StringArrayVar(&f.balanceERC20, "erc20", nil, `report an ERC-20 balance as "token:holder" (repeatable)`)
+	pf.StringVar(&f.balanceInterval, "interval", "", "sampling cadence, e.g. 30s (set this or --every-blocks)")
+	pf.IntVar(&f.balanceEveryBlocks, "every-blocks", 0, "sample every N new blocks instead of on a time interval")
 }

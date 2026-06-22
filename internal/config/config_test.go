@@ -393,3 +393,78 @@ events = ["Transfer"]
 		}
 	})
 }
+
+// TestBalanceScalarFlagsBindAndPreserve is the evm-balance analogue: --interval
+// and --every-blocks bind to balance.interval / balance.every_blocks via
+// flagBindings, a set flag overrides the config file, and an unset flag leaves
+// the file value intact.
+func TestBalanceScalarFlagsBindAndPreserve(t *testing.T) {
+	const body = `
+[rpc]
+url = "https://x"
+
+[balance]
+interval = "1m"
+
+[[balance.native]]
+name = "t"
+address = "0xholder"
+`
+	balanceFlags := func() *pflag.FlagSet {
+		fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		fs.String("interval", "", "")
+		fs.Int("every-blocks", 0, "")
+		return fs
+	}
+
+	t.Run("unset flags preserve the file values", func(t *testing.T) {
+		l, err := New(Options{ConfigFile: writeConfig(t, body), Flags: balanceFlags()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		cfg, err := l.DecodeBalance(false)
+		if err != nil {
+			t.Fatalf("DecodeBalance: %v", err)
+		}
+		if cfg.Balance.Interval != "1m" || cfg.Balance.EveryBlocks != 0 {
+			t.Errorf("unset flags clobbered the file: interval=%q every_blocks=%d (want 1m/0)",
+				cfg.Balance.Interval, cfg.Balance.EveryBlocks)
+		}
+	})
+
+	t.Run("set --interval overrides the file value", func(t *testing.T) {
+		fs := balanceFlags()
+		if err := fs.Set("interval", "15s"); err != nil {
+			t.Fatal(err)
+		}
+		l, err := New(Options{ConfigFile: writeConfig(t, body), Flags: fs})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		cfg, err := l.DecodeBalance(false)
+		if err != nil {
+			t.Fatalf("DecodeBalance: %v", err)
+		}
+		if cfg.Balance.Interval != "15s" {
+			t.Errorf("set --interval did not override the file: interval=%q (want 15s)", cfg.Balance.Interval)
+		}
+	})
+
+	t.Run("set --every-blocks binds", func(t *testing.T) {
+		fs := balanceFlags()
+		if err := fs.Set("every-blocks", "99"); err != nil {
+			t.Fatal(err)
+		}
+		l, err := New(Options{ConfigFile: writeConfig(t, body), Flags: fs})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		cfg, err := l.DecodeBalance(false)
+		if err != nil {
+			t.Fatalf("DecodeBalance: %v", err)
+		}
+		if cfg.Balance.EveryBlocks != 99 {
+			t.Errorf("set --every-blocks did not bind: every_blocks=%d (want 99)", cfg.Balance.EveryBlocks)
+		}
+	})
+}

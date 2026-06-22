@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,9 @@ import (
 func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	cfg, err := f.decodeBalance(cmd)
 	if err != nil {
+		return err
+	}
+	if err := applyBalanceFlags(f, cfg); err != nil {
 		return err
 	}
 	resolved, err := validateBalance(cfg)
@@ -156,6 +160,9 @@ func balanceValidate(cmd *cobra.Command, f *sharedFlags) error {
 	if err != nil {
 		return err
 	}
+	if err := applyBalanceFlags(f, cfg); err != nil {
+		return err
+	}
 	if _, err := validateBalance(cfg); err != nil {
 		return err
 	}
@@ -199,6 +206,41 @@ func validateBalance(cfg *config.BalanceFull) (balance.Resolved, error) {
 		return balance.Resolved{}, fmt.Errorf("resolve balance config: %w", err)
 	}
 	return resolved, nil
+}
+
+// applyBalanceFlags merges the evm-balance config-free target flags (--native,
+// --erc20) onto the decoded config, so the poller can run with no config file.
+// Each flag adds to any configured targets. --erc20 takes "token:holder" (two
+// addresses); the pair string doubles as the target name, mirroring how --native
+// and evm-stream's --contract use the address as the name. The cadence flags
+// (--interval / --every-blocks) bind through flagBindings, not here.
+func applyBalanceFlags(f *sharedFlags, cfg *config.BalanceFull) error {
+	for _, addr := range f.balanceNative {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		cfg.Balance.Native = append(cfg.Balance.Native, config.BalanceNative{Name: addr, Address: addr})
+	}
+	for _, pair := range f.balanceERC20 {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		// Split on a single colon only: "token:holder". strings.Cut would accept
+		// "a:b:c" (holder="b:c"), violating the two-address contract, so require
+		// exactly two segments.
+		parts := strings.Split(pair, ":")
+		token, holder := "", ""
+		if len(parts) == 2 {
+			token, holder = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		}
+		if token == "" || holder == "" {
+			return fmt.Errorf("--erc20 %q must be \"token:holder\" (two addresses separated by a colon)", pair)
+		}
+		cfg.Balance.ERC20 = append(cfg.Balance.ERC20, config.BalanceERC20{Name: pair, Token: token, Address: holder})
+	}
+	return nil
 }
 
 // decodeBalance loads and strict-decodes the evm-balance config.

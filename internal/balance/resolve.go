@@ -139,7 +139,7 @@ func Resolve(cfg config.BalanceConfig) (Resolved, error) {
 
 	if len(out.Native) == 0 && len(out.ERC20) == 0 && len(out.Contracts) == 0 &&
 		len(out.ERC721Balances) == 0 && len(out.ERC721Ownership) == 0 {
-		return Resolved{}, fmt.Errorf("nothing to poll: configure [[balance.native]], [[balance.erc20]], [[balance.erc721_balances]], [[balance.erc721_ownership]], or [[balance.contracts]]")
+		return Resolved{}, fmt.Errorf("nothing to poll: pass --native / --erc20, or configure [[balance.native]], [[balance.erc20]], [[balance.erc721_balances]], [[balance.erc721_ownership]], or [[balance.contracts]]")
 	}
 
 	return out, nil
@@ -155,7 +155,7 @@ func resolveCadence(cfg config.BalanceConfig) (Cadence, error) {
 	case hasInterval && hasBlocks:
 		return Cadence{}, fmt.Errorf("set exactly one of balance.interval or balance.every_blocks, not both")
 	case !hasInterval && !hasBlocks:
-		return Cadence{}, fmt.Errorf("set exactly one of balance.interval or balance.every_blocks")
+		return Cadence{}, fmt.Errorf("no sampling cadence: pass --interval or --every-blocks, or set balance.interval / balance.every_blocks")
 	case hasBlocks:
 		if cfg.EveryBlocks < 0 {
 			return Cadence{}, fmt.Errorf("balance.every_blocks must be positive (got %d)", cfg.EveryBlocks)

@@ -128,6 +128,17 @@ evm-stream run --rpc-url "${RPC_URL}" --chain ethereum \
   --from-block 19000000 --poll-interval 1s | jq
 ```
 
+`evm-balance` is config-free too: name targets with `--native <address>` and
+`--erc20 <token>:<holder>` (both repeatable) and set the cadence with `--interval`
+or `--every-blocks`:
+
+```sh
+# Sample one address's native + USDT balance every 30s, no config file:
+evm-balance run --rpc-url "${RPC_URL}" --chain ethereum --interval 30s \
+  --native 0xADDR \
+  --erc20 0xdAC17F958D2ee523a2206206994597C13D831ec7:0xADDR | jq
+```
+
 > **stdout is data, stderr is diagnostics — never merge them.** `2>&1` would
 > corrupt the JSONL. Keep the producer's stdout flowing straight into the sink.
 
