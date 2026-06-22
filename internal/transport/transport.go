@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"os"
 	"strings"
 	"time"
 )
@@ -35,13 +34,14 @@ import (
 const unixScheme = "unix:"
 
 // OpenWriter resolves a producer's --output spec to the io.WriteCloser a
-// record.Writer wraps. "", "-", and "stdout" select os.Stdout (Close is a no-op,
-// so the process's stdout is never closed). "unix:/path" listens on the socket
-// and blocks until the first consumer connects (or ctx is cancelled).
-func OpenWriter(ctx context.Context, spec string) (io.WriteCloser, error) {
+// record.Writer wraps. "", "-", and "stdout" return std (the caller passes
+// cmd.OutOrStdout() so cobra's redirection and the process's stdout are
+// preserved; Close is a no-op so std is never closed). "unix:/path" listens on
+// the socket and blocks until the first consumer connects (or ctx is cancelled).
+func OpenWriter(ctx context.Context, spec string, std io.Writer) (io.WriteCloser, error) {
 	switch {
 	case isStdAlias(spec, "stdout"):
-		return nopWriteCloser{os.Stdout}, nil
+		return nopWriteCloser{std}, nil
 	case strings.HasPrefix(spec, unixScheme):
 		return listenUnix(ctx, strings.TrimPrefix(spec, unixScheme))
 	default:
@@ -50,13 +50,14 @@ func OpenWriter(ctx context.Context, spec string) (io.WriteCloser, error) {
 }
 
 // OpenReader resolves a sink's --input spec to the io.ReadCloser a record.Reader
-// reads. "", "-", and "stdin" select os.Stdin. "unix:/path" dials the socket,
-// retrying with backoff until a producer is listening, and transparently
-// reconnects on disconnect; ctx cancels the wait and unblocks a blocked read.
-func OpenReader(ctx context.Context, spec string) (io.ReadCloser, error) {
+// reads. "", "-", and "stdin" return std (the caller passes cmd.InOrStdin() so
+// cobra's redirection is preserved). "unix:/path" dials the socket, retrying with
+// backoff until a producer is listening, and transparently reconnects on
+// disconnect; ctx cancels the wait and unblocks a blocked read.
+func OpenReader(ctx context.Context, spec string, std io.Reader) (io.ReadCloser, error) {
 	switch {
 	case isStdAlias(spec, "stdin"):
-		return io.NopCloser(os.Stdin), nil
+		return io.NopCloser(std), nil
 	case strings.HasPrefix(spec, unixScheme):
 		return dialUnix(ctx, strings.TrimPrefix(spec, unixScheme))
 	default:

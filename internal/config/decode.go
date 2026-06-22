@@ -15,6 +15,8 @@ var sharedKeys = map[string]bool{
 	"rpc":     true,
 	"metrics": true,
 	"log":     true,
+	"output":  true,
+	"input":   true,
 }
 
 // streamTarget is the decode shape for evm-stream: shared keys squashed onto

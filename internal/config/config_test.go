@@ -394,6 +394,55 @@ events = ["Transfer"]
 	})
 }
 
+// TestSharedOutputInputDecode verifies the top-level output/input transport keys
+// decode (squashed onto every tool's config) and that AutomaticEnv supplies them.
+func TestSharedOutputInputDecode(t *testing.T) {
+	const body = `
+output = "unix:/run/evm-out.sock"
+input = "unix:/run/evm-in.sock"
+`
+	// A producer reads the output key.
+	l, err := New(Options{ConfigFile: writeConfig(t, body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc, err := l.DecodeStream(false)
+	if err != nil {
+		t.Fatalf("DecodeStream: %v", err)
+	}
+	if sc.Output != "unix:/run/evm-out.sock" {
+		t.Errorf("stream output = %q, want unix:/run/evm-out.sock", sc.Output)
+	}
+
+	// A sink reads the input key from the same shared surface.
+	l2, err := New(Options{ConfigFile: writeConfig(t, body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc, err := l2.DecodeKafka(false)
+	if err != nil {
+		t.Fatalf("DecodeKafka: %v", err)
+	}
+	if kc.Input != "unix:/run/evm-in.sock" {
+		t.Errorf("kafka input = %q, want unix:/run/evm-in.sock", kc.Input)
+	}
+
+	// AutomaticEnv supplies the top-level output key (EVM_TOOLS_OUTPUT) with no
+	// config file present.
+	t.Setenv("EVM_TOOLS_OUTPUT", "unix:/env-out.sock")
+	lEnv, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scEnv, err := lEnv.DecodeStream(false)
+	if err != nil {
+		t.Fatalf("DecodeStream(env): %v", err)
+	}
+	if scEnv.Output != "unix:/env-out.sock" {
+		t.Errorf("stream output from env = %q, want unix:/env-out.sock", scEnv.Output)
+	}
+}
+
 // TestBalanceScalarFlagsBindAndPreserve is the evm-balance analogue: --interval
 // and --every-blocks bind to balance.interval / balance.every_blocks via
 // flagBindings, a set flag overrides the config file, and an unset flag leaves

@@ -255,6 +255,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("metrics.enabled", false)
 	v.SetDefault("metrics.path", "/metrics")
 
+	// Register the transport keys (empty = stdout/stdin) so they are in the
+	// settings keyset and AutomaticEnv (EVM_TOOLS_OUTPUT / EVM_TOOLS_INPUT) and a
+	// config value resolve even when the key is absent from the file.
+	v.SetDefault("output", "")
+	v.SetDefault("input", "")
+
 	v.SetDefault("stream.poll_interval", "2s")
 	v.SetDefault("stream.log_chunk_blocks", 2000)
 	v.SetDefault("stream.from_block", "latest")

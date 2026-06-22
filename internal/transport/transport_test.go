@@ -2,12 +2,14 @@ package transport
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,26 +29,40 @@ func socketPath(t *testing.T) string {
 
 func TestOpenStdDefaults(t *testing.T) {
 	ctx := context.Background()
+	// The stdout aliases write to the provided std writer (so cobra's
+	// cmd.OutOrStdout redirection is preserved) and Close is a no-op.
 	for _, s := range []string{"", "-", "stdout"} {
-		w, err := OpenWriter(ctx, s)
+		var buf bytes.Buffer
+		w, err := OpenWriter(ctx, s, &buf)
 		if err != nil {
 			t.Fatalf("OpenWriter(%q): %v", s, err)
 		}
-		if err := w.Close(); err != nil { // no-op: must not close os.Stdout
+		if _, err := io.WriteString(w, "hi\n"); err != nil {
+			t.Fatalf("write(%q): %v", s, err)
+		}
+		if err := w.Close(); err != nil { // no-op: must not close the underlying stream
 			t.Errorf("Close writer(%q): %v", s, err)
 		}
+		if buf.String() != "hi\n" {
+			t.Errorf("std writer(%q): got %q, want %q", s, buf.String(), "hi\n")
+		}
 	}
+	// The stdin aliases read from the provided std reader.
 	for _, s := range []string{"", "-", "stdin"} {
-		r, err := OpenReader(ctx, s)
+		r, err := OpenReader(ctx, s, strings.NewReader("yo\n"))
 		if err != nil {
 			t.Fatalf("OpenReader(%q): %v", s, err)
 		}
+		got, _ := io.ReadAll(r)
+		if string(got) != "yo\n" {
+			t.Errorf("std reader(%q): got %q, want %q", s, got, "yo\n")
+		}
 		_ = r.Close()
 	}
-	if _, err := OpenWriter(ctx, "tcp://x"); err == nil {
+	if _, err := OpenWriter(ctx, "tcp://x", io.Discard); err == nil {
 		t.Error("OpenWriter with unsupported spec: want error")
 	}
-	if _, err := OpenReader(ctx, "bogus:/x"); err == nil {
+	if _, err := OpenReader(ctx, "bogus:/x", strings.NewReader("")); err == nil {
 		t.Error("OpenReader with unsupported spec: want error")
 	}
 }
@@ -59,7 +75,7 @@ func TestUnixRoundTrip(t *testing.T) {
 
 	werr := make(chan error, 1)
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path) // blocks until the reader connects
+		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout) // blocks until the reader connects
 		if err != nil {
 			werr <- err
 			return
@@ -74,7 +90,7 @@ func TestUnixRoundTrip(t *testing.T) {
 		werr <- nil
 	}()
 
-	r, err := OpenReader(ctx, "unix:"+path) // retries until the producer listens
+	r, err := OpenReader(ctx, "unix:"+path, os.Stdin) // retries until the producer listens
 	if err != nil {
 		t.Fatalf("OpenReader: %v", err)
 	}
@@ -104,7 +120,7 @@ func TestUnixReconnectAcrossPeerRestart(t *testing.T) {
 	serveOnce := func(line string) <-chan error {
 		done := make(chan error, 1)
 		go func() {
-			w, err := OpenWriter(ctx, "unix:"+path)
+			w, err := OpenWriter(ctx, "unix:"+path, os.Stdout)
 			if err != nil {
 				done <- err
 				return
@@ -120,7 +136,7 @@ func TestUnixReconnectAcrossPeerRestart(t *testing.T) {
 	}
 
 	done1 := serveOnce("a\n")
-	r, err := OpenReader(ctx, "unix:"+path)
+	r, err := OpenReader(ctx, "unix:"+path, os.Stdin)
 	if err != nil {
 		t.Fatalf("OpenReader: %v", err)
 	}
@@ -187,7 +203,7 @@ func TestReaderCtxCancelUnblocksRead(t *testing.T) {
 
 	// Producer accepts but sends nothing, holding the connection open until ctx.
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path)
+		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout)
 		if err != nil {
 			return
 		}
@@ -195,7 +211,7 @@ func TestReaderCtxCancelUnblocksRead(t *testing.T) {
 		_ = w.Close()
 	}()
 
-	r, err := OpenReader(ctx, "unix:"+path)
+	r, err := OpenReader(ctx, "unix:"+path, os.Stdin)
 	if err != nil {
 		t.Fatalf("OpenReader: %v", err)
 	}

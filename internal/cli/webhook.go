@@ -78,7 +78,12 @@ func webhookRun(cmd *cobra.Command, f *sinkFlags) error {
 		"filters", resolved.FilterSummary,
 	)
 
-	reader := record.NewReader(cmd.InOrStdin())
+	in, err := f.openInput(cmd, cfg.Input)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	reader := record.NewReader(in)
 	sink, err := webhooksink.New(webhooksink.Options{
 		Reader:        reader,
 		Poster:        poster,

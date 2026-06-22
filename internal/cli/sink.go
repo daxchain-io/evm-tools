@@ -2,12 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/daxchain-io/evm-tools/internal/config"
 	"github.com/daxchain-io/evm-tools/internal/logging"
+	"github.com/daxchain-io/evm-tools/internal/transport"
 )
 
 // SinkTool identifies which sink a command tree is for. Sinks read JSONL on
@@ -33,6 +35,11 @@ const (
 // surface, so the --rpc-* flags are absent.
 type sinkFlags struct {
 	configFile string
+
+	// input is the record transport spec: "" / "-" / "stdin" (default) reads JSONL
+	// from stdin; "unix:/path" dials a producer's socket. Resolved with config
+	// (top-level [input]) by openInput.
+	input string
 
 	metricsEnabled bool
 	metricsAddr    string
@@ -133,6 +140,8 @@ func bindSinkSharedFlags(root *cobra.Command, f *sinkFlags) {
 	pf := root.PersistentFlags()
 
 	pf.StringVarP(&f.configFile, "config", "c", "", "path to the evm-tools TOML config file")
+
+	pf.StringVar(&f.input, "input", "", `record source: "-"/"stdin" (default) or "unix:/path" to dial a producer`)
 
 	pf.BoolVar(&f.metricsEnabled, "metrics", false, "enable the Prometheus metrics endpoint")
 	pf.StringVar(&f.metricsAddr, "metrics-addr", "", "metrics bind address, e.g. :9002")
@@ -281,6 +290,20 @@ func (f *sinkFlags) allowExecEnabled() bool {
 		return true
 	}
 	return os.Getenv("EVM_TOOLS_ALLOW_EXEC") == "1"
+}
+
+// openInput resolves the sink's record source with flag-over-config precedence
+// (--input wins, otherwise the top-level [input] config value, which Viper
+// resolves from env > file > default; empty means stdin via the cobra stream) and
+// opens the transport. The caller must Close the returned reader. It is not in
+// flagBindings because --input maps to the same key for all sinks, so precedence
+// is applied here rather than via Viper.
+func (f *sinkFlags) openInput(cmd *cobra.Command, cfgInput string) (io.ReadCloser, error) {
+	spec := cfgInput
+	if cmd.Flags().Changed("input") {
+		spec = f.input
+	}
+	return transport.OpenReader(cmd.Context(), spec, cmd.InOrStdin())
 }
 
 // loadConfig builds the config loader with the sink's flag bindings wired in.

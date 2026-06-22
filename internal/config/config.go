@@ -63,6 +63,13 @@ type Shared struct {
 	RPC     RPCConfig     `mapstructure:"rpc"`
 	Metrics MetricsConfig `mapstructure:"metrics"`
 	Log     LogConfig     `mapstructure:"log"`
+	// Output is the record transport for producers: "" (default) writes JSONL to
+	// stdout, "unix:/path" listens on a Unix-domain socket. Producer-only (sinks
+	// ignore it), mirroring how [rpc] lives here but is unused by sinks.
+	Output string `mapstructure:"output"`
+	// Input is the record transport for sinks: "" (default) reads JSONL from
+	// stdin, "unix:/path" dials a producer's socket. Sink-only.
+	Input string `mapstructure:"input"`
 	// AllowExec gates _cmd config keys. It is sourced from --allow-exec or
 	// EVM_TOOLS_ALLOW_EXEC and is not a TOML key itself.
 	AllowExec bool `mapstructure:"-"`

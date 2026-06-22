@@ -132,7 +132,13 @@ func redisRun(cmd *cobra.Command, f *sinkFlags) error {
 		"target", appender.Target(), "stream", resolved.Stream, "dedup", resolved.Dedup,
 		"max_len", resolved.MaxLen)
 
-	reader := record.NewReader(cmd.InOrStdin())
+	in, err := f.openInput(cmd, cfg.Input)
+	if err != nil {
+		_ = appender.Close()
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	reader := record.NewReader(in)
 	sink, err := redissink.New(redissink.Options{
 		Reader:        reader,
 		Appender:      appender,

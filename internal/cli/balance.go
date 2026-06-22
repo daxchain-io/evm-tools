@@ -16,6 +16,7 @@ import (
 	"github.com/daxchain-io/evm-tools/internal/metrics"
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
+	"github.com/daxchain-io/evm-tools/internal/transport"
 )
 
 // balanceRun implements `evm-balance run`: load config, resolve mTLS material
@@ -113,7 +114,11 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	}()
 	logger.Info("health/metrics server listening", "addr", srv.Addr(), "metrics_enabled", mc.Enabled)
 
-	writer := record.NewWriter(cmd.OutOrStdout())
+	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout())
+	if err != nil {
+		return fmt.Errorf("open output: %w", err)
+	}
+	writer := record.NewWriter(out)
 
 	poller, err := balance.New(balance.Options{
 		Client:          client,
@@ -148,6 +153,9 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	}
 	if flushErr := writer.Flush(); flushErr != nil {
 		logger.Warn("final stdout flush", "error", flushErr)
+	}
+	if closeErr := out.Close(); closeErr != nil {
+		logger.Warn("output transport close", "error", closeErr)
 	}
 	return runErr
 }

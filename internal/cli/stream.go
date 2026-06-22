@@ -17,6 +17,7 @@ import (
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 	"github.com/daxchain-io/evm-tools/internal/stream"
+	"github.com/daxchain-io/evm-tools/internal/transport"
 )
 
 // shutdownGrace bounds the graceful-shutdown window before the metrics server
@@ -125,7 +126,11 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		return fmt.Errorf("invalid stream.poll_interval %q: %w", cfg.Stream.PollInterval, err)
 	}
 
-	writer := record.NewWriter(cmd.OutOrStdout())
+	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout())
+	if err != nil {
+		return fmt.Errorf("open output: %w", err)
+	}
+	writer := record.NewWriter(out)
 
 	// Durable resume cursor: when configured, the stream persists progress each
 	// poll and resumes from it on restart (gap-free) instead of jumping to head.
@@ -172,6 +177,9 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 	}
 	if flushErr := writer.Flush(); flushErr != nil {
 		logger.Warn("final stdout flush", "error", flushErr)
+	}
+	if closeErr := out.Close(); closeErr != nil {
+		logger.Warn("output transport close", "error", closeErr)
 	}
 	return runErr
 }

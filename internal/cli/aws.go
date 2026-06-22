@@ -67,7 +67,7 @@ func awsSQSRun(cmd *cobra.Command, f *sinkFlags) error {
 	if err != nil {
 		return err
 	}
-	return runAWSSink(cmd, f, "evm_sink_aws_sqs", ":9005", cfg.Chain, cfg.Metrics, cfg.AWSSQS.Metrics, pub, r)
+	return runAWSSink(cmd, f, "evm_sink_aws_sqs", ":9005", cfg.Chain, cfg.Input, cfg.Metrics, cfg.AWSSQS.Metrics, pub, r)
 }
 
 // awsSNSRun implements `evm-sink-aws-sns run`.
@@ -88,12 +88,12 @@ func awsSNSRun(cmd *cobra.Command, f *sinkFlags) error {
 	if err != nil {
 		return err
 	}
-	return runAWSSink(cmd, f, "evm_sink_aws_sns", ":9006", cfg.Chain, cfg.Metrics, cfg.AWSSNS.Metrics, pub, r)
+	return runAWSSink(cmd, f, "evm_sink_aws_sns", ":9006", cfg.Chain, cfg.Input, cfg.Metrics, cfg.AWSSNS.Metrics, pub, r)
 }
 
 // runAWSSink wires metrics/health/server around the shared awssink loop and runs
 // it until EOF or signal, then shuts down gracefully.
-func runAWSSink(cmd *cobra.Command, f *sinkFlags, namespace, defaultAddr, chainName string,
+func runAWSSink(cmd *cobra.Command, f *sinkFlags, namespace, defaultAddr, chainName, cfgInput string,
 	sharedM, toolM config.MetricsConfig, pub awssink.Publisher, r resolvedAWS,
 ) error {
 	logger := slog.Default()
@@ -131,7 +131,13 @@ func runAWSSink(cmd *cobra.Command, f *sinkFlags, namespace, defaultAddr, chainN
 	logger.Info("aws sink started", "target", pub.Target(), "fifo", r.FIFO,
 		"readiness_probe", r.ProbeInterval > 0)
 
-	reader := record.NewReader(cmd.InOrStdin())
+	in, err := f.openInput(cmd, cfgInput)
+	if err != nil {
+		_ = pub.Close()
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	reader := record.NewReader(in)
 	sink, err := awssink.New(awssink.Options{
 		Reader:        reader,
 		Publisher:     pub,

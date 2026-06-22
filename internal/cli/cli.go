@@ -32,6 +32,11 @@ type sharedFlags struct {
 
 	chain string
 
+	// output is the record transport spec: "" / "-" / "stdout" (default) write
+	// JSONL to stdout; "unix:/path" listens on a Unix-domain socket. Resolved with
+	// config (top-level [output]) by outputSpec.
+	output string
+
 	rpcURL         string
 	rpcClientCert  string
 	rpcClientKey   string
@@ -125,6 +130,8 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 
 	pf.StringVar(&f.chain, "chain", "", `chain label for records/metrics (default: derived from the resolved chain id, e.g. "ethereum"; the chain id always comes from RPC)`)
 
+	pf.StringVar(&f.output, "output", "", `record destination: "-"/"stdout" (default) or "unix:/path" to listen for a sink to connect`)
+
 	pf.StringVar(&f.rpcURL, "rpc-url", "", "full EVM RPC endpoint URL (including port when needed)")
 	pf.StringVar(&f.rpcClientCert, "rpc-client-cert", "", "path to the mTLS client certificate")
 	pf.StringVar(&f.rpcClientKey, "rpc-client-key", "", "path to the mTLS client private key")
@@ -165,4 +172,16 @@ func bindBalanceFlags(root *cobra.Command, f *sharedFlags) {
 	pf.StringArrayVar(&f.balanceERC20, "erc20", nil, `report an ERC-20 balance as "token:holder" (repeatable)`)
 	pf.StringVar(&f.balanceInterval, "interval", "", "sampling cadence, e.g. 30s (set this or --every-blocks)")
 	pf.IntVar(&f.balanceEveryBlocks, "every-blocks", 0, "sample every N new blocks instead of on a time interval")
+}
+
+// outputSpec resolves the producer's record-destination spec with flag-over-config
+// precedence: an explicit --output wins, otherwise the top-level [output] config
+// value (which Viper already resolves from env > file > default). An empty result
+// means stdout. It is not in flagBindings because --output maps to the same key
+// for both producers, so the precedence is applied here rather than via Viper.
+func (f *sharedFlags) outputSpec(cmd *cobra.Command, cfgOutput string) string {
+	if cmd.Flags().Changed("output") {
+		return f.output
+	}
+	return cfgOutput
 }
