@@ -25,6 +25,7 @@ makes the suite composable.
 - [evm-stream](#evm-stream)
 - [evm-balance](#evm-balance)
 - [Configuration](#configuration)
+- [Record Transport](#record-transport)
 - [RPC Transport Security](#rpc-transport-security)
 - [Secret Handling](#secret-handling)
 - [RPC Health Checks](#rpc-health-checks)
@@ -901,6 +902,58 @@ Rules:
 - If no `sh` is present (e.g. a distroless/scratch image), a `_cmd` key is a
   fatal config error with a clear "shell not found" message; use env
   interpolation or a mounted secret file instead.
+
+## Record Transport
+
+By default a producer writes JSONL to stdout and a sink reads it from stdin, so a
+shell pipe (`evm-stream | evm-sink-file`) connects them. That is simple and fast
+(a pipe is an in-kernel buffer) but couples their lifecycles to one process tree
+and is strictly one producer → one sink.
+
+The optional **Unix-domain-socket transport** lets a producer and a sink run as
+independent processes and connect directly, with no shell pipe. It is opt-in and
+sits behind the unchanged `record` contract: producers take `--output` and sinks
+take `--input` (top-level `[output]`/`[input]` config keys, or
+`EVM_TOOLS_OUTPUT`/`EVM_TOOLS_INPUT`), each resolving to stdout/stdin by default
+or a `unix:/path` socket. The transport only swaps the `io.Writer`/`io.Reader`
+that `record.Writer`/`record.Reader` wrap, so the JSONL bytes on the wire are
+identical to the pipe.
+
+```sh
+evm-stream  run … --output unix:/run/evm/events.sock     # producer listens
+evm-sink-*  run … --input  unix:/run/evm/events.sock     # sink dials, reconnects
+```
+
+Behavior (`internal/transport`):
+
+- **Producer side** listens and fans each record out to every connected consumer.
+  A slow consumer applies lockstep backpressure (the lossless invariant — the
+  producer waits rather than dropping); a consumer whose write fails is dropped
+  without affecting the others; a consumer that connects mid-stream gets the live
+  tail. `--block-until-consumer` (default on) makes the producer wait for the
+  first consumer before emitting and block while none are connected, so a sink
+  that starts shortly after the producer loses nothing; `=false` is
+  fire-and-forget (drop with no consumer). A stale socket left by an unclean exit
+  is removed on startup (a live one is left in place so a second instance fails
+  fast); the socket file is removed on clean shutdown.
+- **Sink side** dials with jittered backoff until the producer is listening and a
+  line-oriented reader transparently reconnects on disconnect, never splicing a
+  partial record across a reconnect. `ctx` cancellation unblocks a blocked read so
+  shutdown is prompt. Because it reconnects, a `unix:` sink does **not** exit when
+  the producer stops (unlike a closed pipe, which yields EOF and ends the sink) —
+  it waits for the producer to return; stop it with a signal.
+- **Security**: the socket is created mode `0600` inside a `0700` directory, so
+  only the producer's user can connect — no listening port and no TLS for a local
+  hand-off. On Linux the socket file's mode gates `connect()`; on macOS that is
+  gated by directory traversal, which the `0700` parent directory covers.
+
+What the socket transport deliberately does **not** provide is durability or
+replay: a sink that connects late or reconnects after downtime receives the live
+tail, not the records it missed. Durable, replay-from-offset fan-out remains the
+job of a broker sink (`evm-sink-kafka` / `evm-sink-redis`), which persists a log
+that any number of independent consumers read at their own pace. Linux and macOS
+are first-class; on Windows the stdout/stdin pipe remains the portable path (a
+named-pipe backend could slot behind the same flags later).
 
 ## RPC Transport Security
 

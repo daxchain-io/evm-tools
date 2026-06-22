@@ -162,6 +162,44 @@ evm-stream run | evm-sink-file --path /var/log/evm-tools/events.jsonl
 Every command also takes `-c`/`--config` to point at an explicit config file
 instead of the auto-discovered one.
 
+### Without a shell pipe — Unix socket
+
+A shell pipe ties a producer and a sink to one process tree. To run them as
+**independent processes** that connect directly, give the producer `--output` and
+the sink `--input` a `unix:` socket (default stays stdout/stdin):
+
+```sh
+# Start each on its own (any order — the sink retries until the producer listens):
+evm-stream run --rpc-url "${RPC_URL}" --chain ethereum \
+  --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --output unix:/run/evm/usdt.sock
+
+evm-sink-file run --input unix:/run/evm/usdt.sock --path /var/log/evm-tools/usdt.jsonl
+```
+
+- **Same JSONL contract** travels over the socket; only the carrier changes. Also
+  settable via `[output]`/`[input]` in config or `EVM_TOOLS_OUTPUT`/`EVM_TOOLS_INPUT`.
+- **Lossless backpressure** is preserved (a slow sink throttles the producer).
+- **Startup order doesn't matter**: by default the producer waits for a consumer
+  before emitting (`--block-until-consumer`, on by default), so a sink that starts
+  a little later loses nothing. Pass `--block-until-consumer=false` for
+  fire-and-forget (drop when no consumer is connected).
+- **Fan-out**: multiple sinks can connect to one producer's socket and each
+  receives every record (the slowest gates the pace).
+- **Resilient**: a `unix:` sink keeps running across producer restarts — on
+  disconnect it waits and reconnects rather than exiting on EOF the way a closed
+  pipe does. Stop it with Ctrl-C.
+- **Owner-only**: the socket is created mode `0600` in a `0700` directory, so
+  only the producer's user can connect — no port, no TLS for a local hand-off.
+  (Linux gates connect on the socket's mode; macOS on directory traversal.)
+
+What a socket **doesn't** do is replay: a sink that connects late or reconnects
+after downtime gets the live tail, not history. When you need durable,
+replay-from-the-beginning fan-out, use a broker sink (`evm-sink-kafka` /
+`evm-sink-redis`) and read from its log.
+
+> **Linux & macOS** are first-class. On Windows, prefer the stdout/stdin pipe.
+
 ## Configuration
 
 One shared config file serves every tool. The shared `[rpc]` / `[metrics]` /

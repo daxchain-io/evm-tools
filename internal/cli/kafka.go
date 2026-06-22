@@ -77,6 +77,7 @@ func kafkaRun(cmd *cobra.Command, f *sinkFlags) error {
 
 	in, err := f.openInput(cmd, cfg.Input)
 	if err != nil {
+		_ = pub.Close()
 		return err
 	}
 	defer func() { _ = in.Close() }()

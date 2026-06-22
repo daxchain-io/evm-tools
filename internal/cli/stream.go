@@ -131,6 +131,13 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 	if err != nil {
 		return fmt.Errorf("open output: %w", err)
 	}
+	// Close the output on every return path (including an error before Run);
+	// deferred so it runs after the final writer.Flush below. Close is idempotent.
+	defer func() {
+		if cerr := out.Close(); cerr != nil {
+			logger.Warn("output transport close", "error", cerr)
+		}
+	}()
 	writer := record.NewWriter(out)
 
 	// Durable resume cursor: when configured, the stream persists progress each
@@ -178,9 +185,6 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 	}
 	if flushErr := writer.Flush(); flushErr != nil {
 		logger.Warn("final stdout flush", "error", flushErr)
-	}
-	if closeErr := out.Close(); closeErr != nil {
-		logger.Warn("output transport close", "error", closeErr)
 	}
 	return runErr
 }

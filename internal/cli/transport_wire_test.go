@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/transport"
 )
@@ -116,6 +118,51 @@ topic = "t"
 	if _, err := runSink(context.Background(), t, ToolSinkKafka, "", "validate", "--config", cfg, "--input", "unix:/tmp/evm-in.sock"); err != nil {
 		t.Fatalf("validate with --input should succeed without opening the socket: %v", err)
 	}
+}
+
+// TestOutputInputSpecPrecedence verifies flag-over-config precedence for the
+// transport specs: an explicit flag wins, an unset flag falls back to config, and
+// no config means the stdout/stdin default.
+func TestOutputInputSpecPrecedence(t *testing.T) {
+	// outputSpec is a pure resolver.
+	f := &sharedFlags{}
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&f.output, "output", "", "")
+	if err := cmd.Flags().Set("output", "flag-out"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outputSpec(cmd, "cfg-out"); got != "flag-out" {
+		t.Errorf("flag set: outputSpec = %q, want flag-out", got)
+	}
+
+	f2 := &sharedFlags{}
+	cmd2 := &cobra.Command{}
+	cmd2.Flags().StringVar(&f2.output, "output", "", "")
+	if got := f2.outputSpec(cmd2, "cfg-out"); got != "cfg-out" {
+		t.Errorf("flag unset: outputSpec = %q, want cfg-out", got)
+	}
+	if got := f2.outputSpec(cmd2, ""); got != "" {
+		t.Errorf("no flag, no config: outputSpec = %q, want empty", got)
+	}
+
+	// openInput resolves the same way: flag --input=- (stdin) must win over a
+	// config socket spec. If config wrongly won, dialing the nonexistent socket
+	// would retry until the short ctx expires and error.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	fs := &sinkFlags{}
+	scmd := &cobra.Command{}
+	scmd.SetIn(strings.NewReader("x\n"))
+	scmd.SetContext(ctx)
+	scmd.Flags().StringVar(&fs.input, "input", "", "")
+	if err := scmd.Flags().Set("input", "-"); err != nil {
+		t.Fatal(err)
+	}
+	in, err := fs.openInput(scmd, "unix:/nonexistent.sock")
+	if err != nil {
+		t.Fatalf("openInput should resolve to stdin (flag wins): %v", err)
+	}
+	_ = in.Close()
 }
 
 // TestStreamValidateAcceptsOutputFlag confirms --output is bound on producers and

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -32,9 +33,23 @@ func listenUnix(ctx context.Context, path string, blockUntilConsumer bool) (io.W
 		return nil, errors.New("transport: empty unix socket path in --output")
 	}
 	removeStaleSocket(path)
+	// Create the parent directory owner-only so a connector needs owner traversal —
+	// this is the durable control, and it covers macOS, which gates connect on
+	// directory traversal rather than the socket file's own mode. A pre-existing
+	// directory keeps its mode (best-effort).
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0o700)
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("transport: listen %s: %w", path, err)
+	}
+	// Restrict the socket to its owner: on Linux the file's mode gates connect, so
+	// only the producer's user can connect. (There is a microsecond TOCTOU between
+	// Listen and Chmod; the 0700 parent directory above is the race-free control.)
+	if cerr := os.Chmod(path, 0o600); cerr != nil {
+		_ = ln.Close() // unlinks the socket file
+		return nil, fmt.Errorf("transport: secure socket %s: %w", path, cerr)
 	}
 	w := &unixFanoutWriter{
 		ctx:        ctx,
@@ -110,44 +125,62 @@ func (w *unixFanoutWriter) waitForConns(n int) error {
 	return nil
 }
 
-// Write delivers p to every connected consumer.
+// Write delivers p to every connected consumer. With blockUntil set it never
+// reports success for a record that reached zero live consumers: if every target
+// dies before receiving it, Write blocks for a new consumer and resends, so the
+// producer's checkpoint never advances past an undelivered record (the lossless
+// invariant). Without blockUntil a write with no live consumer is dropped
+// (fire-and-forget).
 func (w *unixFanoutWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	for len(w.conns) == 0 && w.blockUntil && !w.closed {
-		w.cond.Wait()
-	}
-	if w.closed {
-		w.mu.Unlock()
-		if err := w.ctx.Err(); err != nil {
-			return 0, err
-		}
-		return 0, errWriterClosed
-	}
-	snapshot := make([]net.Conn, 0, len(w.conns))
-	for c := range w.conns {
-		snapshot = append(snapshot, c)
-	}
-	w.mu.Unlock()
-
-	// Write outside the lock so a slow consumer doesn't block accept or teardown;
-	// it still blocks this Write, which is the lockstep backpressure to the producer.
-	var dead []net.Conn
-	for _, c := range snapshot {
-		if _, err := c.Write(p); err != nil {
-			dead = append(dead, c)
-		}
-	}
-	if len(dead) > 0 {
+	for {
 		w.mu.Lock()
-		for _, c := range dead {
-			if _, ok := w.conns[c]; ok {
-				delete(w.conns, c)
-				_ = c.Close()
+		for len(w.conns) == 0 && w.blockUntil && !w.closed {
+			w.cond.Wait()
+		}
+		if w.closed {
+			w.mu.Unlock()
+			if err := w.ctx.Err(); err != nil {
+				return 0, err
+			}
+			return 0, errWriterClosed
+		}
+		snapshot := make([]net.Conn, 0, len(w.conns))
+		for c := range w.conns {
+			snapshot = append(snapshot, c)
+		}
+		w.mu.Unlock()
+
+		// Write outside the lock so a slow consumer doesn't block accept or
+		// teardown; it still blocks this Write — the lockstep backpressure to the
+		// producer.
+		var dead []net.Conn
+		delivered := 0
+		for _, c := range snapshot {
+			if _, err := c.Write(p); err != nil {
+				dead = append(dead, c)
+			} else {
+				delivered++
 			}
 		}
-		w.mu.Unlock()
+		if len(dead) > 0 {
+			w.mu.Lock()
+			for _, c := range dead {
+				if _, ok := w.conns[c]; ok {
+					delete(w.conns, c)
+					_ = c.Close()
+				}
+			}
+			w.mu.Unlock()
+		}
+		// If block-until-consumer is set and the record reached no live consumer
+		// (every target died), retry: block for a new consumer and resend rather
+		// than dropping it. Reaching >=1 live consumer is success (a consumer that
+		// died mid-record is dropped and gets the live tail on reconnect).
+		if delivered == 0 && w.blockUntil {
+			continue
+		}
+		return len(p), nil
 	}
-	return len(p), nil
 }
 
 // shutdown closes the listener and every consumer, removes the socket file, and
@@ -159,14 +192,16 @@ func (w *unixFanoutWriter) shutdown() {
 		return
 	}
 	w.closed = true
-	_ = w.ln.Close() // a UnixListener unlinks the socket file on Close
+	// ln.Close unlinks the socket file (net.Listen sets unlink-on-close); do not
+	// also os.Remove(path) — that would race a successor instance that may already
+	// have recreated the socket at the same path.
+	_ = w.ln.Close()
 	for c := range w.conns {
 		_ = c.Close()
 		delete(w.conns, c)
 	}
 	w.cond.Broadcast()
 	w.mu.Unlock()
-	_ = os.Remove(w.path)
 }
 
 // Close tears down the writer (idempotent).

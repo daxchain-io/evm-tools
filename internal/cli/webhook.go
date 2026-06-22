@@ -80,6 +80,7 @@ func webhookRun(cmd *cobra.Command, f *sinkFlags) error {
 
 	in, err := f.openInput(cmd, cfg.Input)
 	if err != nil {
+		_ = poster.Close()
 		return err
 	}
 	defer func() { _ = in.Close() }()

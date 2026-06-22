@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -195,6 +196,17 @@ func TestRemoveStaleSocket(t *testing.T) {
 			t.Error("expected the live socket to be left in place (EADDRINUSE)")
 		}
 	})
+
+	t.Run("leaves a non-socket file alone", func(t *testing.T) {
+		path := socketPath(t)
+		if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		removeStaleSocket(path) // not a socket; must not delete it
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("removeStaleSocket should not delete a non-socket file: %v", err)
+		}
+	})
 }
 
 // TestUnixFanOut verifies one producer delivers every record to multiple
@@ -263,6 +275,190 @@ func TestUnixFanOut(t *testing.T) {
 		if !slices.Equal(g, want) {
 			t.Errorf("reader%d got %v, want %v", i+1, g, want)
 		}
+	}
+}
+
+// TestUnixBlockUntilConsumerWaitsAtStartup verifies the lossless startup wait: with
+// block-until-consumer on, the producer emits nothing until a consumer connects.
+func TestUnixBlockUntilConsumerWaitsAtStartup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	path := socketPath(t)
+
+	emitted := make(chan struct{})
+	go func() {
+		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		if err != nil {
+			return
+		}
+		defer func() { _ = w.Close() }()
+		_, _ = io.WriteString(w, "rec-0\n") // reached only after a consumer connects
+		close(emitted)
+	}()
+
+	select {
+	case <-emitted:
+		t.Fatal("producer emitted before any consumer connected")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	r, err := OpenReader(ctx, "unix:"+path, os.Stdin)
+	if err != nil {
+		t.Fatalf("OpenReader: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	sc := bufio.NewScanner(r)
+	if !sc.Scan() || sc.Text() != "rec-0" {
+		t.Fatalf("after consumer connected: got %q err %v", sc.Text(), sc.Err())
+	}
+	select {
+	case <-emitted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("producer did not emit after a consumer connected")
+	}
+}
+
+// TestFanoutWriterResendsWhenLastConsumerDies verifies the lossless invariant: with
+// block-until-consumer on, a record that reaches zero live consumers is not
+// dropped — the writer blocks and resends it to the next consumer. Uses net.Pipe
+// for deterministic control (no socket buffering).
+func TestFanoutWriterResendsWhenLastConsumerDies(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &unixFanoutWriter{ctx: ctx, blockUntil: true, conns: make(map[net.Conn]struct{})}
+	w.cond = sync.NewCond(&w.mu)
+
+	// One consumer whose read side is closed, so a write to it fails.
+	c1a, c1b := net.Pipe()
+	_ = c1b.Close()
+	w.mu.Lock()
+	w.conns[c1a] = struct{}{}
+	w.mu.Unlock()
+
+	writeDone := make(chan error, 1)
+	go func() { _, werr := w.Write([]byte("rec-1\n")); writeDone <- werr }()
+	select {
+	case <-writeDone:
+		t.Fatal("Write returned (dropped) despite zero live consumers with block-until-consumer")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// A fresh consumer connects; the blocked Write must resend rec-1 to it.
+	c2a, c2b := net.Pipe()
+	got := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(c2b)
+		if sc.Scan() {
+			got <- sc.Text()
+		} else {
+			got <- ""
+		}
+	}()
+	w.mu.Lock()
+	w.conns[c2a] = struct{}{}
+	w.cond.Broadcast()
+	w.mu.Unlock()
+
+	select {
+	case line := <-got:
+		if line != "rec-1" {
+			t.Fatalf("resent record = %q, want rec-1", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("record was not resent to the new consumer")
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	_ = c2a.Close()
+	_ = c2b.Close()
+}
+
+// TestFanoutWriterDropsDeadConsumerKeepsOthers verifies a consumer whose write
+// fails is dropped without affecting the others. Uses net.Pipe for determinism.
+func TestFanoutWriterDropsDeadConsumerKeepsOthers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &unixFanoutWriter{ctx: ctx, blockUntil: true, conns: make(map[net.Conn]struct{})}
+	w.cond = sync.NewCond(&w.mu)
+
+	liveA, liveB := net.Pipe()
+	deadA, deadB := net.Pipe()
+	_ = deadB.Close() // dead consumer
+	w.mu.Lock()
+	w.conns[liveA] = struct{}{}
+	w.conns[deadA] = struct{}{}
+	w.mu.Unlock()
+
+	got := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(liveB)
+		if sc.Scan() {
+			got <- sc.Text()
+		} else {
+			got <- ""
+		}
+	}()
+	writeDone := make(chan error, 1)
+	go func() { _, werr := w.Write([]byte("rec-0\n")); writeDone <- werr }()
+
+	select {
+	case line := <-got:
+		if line != "rec-0" {
+			t.Fatalf("live consumer got %q, want rec-0", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("live consumer did not receive the record")
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	w.mu.Lock()
+	n := len(w.conns)
+	w.mu.Unlock()
+	if n != 1 {
+		t.Errorf("expected the dead consumer pruned (1 conn left), got %d", n)
+	}
+	_ = liveA.Close()
+	_ = liveB.Close()
+}
+
+// TestWriterCloseRemovesSocket verifies the socket file is gone after Close.
+func TestWriterCloseRemovesSocket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	path := socketPath(t)
+	w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: false})
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("socket should exist after OpenWriter: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("socket file should be gone after Close, stat err = %v", err)
+	}
+}
+
+// TestSocketIsOwnerOnly verifies the listener restricts the socket to mode 0600.
+func TestSocketIsOwnerOnly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	path := socketPath(t)
+	w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: false})
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("socket mode = %o, want 600", perm)
 	}
 }
 
