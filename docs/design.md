@@ -124,7 +124,7 @@ type-specific **`data`** payload.
 | `type` | string | Record type, e.g. `event`, `native_transfer`, `balance_sample`. Selects the `data` shape. |
 | `tool` | string | Producing tool, e.g. `evm-stream`. |
 | `name` | string | Name of the configured entry (stream contract, balance, token, ownership, or contract-state check) that produced the record. |
-| `chain` | string | Configured chain name, e.g. `my-chain`. |
+| `chain` | string | Chain label: the configured name (`--chain` / `[chain]`), or — when blank — one derived from the resolved chain id (e.g. `ethereum`, `base`, else `chain-<id>`). |
 | `chain_id` | integer | Resolved EVM chain ID (guaranteed within the JSON safe-integer range). |
 | `block_number` | integer | Source block number. |
 | `block_hash` | string | Source block hash, for provenance; not part of the dedup key. |
@@ -385,7 +385,8 @@ evm-stream run --rpc-url "${RPC_URL}" --contract 0xToken --from-block 19000000 -
 `evm-stream` can run with no config file at all: `--rpc-url` gives the endpoint
 and `--contract` (repeatable) / `--events` (default `Transfer`, resolved against
 the built-in standard ABIs) and/or `--native-transfers` give it something to
-monitor; `--chain` sets the record/metric label (the chain id is always resolved
+monitor; `--chain` sets the record/metric label (when omitted it is derived from
+the resolved chain id — e.g. `ethereum`, `base` — and the chain id always comes
 from RPC). `--from-block` (`"latest"` or a block number) and `--poll-interval`
 override `stream.from_block` / `stream.poll_interval`, so backfill height and
 head-poll cadence are reachable without a config file too. These flags merge on
@@ -428,8 +429,9 @@ e.g. `50`); set exactly one.
 Like `evm-stream`, `evm-balance` can run with no config file: `--rpc-url` gives
 the endpoint, `--native <address>` and `--erc20 <token>:<holder>` (both
 repeatable) name the targets, `--interval` / `--every-blocks` set the cadence
-(exactly one), and `--chain` sets the record/metric label. These flags merge on
-top of a config file, so flag targets add to configured ones. The ERC-721 and
+(exactly one), and `--chain` sets the record/metric label (derived from the chain
+id when omitted, as in `evm-stream`). These flags merge on top of a config file,
+so flag targets add to configured ones. The ERC-721 and
 contract-state targets stay config-file-only (the analog of `evm-stream` keeping
 custom ABIs in the file).
 
@@ -1078,7 +1080,9 @@ Per-transaction or per-counterparty identifiers — `tx_hash`, `log_index`, and
 the `from`/`to` of an observed transfer — are never labels. The shared label
 vocabulary stays close to `blockchain-exporter`:
 
-- `blockchain`: configured chain name, such as `my-chain`.
+- `blockchain`: chain label — the configured chain name (such as `my-chain`), or,
+  when `--chain` / `[chain]` is blank, one derived from the resolved chain id
+  (e.g. `ethereum`, `base`, else `chain-<id>`).
 - `chain_id`: resolved EVM chain ID, or `unknown` before it is available.
 - `operation`: RPC operation name, such as `eth_chainId`, `eth_blockNumber`,
   `eth_getLogs`, or `eth_getBlockByNumber`.

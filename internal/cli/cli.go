@@ -123,7 +123,7 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 
 	pf.StringVarP(&f.configFile, "config", "c", "", "path to the evm-tools TOML config file")
 
-	pf.StringVar(&f.chain, "chain", "", "chain label for records/metrics (the chain id is always resolved from RPC)")
+	pf.StringVar(&f.chain, "chain", "", `chain label for records/metrics (default: derived from the resolved chain id, e.g. "ethereum"; the chain id always comes from RPC)`)
 
 	pf.StringVar(&f.rpcURL, "rpc-url", "", "full EVM RPC endpoint URL (including port when needed)")
 	pf.StringVar(&f.rpcClientCert, "rpc-client-cert", "", "path to the mTLS client certificate")

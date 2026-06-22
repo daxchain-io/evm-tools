@@ -114,8 +114,9 @@ The shell expands `${RPC_URL}` before `evm-stream` sees it — use double quotes
 no quotes), not single quotes. (`evm-tools`' own `${VAR}` interpolation applies to
 config-**file** values; a value passed as a flag is taken verbatim.)
 
-`--chain` sets the record/metric label (the chain id is always resolved from
-RPC), event names resolve against the built-in ERC-20/721/1155 ABIs, and flags
+`--chain` sets the record/metric label — omit it and it's derived from the
+resolved chain id (e.g. `ethereum`, `base`), since the chain id always comes from
+RPC; event names resolve against the built-in ERC-20/721/1155 ABIs, and flags
 merge on top of a config file when both are present. By default the stream starts
 at the chain head (new blocks only); add `--from-block <number>` to backfill from
 a specific height and `--poll-interval <dur>` to tune the head-poll cadence — so
