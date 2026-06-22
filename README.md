@@ -83,20 +83,35 @@ checksums before installing — see
    ```
 
 **No config file?** `evm-stream` can run entirely from flags — point it at an RPC
-endpoint and say what to watch:
+endpoint and say what to watch. For example, to stream live Tether (USDT)
+transfers on Ethereum mainnet:
 
 ```sh
-# Watch a token's Transfer events (events resolve from the built-in ERC-20 ABI):
-evm-stream run --rpc-url https://my-rpc.example/v2/KEY \
-  --contract 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --events Transfer | jq
-
-# Or watch native ETH transfers:
-evm-stream run --rpc-url https://my-rpc.example/v2/KEY --native-transfers | jq
+evm-stream run \
+  --rpc-url https://eth-mainnet.example/v2/KEY \
+  --chain ethereum \
+  --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --events Transfer | jq
 ```
 
-`--contract` is repeatable, `--events` defaults to `Transfer`, and `--chain` sets
-the label (the chain id is always resolved from RPC). Flags merge on top of a
-config file when both are present.
+Each line is one decoded `Transfer` — `from`, `to`, and `value` in the token's
+base units (USDT has 6 decimals). `--contract` is repeatable and `--events`
+defaults to `Transfer`, so for a plain token you can drop `--events` entirely;
+swap in `--native-transfers` to follow native ETH instead:
+
+```sh
+# Shorter (Transfer is the default), and the native-ETH variant:
+evm-stream run --rpc-url https://eth-mainnet.example/v2/KEY \
+  --chain ethereum --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 | jq
+
+evm-stream run --rpc-url https://eth-mainnet.example/v2/KEY --native-transfers | jq
+```
+
+`--chain` sets the record/metric label (the chain id is always resolved from
+RPC), event names resolve against the built-in ERC-20/721/1155 ABIs, and flags
+merge on top of a config file when both are present. With no config the stream
+starts at the chain head (new blocks only) — set `[stream].from_block` in a
+config file to backfill from a specific height.
 
 > **stdout is data, stderr is diagnostics — never merge them.** `2>&1` would
 > corrupt the JSONL. Keep the producer's stdout flowing straight into the sink.
