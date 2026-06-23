@@ -67,17 +67,19 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
-      # Builds the windows binaries (incl. the go-winio named-pipe backend) and
-      # runs the windows-tagged transport tests — the named-pipe path can only be
-      # exercised on Windows. (Race detection runs on the Linux job above.)
+      # Build + vet the whole module on Windows (incl. the go-winio named-pipe
+      # backend), then run the transport tests — the named-pipe path can only be
+      # exercised on Windows. (Race detection runs on the Linux job above.) The
+      # rest of the suite has pre-existing Windows gaps tracked in #22, so the test
+      # step is scoped to the transport package until those are fixed.
       - name: Build
         run: go build ./...
 
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Test (transport)
+        run: go test ./internal/transport/...
 
   vuln:
     name: Vulnerability scan
@@ -89,6 +91,19 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+
+      # The named-pipe backend (go-winio) is behind //go:build windows, so the
+      # default linux scan above never sees it; scan the windows build config too.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: govulncheck (windows build config)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        env:
+          GOOS: windows
+          GOARCH: amd64
 
   docs:
     name: Markdown lint

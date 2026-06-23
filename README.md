@@ -205,8 +205,9 @@ evm-stream  run … --output pipe:evm-events        # → \\.\pipe\evm-events
 evm-sink-file run … --input pipe:evm-events
 ```
 
-The pipe's ACL (an owner-restricted security descriptor) is the access control,
-the Windows analogue of the `0600` socket. stdout/stdin works on every platform.
+The pipe's ACL is the access control — full access to the launching user (plus
+SYSTEM and Administrators), the Windows analogue of the `0600` socket.
+stdout/stdin works on every platform.
 
 ## Configuration
 

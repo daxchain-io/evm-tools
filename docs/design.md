@@ -954,13 +954,17 @@ job of a broker sink (`evm-sink-kafka` / `evm-sink-redis`), which persists a log
 that any number of independent consumers read at their own pace.
 
 **Platforms.** `unix:` is the Linux/macOS carrier. On Windows, use `pipe:` — a
-named pipe (`pipe:evm-events` expands to `\\.\pipe\evm-events`) whose ACL (an
-owner-restricted security descriptor granting the owner, SYSTEM, and
-Administrators) is the access control. Both backends share the same fan-out
-writer and reconnecting reader (the `pipe:` backend is built behind
-`//go:build windows` via `github.com/Microsoft/go-winio`; on non-Windows it
+named pipe (`pipe:evm-events` expands to `\\.\pipe\evm-events`) whose ACL is the
+access control: an SDDL built at startup from the launching user's own SID grants
+full access to that user (set as owner), plus SYSTEM and the local Administrators
+group — the analogue of the Unix socket's `0600`. (The user's SID is bound
+explicitly rather than via the dynamic OWNER-RIGHTS alias, which would widen to
+the Administrators group under an elevated/service token.) Both backends share the
+same fan-out writer and reconnecting reader; the `pipe:` backend is built behind
+`//go:build windows` via `github.com/Microsoft/go-winio` (on non-Windows it
 returns a clear "Windows only" error). stdout/stdin remains the portable default
-everywhere.
+everywhere. (`evm-sink-file` rotation/compression has known Windows limitations —
+see #22.)
 
 ## RPC Transport Security
 
@@ -1436,6 +1440,8 @@ Tagged releases build cross-platform archives for at least:
 - macOS amd64.
 - Linux arm64.
 - Linux amd64.
+- Windows arm64 (`.zip`).
+- Windows amd64 (`.zip`).
 
 Artifacts include the binaries, checksums, and the files installers need.
 **GoReleaser** fits well: it builds the binaries, generates and signs the
