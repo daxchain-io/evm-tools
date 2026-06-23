@@ -1561,12 +1561,39 @@ file at the repo root.
 Deployment notes and the constraints an enterprise sign-off should account for.
 
 - **Single producer instance per chain (no built-in HA).** A producer is one poll
-  loop with no leader election, work partitioning, or shared cursor. Running two
-  instances against the same chain/contracts double-emits records (sinks dedup by
-  the documented dedup key, but balance `*_sample` rows differ by `emitted_at` and
-  will not dedup). Run exactly one producer per chain. For failover use
-  active/passive (start a standby on failure) and accept the restart gap below, or
-  shard contracts/address ranges across instances in config.
+  loop with no leader election, so it does not self-coordinate with a second
+  instance. Running two instances against the same chain/contracts double-emits
+  records (event/native records dedup by the documented reorg-stable key, but
+  balance `*_sample` rows differ by `emitted_at` and will not dedup). Run exactly
+  one *active* producer per chain. Two HA patterns are supported with today's
+  building blocks — see the runbook below.
+
+  **Active/passive failover (recommended).** The durable resume cursor makes this
+  safe and gap-free:
+
+  1. Configure both the active and the standby identically, including the same
+     `stream.checkpoint_file` on shared or replicated storage (an NFS/EFS mount, a
+     replicated volume, or a path your orchestrator restores on failover).
+  2. Run **exactly one** instance at a time. The checkpoint file is a resume
+     cursor, **not a lock**, so mutual exclusion is the orchestrator's job: a
+     systemd unit pinned to one node with failover, or a Kubernetes Deployment with
+     `replicas: 1` and `strategy: Recreate` (which tears the old pod down before
+     starting the new one). Do not run an active/active pair.
+  3. On active failure the orchestrator starts the standby; it loads the shared
+     cursor and resumes from `cursor+1`, re-emitting at most the boundary block
+     (sinks dedup it). The only exposure is records produced during the failover
+     window — bounded by how fast the standby starts, not lost once it does.
+
+  **Work partitioning (no dedup needed).** Shard the watched set across instances
+  with separate config files so each owns a **disjoint** slice — e.g. split
+  `[[stream.contracts]]` (or `[balance]` targets) by contract/address across two
+  producers. Because the slices do not overlap, there is no double-emit and no
+  reliance on dedup; each shard still gets its own checkpoint for gap-free
+  restart. This scales a busy chain horizontally but does not provide failover for
+  a given shard (combine with active/passive per shard if you need both).
+
+  Leader election (a lease/lock so exactly one instance self-selects as active)
+  is a future enhancement; until then the orchestrator enforces single-active.
 - **Restart coverage gap (closed by a checkpoint).** By default `stream.from_block`
   is `latest`, so a producer that restarts resumes at the current head and does not
   backfill blocks missed while it was down. Set `stream.checkpoint_file` to a
