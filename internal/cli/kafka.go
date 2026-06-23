@@ -82,6 +82,14 @@ func kafkaRun(cmd *cobra.Command, f *sinkFlags) error {
 	}
 	defer func() { _ = in.Close() }()
 	reader := record.NewReader(in)
+	dlq, err := f.installDeadLetter(cmd, reader, string(ToolSinkKafka), cfg.DeadLetterFile, m, logger)
+	if err != nil {
+		_ = pub.Close()
+		return err
+	}
+	if dlq != nil {
+		defer func() { _ = dlq.Close() }()
+	}
 	sink, err := kafkasink.New(kafkasink.Options{
 		Reader:        reader,
 		Publisher:     pub,

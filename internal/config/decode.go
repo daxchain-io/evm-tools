@@ -11,12 +11,13 @@ import (
 // is. Sibling-tool sections (the other tool's namespace) are excluded so they
 // are ignored rather than rejected by strict decoding.
 var sharedKeys = map[string]bool{
-	"chain":   true,
-	"rpc":     true,
-	"metrics": true,
-	"log":     true,
-	"output":  true,
-	"input":   true,
+	"chain":            true,
+	"rpc":              true,
+	"metrics":          true,
+	"log":              true,
+	"output":           true,
+	"input":            true,
+	"dead_letter_file": true,
 }
 
 // streamTarget is the decode shape for evm-stream: shared keys squashed onto

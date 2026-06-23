@@ -11,6 +11,9 @@ func (w *Webhook) SetWorkers(n int) { w.workers.Set(float64(n)) }
 // IncConsumed counts one record read from stdin.
 func (w *Webhook) IncConsumed() { w.consumed.Inc() }
 
+// IncQuarantined counts one poison record routed to the dead-letter file.
+func (w *Webhook) IncQuarantined() { w.quarantined.Inc() }
+
 // IncFiltered counts one record dropped by the configured filters.
 func (w *Webhook) IncFiltered() { w.filtered.Inc() }
 

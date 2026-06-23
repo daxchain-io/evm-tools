@@ -209,6 +209,26 @@ The pipe's ACL is the access control — full access to the launching user (plus
 SYSTEM and Administrators), the Windows analogue of the `0600` socket.
 stdout/stdin works on every platform.
 
+### Poison records — dead-letter quarantine
+
+By default a sink is **fail-fast**: a line it can't parse (bad JSON, unsupported
+`schema_version`, trailing data) is a hard error and the sink exits non-zero — the
+stream is the contract, so it never silently skips a record. To keep a long-lived
+sink running past the occasional corrupt line, give it a **dead-letter file**:
+
+```sh
+evm-stream run | evm-sink-kafka run --dead-letter-file /var/log/evm-tools/dead-letter.jsonl
+```
+
+Each poison line is appended there as one JSONL entry
+(`{quarantined_at, sink, error, record_base64}` — the original bytes preserved
+losslessly via base64), counted in `<sink>_records_quarantined_total`, and the
+sink carries on. Nothing is dropped (the file *is* the record of it), so a failed
+quarantine write still halts the sink. Recover a line with
+`jq -r .record_base64 dead-letter.jsonl | base64 -d`. Also settable via the
+top-level `dead_letter_file` config key or `EVM_TOOLS_DEAD_LETTER_FILE`; omit it
+and fail-fast stays the default.
+
 ## Configuration
 
 One shared config file serves every tool. The shared `[rpc]` / `[metrics]` /

@@ -20,10 +20,11 @@ type SinkMetrics struct {
 	up      prometheus.Gauge
 	workers prometheus.Gauge
 
-	consumed  prometheus.Counter
-	delivered *prometheus.CounterVec // by record type
-	failed    *prometheus.CounterVec // by error_type
-	retries   prometheus.Counter
+	consumed    prometheus.Counter
+	delivered   *prometheus.CounterVec // by record type
+	failed      *prometheus.CounterVec // by error_type
+	retries     prometheus.Counter
+	quarantined prometheus.Counter
 
 	deliverDuration prometheus.Histogram
 	backoffSeconds  prometheus.Gauge
@@ -68,6 +69,7 @@ func NewSinkMetrics(namespace, chainName, chainID string) *SinkMetrics {
 	m.delivered = cv(namespace+"_records_delivered_total", "Records confirmed delivered downstream, by record type.", []string{sinkTypeLabel})
 	m.failed = cv(namespace+"_records_failed_total", "Delivery failures, by coarse error type.", []string{labelErrorType})
 	m.retries = c(namespace+"_delivery_retries_total", "Delivery retry attempts after a transient failure.")
+	m.quarantined = c(namespace+"_records_quarantined_total", "Poison records (unparseable/unsupported) routed to the dead-letter file instead of halting.")
 
 	m.deliverDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:        namespace + "_delivery_duration_seconds",
@@ -104,6 +106,9 @@ func (m *SinkMetrics) IncFailed(errorType string) { m.failed.WithLabelValues(err
 
 // IncRetry counts one delivery retry attempt after a transient failure.
 func (m *SinkMetrics) IncRetry() { m.retries.Inc() }
+
+// IncQuarantined counts one poison record routed to the dead-letter file.
+func (m *SinkMetrics) IncQuarantined() { m.quarantined.Inc() }
 
 // ObserveDeliver records one delivery duration.
 func (m *SinkMetrics) ObserveDeliver(d time.Duration) { m.deliverDuration.Observe(d.Seconds()) }

@@ -159,6 +159,73 @@ func TestReaderRejectsUnsupportedSchema(t *testing.T) {
 	}
 }
 
+// TestReaderQuarantineSkipsPoison verifies that with a quarantine hook installed
+// the reader routes each poison line (invalid JSON, trailing data, unsupported
+// schema_version) to the hook with the verbatim bytes + error and then continues,
+// returning only the valid records — instead of failing fast.
+func TestReaderQuarantineSkipsPoison(t *testing.T) {
+	good1 := `{"schema_version":1,"type":"event","tool":"evm-stream","name":"a","chain":"c","chain_id":1,"block_number":1,"emitted_at":"2026-06-19T12:00:00Z","data":{}}`
+	badJSON := `{"schema_version":1,"type":"event"` // truncated
+	badSchema := `{"schema_version":99,"type":"event","tool":"evm-stream","name":"x","chain":"c","chain_id":1,"block_number":1,"emitted_at":"2026-06-19T12:00:00Z","data":{}}`
+	good2 := `{"schema_version":1,"type":"event","tool":"evm-stream","name":"b","chain":"c","chain_id":1,"block_number":2,"emitted_at":"2026-06-19T12:00:00Z","data":{}}`
+	stream := strings.Join([]string{good1, badJSON, badSchema, good2}, "\n") + "\n"
+
+	type poison struct {
+		line string
+		err  error
+	}
+	var quarantined []poison
+	r := NewReader(strings.NewReader(stream))
+	r.Quarantine(func(line []byte, err error) error {
+		quarantined = append(quarantined, poison{line: string(line), err: err})
+		return nil
+	})
+
+	var names []string
+	for {
+		env, err := r.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error with quarantine installed: %v", err)
+		}
+		names = append(names, env.Name)
+	}
+
+	if want := []string{"a", "b"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("decoded names = %v, want %v (poison lines should be skipped)", names, want)
+	}
+	if len(quarantined) != 2 {
+		t.Fatalf("quarantined %d lines, want 2", len(quarantined))
+	}
+	if quarantined[0].line != badJSON {
+		t.Errorf("first quarantined line = %q, want the verbatim bad-JSON line %q", quarantined[0].line, badJSON)
+	}
+	if !strings.Contains(quarantined[0].err.Error(), "decode line") {
+		t.Errorf("first quarantine error should mention decode, got: %v", quarantined[0].err)
+	}
+	if quarantined[1].line != badSchema {
+		t.Errorf("second quarantined line = %q, want the verbatim bad-schema line %q", quarantined[1].line, badSchema)
+	}
+	if !errors.Is(quarantined[1].err, ErrSchemaUnsupported) {
+		t.Errorf("second quarantine error should be ErrSchemaUnsupported, got: %v", quarantined[1].err)
+	}
+}
+
+// TestReaderQuarantineErrorIsFatal verifies that if the quarantine hook itself
+// fails (e.g. the dead-letter write failed) the error is propagated from Next and
+// is fatal — a record is never dropped without a durable record of it.
+func TestReaderQuarantineErrorIsFatal(t *testing.T) {
+	sentinel := errors.New("dead-letter write failed")
+	r := NewReader(strings.NewReader(`{bad` + "\n" + `{"schema_version":1,"type":"event","name":"never"}` + "\n"))
+	r.Quarantine(func([]byte, error) error { return sentinel })
+	_, err := r.Next()
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected the hook error to propagate from Next, got: %v", err)
+	}
+}
+
 // TestReaderRawStableAcrossNext confirms Raw() reflects the most recent line and
 // that a copy taken before the next Next is not corrupted by buffer reuse.
 func TestReaderRawStableAcrossNext(t *testing.T) {

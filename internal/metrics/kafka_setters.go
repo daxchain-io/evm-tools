@@ -11,6 +11,9 @@ func (k *Kafka) SetWorkers(n int) { k.workers.Set(float64(n)) }
 // IncConsumed counts one record read from stdin.
 func (k *Kafka) IncConsumed() { k.consumed.Inc() }
 
+// IncQuarantined counts one poison record routed to the dead-letter file.
+func (k *Kafka) IncQuarantined() { k.quarantined.Inc() }
+
 // IncPublished counts one record confirmed published to the given topic.
 func (k *Kafka) IncPublished(topic string) { k.published.WithLabelValues(topic).Inc() }
 

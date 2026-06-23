@@ -260,6 +260,9 @@ func setDefaults(v *viper.Viper) {
 	// config value resolve even when the key is absent from the file.
 	v.SetDefault("output", "")
 	v.SetDefault("input", "")
+	// Dead-letter file (empty = fail-fast on poison records). Registered like the
+	// transport keys so EVM_TOOLS_DEAD_LETTER_FILE and a config value resolve.
+	v.SetDefault("dead_letter_file", "")
 
 	v.SetDefault("stream.poll_interval", "2s")
 	v.SetDefault("stream.log_chunk_blocks", 2000)

@@ -19,10 +19,11 @@ type Kafka struct {
 	workers prometheus.Gauge
 
 	// Record counters.
-	consumed  prometheus.Counter
-	published *prometheus.CounterVec // by topic
-	failed    *prometheus.CounterVec // by error_type
-	retries   prometheus.Counter
+	consumed    prometheus.Counter
+	published   *prometheus.CounterVec // by topic
+	failed      *prometheus.CounterVec // by error_type
+	retries     prometheus.Counter
+	quarantined prometheus.Counter
 
 	// Publish timing + backpressure.
 	publishDuration prometheus.Histogram
@@ -72,6 +73,7 @@ func NewKafka(chainName, chainID string) *Kafka {
 	k.published = cv("evm_sink_kafka_records_published_total", "Records confirmed published, by topic.", []string{kafkaTopicLabel})
 	k.failed = cv("evm_sink_kafka_records_failed_total", "Publish failures, by coarse error type.", []string{labelErrorType})
 	k.retries = c("evm_sink_kafka_publish_retries_total", "Publish retry attempts after a transient failure.")
+	k.quarantined = c("evm_sink_kafka_records_quarantined_total", "Poison records (unparseable/unsupported) routed to the dead-letter file instead of halting.")
 
 	k.publishDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:        "evm_sink_kafka_publish_duration_seconds",

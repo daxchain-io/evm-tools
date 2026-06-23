@@ -446,6 +446,43 @@ input = "unix:/run/evm-in.sock"
 	}
 }
 
+// TestSharedDeadLetterFileDecode verifies the top-level dead_letter_file key
+// decodes onto a sink's shared surface (so strict decode accepts it) and that
+// AutomaticEnv supplies it via EVM_TOOLS_DEAD_LETTER_FILE.
+func TestSharedDeadLetterFileDecode(t *testing.T) {
+	const body = `
+dead_letter_file = "/var/lib/evm-tools/dead-letter.jsonl"
+
+[kafka]
+brokers = ["localhost:9092"]
+topic = "t"
+`
+	l, err := New(Options{ConfigFile: writeConfig(t, body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc, err := l.DecodeKafka(false)
+	if err != nil {
+		t.Fatalf("DecodeKafka: %v", err)
+	}
+	if kc.DeadLetterFile != "/var/lib/evm-tools/dead-letter.jsonl" {
+		t.Errorf("kafka dead_letter_file = %q, want /var/lib/evm-tools/dead-letter.jsonl", kc.DeadLetterFile)
+	}
+
+	t.Setenv("EVM_TOOLS_DEAD_LETTER_FILE", "/env/dead-letter.jsonl")
+	lEnv, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := lEnv.DecodeRedis(false)
+	if err != nil {
+		t.Fatalf("DecodeRedis(env): %v", err)
+	}
+	if rc.DeadLetterFile != "/env/dead-letter.jsonl" {
+		t.Errorf("redis dead_letter_file from env = %q, want /env/dead-letter.jsonl", rc.DeadLetterFile)
+	}
+}
+
 // TestBalanceScalarFlagsBindAndPreserve is the evm-balance analogue: --interval
 // and --every-blocks bind to balance.interval / balance.every_blocks via
 // flagBindings, a set flag overrides the config file, and an unset flag leaves

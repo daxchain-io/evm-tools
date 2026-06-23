@@ -19,11 +19,12 @@ type File struct {
 	workers prometheus.Gauge
 
 	// Record counters.
-	consumed prometheus.Counter
-	filtered prometheus.Counter
-	written  *prometheus.CounterVec // by record type
-	failed   *prometheus.CounterVec // by error_type
-	retries  prometheus.Counter
+	consumed    prometheus.Counter
+	filtered    prometheus.Counter
+	written     *prometheus.CounterVec // by record type
+	failed      *prometheus.CounterVec // by error_type
+	retries     prometheus.Counter
+	quarantined prometheus.Counter
 
 	// Write timing + backpressure.
 	writeDuration   prometheus.Histogram
@@ -78,6 +79,7 @@ func NewFile(chainName, chainID string) *File {
 	f.written = cv("evm_sink_file_records_written_total", "Records confirmed written (and fsync'd when enabled), by record type.", []string{fileTypeLabel})
 	f.failed = cv("evm_sink_file_records_failed_total", "Write failures, by coarse error type.", []string{labelErrorType})
 	f.retries = c("evm_sink_file_write_retries_total", "Write retry attempts after a transient (disk-full) failure.")
+	f.quarantined = c("evm_sink_file_records_quarantined_total", "Poison records (unparseable/unsupported) routed to the dead-letter file instead of halting.")
 
 	f.writeDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:        "evm_sink_file_write_duration_seconds",

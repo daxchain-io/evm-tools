@@ -108,6 +108,14 @@ func postgresRun(cmd *cobra.Command, f *sinkFlags) error {
 	}
 	defer func() { _ = in.Close() }()
 	reader := record.NewReader(in)
+	dlq, err := f.installDeadLetter(cmd, reader, string(ToolSinkPostgres), cfg.DeadLetterFile, m, logger)
+	if err != nil {
+		_ = inserter.Close()
+		return err
+	}
+	if dlq != nil {
+		defer func() { _ = dlq.Close() }()
+	}
 	sink, err := pgsink.New(pgsink.Options{
 		Reader:        reader,
 		Inserter:      inserter,

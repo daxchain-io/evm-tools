@@ -11,6 +11,9 @@ func (f *File) SetWorkers(n int) { f.workers.Set(float64(n)) }
 // IncConsumed counts one record read from stdin.
 func (f *File) IncConsumed() { f.consumed.Inc() }
 
+// IncQuarantined counts one poison record routed to the dead-letter file.
+func (f *File) IncQuarantined() { f.quarantined.Inc() }
+
 // IncFiltered counts one record dropped by the configured filters.
 func (f *File) IncFiltered() { f.filtered.Inc() }
 

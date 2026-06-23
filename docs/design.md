@@ -1627,11 +1627,20 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   interpolation are readable for the process lifetime via `/proc/<pid>/environ`
   and would appear in a core dump; they are never logged. For hardened deployments
   prefer `_cmd`/file-based sourcing and disable core dumps.
-- **Malformed input is fail-fast.** A sink treats any line it cannot parse (bad
-  JSON, unsupported `schema_version`, trailing data) as a permanent error and
-  exits non-zero — the stream is the contract, so it never silently skips a
-  record. A single corrupt byte in a long-lived pipe therefore halts the sink;
-  recovery is operator intervention (there is no dead-letter quarantine).
+- **Malformed input is fail-fast by default, with opt-in quarantine.** A sink
+  treats any line it cannot parse (bad JSON, unsupported `schema_version`,
+  trailing data) as a permanent error and exits non-zero — the stream is the
+  contract, so it never silently skips a record. A single corrupt byte in a
+  long-lived pipe therefore halts the sink; recovery is operator intervention.
+  Setting `--dead-letter-file PATH` (or the top-level `dead_letter_file` config
+  key / `EVM_TOOLS_DEAD_LETTER_FILE`) opts into a **dead-letter quarantine**: each
+  poison line is appended to that file as a JSONL entry
+  (`{quarantined_at, sink, error, record_base64}`, the original bytes preserved
+  losslessly via base64), counted in `<sink>_records_quarantined_total`, and the
+  sink continues. Nothing is dropped — the file *is* the record of it — so if the
+  quarantine write itself fails the sink still halts. The feature is shared across
+  every sink (it lives in the `record.Reader` quarantine hook), and fail-fast
+  remains the default when no dead-letter file is configured.
 - **Pipe lifecycle.** A producer ignores `SIGPIPE`, so a dead downstream sink
   surfaces as a terminal `EPIPE` (clean non-zero exit, graceful flush) rather than
   a signal kill. A second `SIGINT`/`SIGTERM` during graceful shutdown force-exits,

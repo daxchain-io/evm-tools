@@ -85,6 +85,14 @@ func webhookRun(cmd *cobra.Command, f *sinkFlags) error {
 	}
 	defer func() { _ = in.Close() }()
 	reader := record.NewReader(in)
+	dlq, err := f.installDeadLetter(cmd, reader, string(ToolSinkWebhook), cfg.DeadLetterFile, m, logger)
+	if err != nil {
+		_ = poster.Close()
+		return err
+	}
+	if dlq != nil {
+		defer func() { _ = dlq.Close() }()
+	}
 	sink, err := webhooksink.New(webhooksink.Options{
 		Reader:        reader,
 		Poster:        poster,

@@ -3,12 +3,15 @@ package cli
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/daxchain-io/evm-tools/internal/config"
+	"github.com/daxchain-io/evm-tools/internal/deadletter"
 	"github.com/daxchain-io/evm-tools/internal/logging"
+	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/transport"
 )
 
@@ -40,6 +43,12 @@ type sinkFlags struct {
 	// from stdin; "unix:/path" dials a producer's socket. Resolved with config
 	// (top-level [input]) by openInput.
 	input string
+
+	// deadLetterFile, when set, quarantines poison records (unparseable /
+	// unsupported schema_version) to this file and continues, instead of the
+	// fail-fast default. Resolved with config (top-level [dead_letter_file]) by
+	// installDeadLetter.
+	deadLetterFile string
 
 	metricsEnabled bool
 	metricsAddr    string
@@ -142,6 +151,8 @@ func bindSinkSharedFlags(root *cobra.Command, f *sinkFlags) {
 	pf.StringVarP(&f.configFile, "config", "c", "", "path to the evm-tools TOML config file")
 
 	pf.StringVar(&f.input, "input", "", `record source: "-"/"stdin" (default) or "unix:/path" to dial a producer`)
+
+	pf.StringVar(&f.deadLetterFile, "dead-letter-file", "", "quarantine unparseable records to this file and continue (default: fail fast)")
 
 	pf.BoolVar(&f.metricsEnabled, "metrics", false, "enable the Prometheus metrics endpoint")
 	pf.StringVar(&f.metricsAddr, "metrics-addr", "", "metrics bind address, e.g. :9002")
@@ -304,6 +315,47 @@ func (f *sinkFlags) openInput(cmd *cobra.Command, cfgInput string) (io.ReadClose
 		spec = f.input
 	}
 	return transport.OpenReader(cmd.Context(), spec, cmd.InOrStdin())
+}
+
+// quarantineCounter is the slice of a sink's metric set the dead-letter wiring
+// needs: every sink metric type implements IncQuarantined.
+type quarantineCounter interface{ IncQuarantined() }
+
+// installDeadLetter resolves the dead-letter file with flag-over-config precedence
+// (--dead-letter-file wins, else the top-level [dead_letter_file] config value) and,
+// when set, wires reader.Quarantine so poison records (unparseable JSON / trailing
+// data / unsupported schema_version) are appended to the file and counted, and the
+// sink continues instead of halting. With nothing configured it is a no-op and the
+// sink keeps its fail-fast contract (a bad line exits non-zero). The returned closer
+// is nil when disabled; otherwise the caller must Close it on shutdown.
+//
+// A dead-letter write failure is deliberately fatal (propagated from the reader):
+// a record is never dropped without a durable record of it.
+func (f *sinkFlags) installDeadLetter(cmd *cobra.Command, reader *record.Reader, sink, cfgDeadLetter string, m quarantineCounter, log *slog.Logger) (io.Closer, error) {
+	path := cfgDeadLetter
+	if cmd.Flags().Changed("dead-letter-file") {
+		path = f.deadLetterFile
+	}
+	if path == "" {
+		return nil, nil
+	}
+	w, err := deadletter.NewWriter(path, sink)
+	if err != nil {
+		return nil, err
+	}
+	reader.Quarantine(func(line []byte, cause error) error {
+		// Durably record the poison line first; only count it once it is safely
+		// quarantined. A write failure halts the sink (never a silent drop).
+		if werr := w.Record(line, cause); werr != nil {
+			return werr
+		}
+		m.IncQuarantined()
+		log.Warn("quarantined poison record",
+			"error", cause.Error(), "dead_letter_file", w.Path(), "bytes", len(line))
+		return nil
+	})
+	log.Info("dead-letter quarantine enabled", "dead_letter_file", path)
+	return w, nil
 }
 
 // loadConfig builds the config loader with the sink's flag bindings wired in.

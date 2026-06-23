@@ -19,11 +19,12 @@ type Webhook struct {
 	workers prometheus.Gauge
 
 	// Record counters.
-	consumed  prometheus.Counter
-	filtered  prometheus.Counter
-	forwarded *prometheus.CounterVec // by record type
-	failed    *prometheus.CounterVec // by error_type
-	retries   prometheus.Counter
+	consumed    prometheus.Counter
+	filtered    prometheus.Counter
+	forwarded   *prometheus.CounterVec // by record type
+	failed      *prometheus.CounterVec // by error_type
+	retries     prometheus.Counter
+	quarantined prometheus.Counter
 
 	// POST timing + backpressure.
 	postDuration    prometheus.Histogram
@@ -74,6 +75,7 @@ func NewWebhook(chainName, chainID string) *Webhook {
 	w.forwarded = cv("evm_sink_webhook_records_forwarded_total", "Records confirmed forwarded (HTTP 2xx), by record type.", []string{webhookTypeLabel})
 	w.failed = cv("evm_sink_webhook_records_failed_total", "POST failures, by coarse error type.", []string{labelErrorType})
 	w.retries = c("evm_sink_webhook_post_retries_total", "POST retry attempts after a transient failure.")
+	w.quarantined = c("evm_sink_webhook_records_quarantined_total", "Poison records (unparseable/unsupported) routed to the dead-letter file instead of halting.")
 
 	w.postDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:        "evm_sink_webhook_post_duration_seconds",

@@ -91,6 +91,14 @@ func fileRun(cmd *cobra.Command, f *sinkFlags) error {
 	}
 	defer func() { _ = in.Close() }()
 	reader := record.NewReader(in)
+	dlq, err := f.installDeadLetter(cmd, reader, string(ToolSinkFile), cfg.DeadLetterFile, m, logger)
+	if err != nil {
+		_ = w.Close()
+		return err
+	}
+	if dlq != nil {
+		defer func() { _ = dlq.Close() }()
+	}
 	sink, err := filesink.New(filesink.Options{
 		Reader:      reader,
 		Writer:      w,

@@ -70,6 +70,10 @@ type Shared struct {
 	// Input is the record transport for sinks: "" (default) reads JSONL from
 	// stdin, "unix:/path" dials a producer's socket. Sink-only.
 	Input string `mapstructure:"input"`
+	// DeadLetterFile, when set, opts a sink into quarantining poison records
+	// (unparseable / unsupported schema_version) to this file and continuing,
+	// instead of the fail-fast default of halting on the first bad line. Sink-only.
+	DeadLetterFile string `mapstructure:"dead_letter_file"`
 	// AllowExec gates _cmd config keys. It is sourced from --allow-exec or
 	// EVM_TOOLS_ALLOW_EXEC and is not a TOML key itself.
 	AllowExec bool `mapstructure:"-"`

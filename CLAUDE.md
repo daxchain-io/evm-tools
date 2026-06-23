@@ -52,6 +52,8 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 - `internal/redissink` — Redis Streams sink core (dedup-gated `XADD` via go-redis).
 - `internal/checkpoint` — durable resume cursor for evm-stream (atomic temp+fsync+rename).
 - `internal/keyperm` — shared private-key file-mode warning.
+- `internal/deadletter` — opt-in poison-record quarantine (file-backed,
+  lossless base64 JSONL); wired onto `record.Reader.Quarantine` by the sink CLI.
 - `internal/integration` — build-tagged (`integration`) live tests against the
   `compose.yaml` stack; run via `make integration`. Offline `go test` skips them.
 

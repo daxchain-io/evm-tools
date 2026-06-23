@@ -139,6 +139,14 @@ func redisRun(cmd *cobra.Command, f *sinkFlags) error {
 	}
 	defer func() { _ = in.Close() }()
 	reader := record.NewReader(in)
+	dlq, err := f.installDeadLetter(cmd, reader, string(ToolSinkRedis), cfg.DeadLetterFile, m, logger)
+	if err != nil {
+		_ = appender.Close()
+		return err
+	}
+	if dlq != nil {
+		defer func() { _ = dlq.Close() }()
+	}
 	sink, err := redissink.New(redissink.Options{
 		Reader:        reader,
 		Appender:      appender,
