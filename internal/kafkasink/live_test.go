@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/segmentio/kafka-go"
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/daxchain-io/evm-tools/internal/record"
 )
@@ -54,20 +54,23 @@ func TestLiveKafkaPublish(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Read the two messages back to confirm they landed.
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:   brokers,
-		Topic:     topic,
-		Partition: 0,
-		MinBytes:  1,
-		MaxBytes:  10e6,
-	})
-	defer func() { _ = r.Close() }()
+	// Read the two messages back (from the start) to confirm they landed.
+	r, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers...),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	)
+	if err != nil {
+		t.Fatalf("consumer client: %v", err)
+	}
+	defer r.Close()
 	readCtx, readCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer readCancel()
-	for i := 0; i < 2; i++ {
-		if _, err := r.ReadMessage(readCtx); err != nil {
-			t.Fatalf("read back message %d: %v", i, err)
+	for got := 0; got < 2; {
+		fs := r.PollFetches(readCtx)
+		if errs := fs.Errors(); len(errs) > 0 {
+			t.Fatalf("read back: %v", errs[0].Err)
 		}
+		got += fs.NumRecords()
 	}
 }

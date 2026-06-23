@@ -12,7 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	redis "github.com/redis/go-redis/v9"
-	kafka "github.com/segmentio/kafka-go"
+	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/daxchain-io/evm-tools/internal/kafkasink"
 	"github.com/daxchain-io/evm-tools/internal/pgsink"
@@ -136,8 +137,20 @@ func TestPostgresSinkLive(t *testing.T) {
 	}
 }
 
-// TestKafkaSinkLive publishes a record to a real broker and consumes it back.
+// TestKafkaSinkLive publishes a record to a real broker and consumes it back, in
+// both delivery modes — proving the idempotent producer (delivery_mode=idempotent)
+// negotiates with the broker and that both modes deliver the verbatim payload.
 func TestKafkaSinkLive(t *testing.T) {
+	for _, idempotent := range []bool{false, true} {
+		name := "at-least-once"
+		if idempotent {
+			name = "idempotent"
+		}
+		t.Run(name, func(t *testing.T) { runKafkaSinkLive(t, idempotent) })
+	}
+}
+
+func runKafkaSinkLive(t *testing.T, idempotent bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	brokers := strings.Split(envOr("EVM_TEST_KAFKA_BROKERS", "localhost:9092"), ",")
@@ -145,35 +158,56 @@ func TestKafkaSinkLive(t *testing.T) {
 
 	// Create the topic explicitly so the test does not depend on broker
 	// auto-creation.
-	conn, err := kafka.DialContext(ctx, "tcp", brokers[0])
+	admClient, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
 	if err != nil {
-		t.Fatalf("dial broker: %v", err)
+		t.Fatalf("admin client: %v", err)
 	}
-	if err := conn.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: 1, ReplicationFactor: 1}); err != nil {
+	adm := kadm.NewClient(admClient)
+	resp, err := adm.CreateTopics(ctx, 1, 1, nil, topic)
+	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
-	_ = conn.Close()
+	if terr := resp[topic].Err; terr != nil {
+		t.Fatalf("create topic %s: %v", topic, terr)
+	}
+	admClient.Close()
 
-	pub, err := kafkasink.NewKafkaPublisher(kafkasink.WriterConfig{Brokers: brokers})
+	pub, err := kafkasink.NewKafkaPublisher(kafkasink.WriterConfig{Brokers: brokers, Idempotent: idempotent})
 	if err != nil {
 		t.Fatalf("NewKafkaPublisher: %v", err)
 	}
 	defer func() { _ = pub.Close() }()
+
+	// The readiness probe must confirm the created topic is usable.
+	if err := pub.Reachable(ctx); err != nil {
+		t.Fatalf("Reachable: %v", err)
+	}
 
 	_, raw := sampleRecord(t, "0xkafka")
 	if err := pub.Publish(ctx, kafkasink.Message{Topic: topic, Key: []byte("k"), Value: raw}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	r := kafka.NewReader(kafka.ReaderConfig{Brokers: brokers, Topic: topic, MinBytes: 1, MaxBytes: 10e6, MaxWait: time.Second})
-	defer func() { _ = r.Close() }()
+	r, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers...),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	)
+	if err != nil {
+		t.Fatalf("consumer client: %v", err)
+	}
+	defer r.Close()
 	rctx, rcancel := context.WithTimeout(ctx, 25*time.Second)
 	defer rcancel()
-	m, err := r.ReadMessage(rctx)
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
+	fs := r.PollFetches(rctx)
+	if errs := fs.Errors(); len(errs) > 0 {
+		t.Fatalf("poll fetches: %v", errs[0].Err)
 	}
-	if string(m.Value) != string(raw) {
-		t.Fatalf("kafka value mismatch:\n got %s\nwant %s", m.Value, raw)
+	recs := fs.Records()
+	if len(recs) == 0 {
+		t.Fatal("no record consumed back")
+	}
+	if string(recs[0].Value) != string(raw) {
+		t.Fatalf("kafka value mismatch:\n got %s\nwant %s", recs[0].Value, raw)
 	}
 }

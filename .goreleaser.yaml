@@ -50,8 +50,8 @@ builds:
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
 
-  # CGO stays disabled: segmentio/kafka-go is pure Go, so the static
-  # cross-compiled binaries are unaffected (no confluent/cgo client).
+  # CGO stays disabled: the Kafka client (twmb/franz-go) is pure Go, so the static
+  # cross-compiled binaries are unaffected (no confluent/librdkafka cgo client).
   - id: evm-sink-kafka
     main: ./cmd/evm-sink-kafka
     binary: evm-sink-kafka

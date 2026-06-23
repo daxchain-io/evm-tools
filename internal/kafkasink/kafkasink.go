@@ -2,17 +2,19 @@
 // stdin via the shared record contract and publish each one to Kafka with
 // at-least-once delivery.
 //
-// Delivery semantics (see docs/design.md "Sink delivery semantics", settled for
-// this build): AT-LEAST-ONCE. The publisher is configured with RequiredAcks=all
-// and every publish is confirmed before the stdin cursor advances, so a record
-// is never dropped. A transient failure (broker unavailable, network, timeout)
-// is retried with blocking exponential backoff plus full jitter — backpressure
-// propagates up the pipe to the lossless producer rather than buffering without
-// bound. Duplicates on retry are acceptable; consumers dedup via the record's
-// documented key ([record.Envelope.DedupKey]).
+// Delivery semantics (see docs/design.md "Sink delivery semantics"): AT-LEAST-ONCE
+// by default. The publisher is configured with RequiredAcks=all and every publish
+// is confirmed before the stdin cursor advances, so a record is never dropped. A
+// transient failure (broker unavailable, network, timeout) is retried with blocking
+// exponential backoff plus full jitter — backpressure propagates up the pipe to the
+// lossless producer rather than buffering without bound. Duplicates on retry are
+// acceptable; consumers dedup via the record's documented key
+// ([record.Envelope.DedupKey]). An opt-in idempotent producer mode
+// (delivery_mode=idempotent) additionally suppresses the producer's own in-session
+// retry duplicates — session-scoped, not cross-run exactly-once. See writer.go.
 //
 // The actual broker publish is behind the [Publisher] interface so default tests
-// use an in-memory fake (no real broker); the real segmentio/kafka-go writer
+// use an in-memory fake (no real broker); the real franz-go writer
 // lives in writer.go behind that interface, and a real-broker test sits behind a
 // build tag.
 package kafkasink
@@ -33,7 +35,7 @@ import (
 
 // Message is one record ready to publish: the topic it routes to, the partition
 // key (per-key ordering), and the verbatim JSONL payload bytes. Keeping it
-// transport-neutral lets the fake and the real kafka-go writer share the loop.
+// transport-neutral lets the fake and the real franz-go writer share the loop.
 type Message struct {
 	Topic string
 	Key   []byte
@@ -41,7 +43,7 @@ type Message struct {
 }
 
 // Publisher is the broker-publish surface the sink loop depends on. The real
-// implementation wraps a segmentio/kafka-go *Writer (RequiredAcks=all);
+// implementation wraps a franz-go *kgo.Client (RequiredAcks=all);
 // tests substitute a fake. Publish must block until the broker has acknowledged
 // the message (or the call fails), so the loop can confirm-before-advance.
 //

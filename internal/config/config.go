@@ -225,6 +225,13 @@ type KafkaConfig struct {
 	// supported for the at-least-once contract; it is the default. Surfaced so a
 	// future relaxation is a config change, and so a wrong value fails fast.
 	RequiredAcks string `mapstructure:"required_acks"`
+	// DeliveryMode selects the producer mode: "at-least-once" (default; "plain" is
+	// an alias) or "idempotent". at-least-once may deliver a duplicate on a producer
+	// retry, deduped by a consumer on the record identity key — the suite's standard
+	// posture. idempotent enables the KIP-98 idempotent producer, which suppresses
+	// the producer's own in-session retry duplicates (it is session-scoped, NOT
+	// cross-run exactly-once, and requires acks=all). Both modes keep required_acks=all.
+	DeliveryMode string `mapstructure:"delivery_mode"`
 	// BackoffBase / BackoffMax bound the blocking exponential-backoff retry on a
 	// transient publish failure. Strings so a duration like "500ms" / "30s"
 	// parses; empty falls back to built-in defaults.

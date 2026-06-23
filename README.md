@@ -25,7 +25,7 @@ into any sink.
 
 | Tool | Delivers to | Notes |
 | --- | --- | --- |
-| `evm-sink-kafka` | Kafka topics | at-least-once; optional SASL/TLS |
+| `evm-sink-kafka` | Kafka topics | at-least-once or opt-in idempotent producer; SASL/TLS |
 | `evm-sink-webhook` | an HTTP endpoint | at-least-once; optional filters |
 | `evm-sink-file` | a rotating local file | gzip + retention |
 | `evm-sink-aws-sqs` | an AWS SQS queue | FIFO-aware; SDK-chain credentials |
@@ -297,6 +297,7 @@ documented in [docs/design.md](docs/design.md#configuration).
 brokers = ["broker:9093"]
 topic = "evm.events"
 required_acks = "all"             # only "all" — the at-least-once contract
+delivery_mode = "at-least-once"   # at-least-once (default) | idempotent (KIP-98 producer, in-session dedup)
 readiness_probe_interval = "15s"  # active broker probe keeps /readyz live while idle; "0" disables
 
 [kafka.sasl]

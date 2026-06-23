@@ -654,6 +654,9 @@ topic = "evm.events"                      # default topic; --topic overrides
 # topic_by_type = { native_transfer = "evm.transfers", balance_change = "evm.balances" }
 partition_key = "identity"                # identity (default) | dedup | none
 required_acks = "all"                     # only "all" — the at-least-once contract
+delivery_mode = "at-least-once"           # at-least-once (default) | idempotent
+                                          # idempotent: KIP-98 producer, suppresses
+                                          # in-session retry dupes (NOT cross-run EOS)
 # backoff_base = "500ms"
 # backoff_max  = "30s"
 
@@ -779,7 +782,8 @@ addr = ":9008"
 ### evm-sink-kafka
 
 `evm-sink-kafka` reads the suite's JSONL contract on stdin and publishes each
-record to Kafka with **at-least-once** delivery (see
+record to Kafka (via the pure-Go franz-go client) with **at-least-once** delivery
+by default, or an opt-in **idempotent producer** (`delivery_mode`; see
 [Open Questions](#open-questions) #2). It reads the shared `[metrics]`/`[log]`
 keys plus its own `[kafka]` section and ignores the producer-only `[rpc]`,
 `[stream]`, and `[balance]` sections.
@@ -802,6 +806,14 @@ keys plus its own `[kafka]` section and ignores the producer-only `[rpc]`,
   acknowledge every in-sync replica before a publish is confirmed, which is the
   at-least-once contract. Any other value fails fast at startup rather than
   silently weakening the guarantee.
+- `delivery_mode` — `"at-least-once"` (default; `"plain"` is an alias) or
+  `"idempotent"`. at-least-once may put a duplicate on the topic on a producer
+  retry, which a consumer dedups on the record identity key — the suite's standard
+  posture, matching a non-FIFO SQS queue or Redis with dedup off. `idempotent`
+  enables the KIP-98 idempotent producer, which suppresses the producer's **own
+  in-session** retry duplicates; it is session-scoped (a restart/replay re-publishes,
+  so it is **not** cross-run exactly-once) and requires `acks=all` (kept in both
+  modes). It needs the `IDEMPOTENT_WRITE` ACL on locked-down clusters.
 - `backoff_base` / `backoff_max` / `batch_timeout` — optional tuning of the
   blocking retry backoff and the writer's batch-flush window; each is a duration
   string (`"500ms"`, `"30s"`) and falls back to a built-in default.
@@ -1787,9 +1799,15 @@ These are unresolved and worth deciding before or during the build:
    jitter so backpressure propagates up the pipe — it never drops a record.
    Duplicates on retry are acceptable; consumers dedup via the record's
    [DedupKey](#deduplication-and-resume-keys), and per-key ordering is preserved
-   by partitioning on the record's `PartitionIdentity`. See the `[kafka]` config
-   and the [evm-sink-kafka](#evm-sink-kafka) configuration subsection plus the S1
-   milestone in [docs/plan.md](plan.md). The same at-least-once posture governs
+   by partitioning on the record's `PartitionIdentity`. `evm-sink-kafka` also
+   offers an opt-in `delivery_mode = "idempotent"` (KIP-98 idempotent producer)
+   that suppresses the producer's own in-session retry duplicates; it is
+   session-scoped (not cross-run exactly-once — a restart re-publishes), so
+   consumer-side dedup on the DedupKey remains the durable guarantee, and it is
+   not the default precisely because it would over-promise versus the cross-run
+   dedup the Postgres/Redis sinks give. See the `[kafka]` config and the
+   [evm-sink-kafka](#evm-sink-kafka) subsection plus the S1 milestone in
+   [docs/plan.md](plan.md). The same at-least-once posture governs
    `evm-sink-webhook` (Open Question 1).
 3. **Internal native transfers.** *Resolved.* Trace-RPC-based internal transfer
    detection shipped behind the opt-in `[stream.native_transfers].include_internal`,

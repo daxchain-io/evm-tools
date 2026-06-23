@@ -17,12 +17,12 @@ import (
 
 // newKafkaPublisher constructs the publisher used by `run`. It is a package var
 // so tests can substitute an in-memory fake and exercise the full run path with
-// no broker; production uses the real kafka-go-backed publisher.
+// no broker; production uses the real franz-go-backed publisher.
 var newKafkaPublisher = kafkasink.NewKafkaPublisher
 
 // kafkaRun implements `evm-sink-kafka run`: load config, build the router and
-// the real kafka-go publisher, then read JSONL from stdin and publish each
-// record at-least-once until EOF or a signal.
+// the real franz-go publisher, then read JSONL from stdin and publish each
+// record at-least-once (or idempotent) until EOF or a signal.
 func kafkaRun(cmd *cobra.Command, f *sinkFlags) error {
 	cfg, err := f.decodeKafka(cmd)
 	if err != nil {
@@ -71,6 +71,7 @@ func kafkaRun(cmd *cobra.Command, f *sinkFlags) error {
 		"default_topic", cfg.Kafka.Topic,
 		"topic_overrides", len(cfg.Kafka.TopicByType),
 		"partition_key", partitionKeyDesc(cfg.Kafka.PartitionKey),
+		"delivery_mode", deliveryModeDesc(resolved.Writer.Idempotent),
 		"sasl", resolved.Writer.SASLMechanism != "",
 		"tls", resolved.Writer.TLSEnabled,
 	)
@@ -157,6 +158,28 @@ type resolvedKafka struct {
 	ProbeInterval time.Duration
 }
 
+// deliveryModeDesc renders the active producer mode for the startup log.
+func deliveryModeDesc(idempotent bool) string {
+	if idempotent {
+		return "idempotent"
+	}
+	return "at-least-once"
+}
+
+// resolveDeliveryMode maps the kafka.delivery_mode knob to the idempotent-producer
+// flag: "" / "at-least-once" / "plain" → false (the default at-least-once
+// producer), "idempotent" → true. Both modes still publish with acks=all.
+func resolveDeliveryMode(mode string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "at-least-once", "plain":
+		return false, nil
+	case "idempotent":
+		return true, nil
+	default:
+		return false, fmt.Errorf("kafka.delivery_mode=%q is not supported (want \"at-least-once\" or \"idempotent\")", mode)
+	}
+}
+
 // validateKafka applies the cross-field invariants strict decoding cannot
 // express and returns the resolved configuration so run can reuse it.
 func validateKafka(cfg *config.KafkaFull) (resolvedKafka, error) {
@@ -177,6 +200,10 @@ func validateKafka(cfg *config.KafkaFull) (resolvedKafka, error) {
 
 	if acks := strings.ToLower(strings.TrimSpace(k.RequiredAcks)); acks != "" && acks != "all" {
 		return resolvedKafka{}, fmt.Errorf("kafka.required_acks=%q is not supported; at-least-once delivery requires \"all\"", k.RequiredAcks)
+	}
+	idempotent, err := resolveDeliveryMode(k.DeliveryMode)
+	if err != nil {
+		return resolvedKafka{}, err
 	}
 
 	backoffBase, err := parseDurationDefault(k.BackoffBase, 500*time.Millisecond, "kafka.backoff_base")
@@ -219,6 +246,7 @@ func validateKafka(cfg *config.KafkaFull) (resolvedKafka, error) {
 		TLSInsecureSkipVerify: k.TLS.InsecureSkipVerify,
 		DialTimeout:           10 * time.Second,
 		Topics:                topicSet(k.Topic, k.TopicByType),
+		Idempotent:            idempotent,
 	}
 
 	return resolvedKafka{

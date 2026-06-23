@@ -38,23 +38,21 @@ private vulnerability reporting, org base permission read-only.
 | S8 | Pluggable record transport (Unix socket / Windows named pipe, fan-out); SIGHUP checkpoint/resume; Windows support + CI. |
 | S9 (1.0 gate) | Integration test harness (compose stack + live sink/producer tests + CI job); opt-in dead-letter quarantine for poison records; additive `finalized` envelope field; producer HA runbook; hot config reload of the watched set. |
 | post-1.0 | Internal (trace-RPC) native transfers — opt-in `include_internal`, new `internal_transfer` record; trace-backend cascade (`debug_traceBlockByNumber` → `trace_block` → `debug_traceTransaction`) with capability-aware self-disable and per-block skip. |
+| post-1.0 | Kafka delivery modes — swap the client to pure-Go `franz-go`; opt-in idempotent producer (`delivery_mode`) alongside the default at-least-once; `segmentio/kafka-go` fully removed. |
 
 ## Deferred
 
-One item remains deliberately out of scope — **externally blocked** on a
-dependency the project does not control (see design
-[Open Questions](design.md#open-questions)):
-
-- **Kafka exactly-once** — an idempotent/transactional producer, which requires
-  swapping the Kafka client (`segmentio/kafka-go` → `franz-go`); the existing
-  at-least-once path with an idempotent sink already gives effective
-  once-in-store delivery.
+Nothing remains deferred: every design [Open Question](design.md#open-questions)
+is resolved and the externally-blocked items have shipped.
 
 Resolved since this section was first written: **finality signaling** (the additive
 `finalized` field shipped in S9), **config reload** (watched-set hot reload shipped
 in S9, on top of the S-series log-level reload), **internal/trace native transfers**
-(the opt-in `include_internal` / `internal_transfer` record shipped post-1.0), and the
-**consolidated metrics endpoint** (resolved at the scrape layer; `deploy/README.md`).
+(the opt-in `include_internal` / `internal_transfer` record shipped post-1.0), **Kafka
+delivery modes** (the franz-go swap + opt-in idempotent producer shipped post-1.0;
+the idempotent producer is session-scoped, so at-least-once + consumer dedup stays
+the default), and the **consolidated metrics endpoint** (resolved at the scrape
+layer; `deploy/README.md`).
 
 Shipped since the milestones above:
 

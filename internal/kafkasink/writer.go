@@ -11,21 +11,32 @@ import (
 	"strings"
 	"time"
 
-	"github.com/segmentio/kafka-go"
-	"github.com/segmentio/kafka-go/sasl"
-	"github.com/segmentio/kafka-go/sasl/plain"
-	"github.com/segmentio/kafka-go/sasl/scram"
+	"github.com/twmb/franz-go/pkg/kerr"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/twmb/franz-go/pkg/sasl"
+	"github.com/twmb/franz-go/pkg/sasl/plain"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
 
 	"github.com/daxchain-io/evm-tools/internal/keyperm"
 )
 
-// WriterConfig is the resolved configuration for the real kafka-go publisher.
+// WriterConfig is the resolved configuration for the real franz-go publisher.
 // Secrets (SASL password) arrive already resolved through the config layer's
 // env-interpolation/_cmd machinery; this package never reads them from the file
 // itself and never logs them.
 type WriterConfig struct {
 	Brokers      []string
 	BatchTimeout time.Duration
+
+	// Idempotent selects the producer mode. false (the default) is plain
+	// at-least-once: the broker may receive a duplicate on a producer retry, which
+	// a consumer dedups on the record's identity key (the suite's standard posture,
+	// matching a non-FIFO AWS queue / Redis with dedup off). true enables the
+	// idempotent producer (KIP-98), which suppresses the producer's OWN in-session
+	// retry duplicates — but it is session-scoped (a restart re-publishes), so it is
+	// NOT cross-run exactly-once; it requires acks=all (kept in both modes).
+	Idempotent bool
 
 	// SASL (optional). Mechanism is "", "plain", "scram-sha-256", or
 	// "scram-sha-512". SASL must run over TLS.
@@ -42,7 +53,7 @@ type WriterConfig struct {
 	TLSInsecureSkipVerify bool
 
 	// DialTimeout bounds connection establishment (TLS handshake + SASL). Zero
-	// uses the kafka-go default.
+	// uses the franz-go default.
 	DialTimeout time.Duration
 
 	// Topics the sink may write to (the default topic plus per-type overrides).
@@ -52,37 +63,28 @@ type WriterConfig struct {
 	Topics []string
 }
 
-// kafkaWriter is the real Publisher backed by a segmentio/kafka-go *Writer with
-// RequiredAcks=all. WriteMessages blocks until the broker has acknowledged the
+// kafkaWriter is the real Publisher backed by a franz-go *kgo.Client with
+// RequiredAcks=all. ProduceSync blocks until the broker has acknowledged the
 // write, which is what gives the sink its at-least-once confirm-before-advance
 // guarantee.
 type kafkaWriter struct {
-	w      *kafka.Writer
+	client *kgo.Client
 	topics []string
 }
 
-// NewKafkaPublisher builds the real kafka-go-backed Publisher. It validates and
+// NewKafkaPublisher builds the real franz-go-backed Publisher. It validates and
 // builds the TLS config and SASL mechanism up front (fail fast on bad material)
 // but performs no network I/O — connections are established lazily on the first
-// Publish, so construction stays offline-safe for `validate`.
+// produce, so construction stays offline-safe for `validate`.
 func NewKafkaPublisher(cfg WriterConfig) (Publisher, error) {
 	if len(cfg.Brokers) == 0 {
 		return nil, errors.New("kafkasink: at least one broker is required")
-	}
-
-	transport := &kafka.Transport{}
-	if cfg.DialTimeout > 0 {
-		transport.DialTimeout = cfg.DialTimeout
 	}
 
 	mech, err := saslMechanism(cfg)
 	if err != nil {
 		return nil, err
 	}
-	if mech != nil {
-		transport.SASL = mech
-	}
-
 	tlsCfg, err := tlsConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -92,85 +94,135 @@ func NewKafkaPublisher(cfg WriterConfig) (Publisher, error) {
 		// password; require TLS (the design mandates SASL over TLS).
 		return nil, errors.New("kafkasink: SASL requires TLS; set [kafka.tls].enabled = true (with CA/cert material)")
 	}
-	if tlsCfg != nil {
-		transport.TLS = tlsCfg
-	}
 
 	batchTimeout := cfg.BatchTimeout
 	if batchTimeout <= 0 {
 		batchTimeout = 200 * time.Millisecond
 	}
 
-	w := &kafka.Writer{
-		Addr:         kafka.TCP(cfg.Brokers...),
-		Balancer:     &kafka.Hash{}, // key -> partition, so per-key ordering holds.
-		RequiredAcks: kafka.RequireAll,
-		// Synchronous: WriteMessages must block until acked so the sink can
-		// confirm before advancing the stdin cursor (at-least-once).
-		Async:        false,
-		BatchTimeout: batchTimeout,
-		Transport:    transport,
-		// Topic is set per-message (Message.Topic) so one writer fans out across
-		// the configured topic routing.
-		AllowAutoTopicCreation: false,
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(cfg.Brokers...),
+		// acks=all in BOTH modes: at-least-once needs it for durability, and the
+		// idempotent producer mandates it.
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		// Key -> partition (murmur2, Kafka-default-compatible) so per-key ordering
+		// holds; an empty key round-robins.
+		kgo.RecordPartitioner(kgo.StickyKeyPartitioner(nil)),
+		kgo.ProducerLinger(batchTimeout),
+		// franz-go never auto-creates topics on produce unless asked; we don't ask.
 	}
-	return &kafkaWriter{w: w, topics: cfg.Topics}, nil
+	if cfg.DialTimeout > 0 {
+		opts = append(opts, kgo.DialTimeout(cfg.DialTimeout))
+	}
+	if tlsCfg != nil {
+		opts = append(opts, kgo.DialTLSConfig(tlsCfg))
+	}
+	if mech != nil {
+		opts = append(opts, kgo.SASL(mech))
+	}
+	if !cfg.Idempotent {
+		// Plain at-least-once: disable the idempotent producer. franz-go then
+		// requires an explicit in-flight bound; pin it to 1 so a retry can never
+		// reorder records within a partition (preserving per-key ordering).
+		opts = append(opts,
+			kgo.DisableIdempotentWrite(),
+			kgo.MaxProduceRequestsInflightPerBroker(1),
+		)
+	}
+
+	client, err := kgo.NewClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("kafkasink: build client: %w", err)
+	}
+	return &kafkaWriter{client: client, topics: cfg.Topics}, nil
 }
 
 // Reachable issues a metadata request to confirm the broker cluster answers
-// (TCP + TLS + SASL handshake + a metadata response). It is read-only and used
-// by the sink's active readiness probe; a nil error means the cluster is
-// reachable. Metadata is scoped to the configured topics so an ACL-restricted
-// cluster still answers; an empty topic set asks for all-cluster metadata.
+// (TCP + TLS + SASL handshake + a metadata response) AND that the sink's own
+// topics exist and are authorized. It is read-only and used by the sink's active
+// readiness probe; a nil error means the cluster answered and every configured
+// topic resolved without error. Per-topic errors (unknown topic with auto-create
+// off, or a topic ACL failure) are decoded from the response — a missing/forbidden
+// topic means the sink cannot publish, so /readyz should reflect that. An empty
+// topic set asks for all-cluster metadata (only the cluster handshake is checked).
 func (k *kafkaWriter) Reachable(ctx context.Context) error {
-	client := &kafka.Client{Addr: k.w.Addr, Transport: k.w.Transport}
-	_, err := client.Metadata(ctx, &kafka.MetadataRequest{Topics: k.topics})
-	return err
+	req := kmsg.NewPtrMetadataRequest()
+	for i := range k.topics {
+		rt := kmsg.NewMetadataRequestTopic()
+		rt.Topic = &k.topics[i]
+		req.Topics = append(req.Topics, rt)
+	}
+	resp, err := k.client.Request(ctx, req)
+	if err != nil {
+		return err
+	}
+	meta, ok := resp.(*kmsg.MetadataResponse)
+	if !ok {
+		return nil // transport answered with an unexpected shape; treat as reachable
+	}
+	for _, topic := range meta.Topics {
+		if topic.ErrorCode == 0 {
+			continue
+		}
+		name := ""
+		if topic.Topic != nil {
+			name = *topic.Topic
+		}
+		return fmt.Errorf("kafkasink: topic %q not usable: %w", name, kerr.ErrorForCode(topic.ErrorCode))
+	}
+	return nil
 }
 
-// Publish writes one message and blocks until the broker acknowledges it (or the
-// write fails / ctx is cancelled). A broker rejection that retrying cannot fix
+// Publish produces one record and blocks until the broker acknowledges it (or the
+// produce fails / ctx is cancelled). A broker rejection that retrying cannot fix
 // is wrapped in *PermanentError so the sink fails fast.
 func (k *kafkaWriter) Publish(ctx context.Context, msg Message) error {
-	err := k.w.WriteMessages(ctx, kafka.Message{
-		Topic: msg.Topic,
-		Key:   msg.Key,
-		Value: msg.Value,
-	})
-	if err == nil {
-		return nil
+	rec := &kgo.Record{Topic: msg.Topic, Key: msg.Key, Value: msg.Value}
+	if err := k.client.ProduceSync(ctx, rec).FirstErr(); err != nil {
+		if permanent(err) {
+			return &PermanentError{Reason: "broker rejected message", Err: err}
+		}
+		return err
 	}
-	if permanent(err) {
-		return &PermanentError{Reason: "broker rejected message", Err: err}
-	}
-	return err
+	return nil
 }
 
-// Close flushes and closes the underlying writer (used on shutdown).
-func (k *kafkaWriter) Close() error { return k.w.Close() }
+// Close flushes any buffered records then closes the underlying client. The sink
+// loop is synchronous (ProduceSync confirms each record before advancing), so
+// nothing is normally buffered at Close — but kgo.Close itself ABORTS in-flight
+// produces rather than flushing, so a bounded Flush first is defense-in-depth
+// against any future buffered-produce path. The flush is time-bounded so a dead
+// broker cannot hang shutdown.
+func (k *kafkaWriter) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = k.client.Flush(ctx)
+	k.client.Close()
+	return nil
+}
 
-// permanent reports whether a kafka-go write error is non-retryable. kafka-go
-// surfaces broker errors as kafka.Error; a handful of those (message too large,
-// unknown topic/partition with auto-create off, authorization failures, invalid
-// record) will never succeed on retry, so they fail the sink fast rather than
-// loop forever (preserving losslessness — a stuck retry on a permanent error
-// would silently wedge the pipeline).
+// permanent reports whether a produce error is non-retryable. franz-go surfaces
+// broker errors as *kerr.Error; a handful of those (message too large, unknown
+// topic/partition with auto-create off, authorization failures, invalid record)
+// will never succeed on retry, so they fail the sink fast rather than loop forever
+// (preserving losslessness — a stuck retry on a permanent error would silently
+// wedge the pipeline). Compared by error code so it is robust to error wrapping.
 func permanent(err error) bool {
-	var kerr kafka.Error
-	if !errors.As(err, &kerr) {
+	var ke *kerr.Error
+	if !errors.As(err, &ke) {
 		return false
 	}
-	switch kerr {
-	case kafka.MessageSizeTooLarge,
-		kafka.RecordListTooLarge,
-		kafka.UnknownTopicOrPartition,
-		kafka.TopicAuthorizationFailed,
-		kafka.ClusterAuthorizationFailed,
-		kafka.SASLAuthenticationFailed,
-		kafka.InvalidTopic,
-		kafka.InvalidRecord,
-		kafka.UnsupportedForMessageFormat,
-		kafka.UnsupportedVersion:
+	switch ke.Code {
+	case kerr.MessageTooLarge.Code,
+		kerr.RecordListTooLarge.Code,
+		kerr.UnknownTopicOrPartition.Code,
+		kerr.TopicAuthorizationFailed.Code,
+		kerr.ClusterAuthorizationFailed.Code,
+		kerr.SaslAuthenticationFailed.Code,
+		kerr.InvalidTopicException.Code,
+		kerr.InvalidRecord.Code,
+		kerr.UnsupportedForMessageFormat.Code,
+		kerr.UnsupportedVersion.Code:
 		return true
 	default:
 		return false
@@ -188,13 +240,14 @@ func saslMechanism(cfg WriterConfig) (sasl.Mechanism, error) {
 	if cfg.SASLUsername == "" {
 		return nil, errors.New("kafkasink: SASL username is required when a mechanism is set")
 	}
+	auth := scram.Auth{User: cfg.SASLUsername, Pass: cfg.SASLPassword}
 	switch mech {
 	case "plain":
-		return plain.Mechanism{Username: cfg.SASLUsername, Password: cfg.SASLPassword}, nil
+		return plain.Auth{User: cfg.SASLUsername, Pass: cfg.SASLPassword}.AsMechanism(), nil
 	case "scram-sha-256":
-		return scram.Mechanism(scram.SHA256, cfg.SASLUsername, cfg.SASLPassword)
+		return auth.AsSha256Mechanism(), nil
 	case "scram-sha-512":
-		return scram.Mechanism(scram.SHA512, cfg.SASLUsername, cfg.SASLPassword)
+		return auth.AsSha512Mechanism(), nil
 	default:
 		return nil, fmt.Errorf("kafkasink: unsupported SASL mechanism %q (want plain|scram-sha-256|scram-sha-512)", cfg.SASLMechanism)
 	}

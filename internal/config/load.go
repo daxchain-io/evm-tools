@@ -193,7 +193,7 @@ func bindEnvKeys(v *viper.Viper) {
 		"balance.max_concurrency", "balance.target_timeout", "balance.head_staleness_threshold",
 		"balance.metrics.enabled", "balance.metrics.addr", "balance.metrics.path",
 		"kafka.brokers", "kafka.topic", "kafka.partition_key", "kafka.required_acks",
-		"kafka.readiness_probe_interval",
+		"kafka.delivery_mode", "kafka.readiness_probe_interval",
 		"kafka.sasl.mechanism", "kafka.sasl.username", "kafka.sasl.password",
 		"kafka.tls.enabled", "kafka.tls.ca_cert", "kafka.tls.client_cert",
 		"kafka.tls.client_key", "kafka.tls.server_name",
@@ -276,6 +276,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("kafka.partition_key", "identity")
 	v.SetDefault("kafka.required_acks", "all")
+	v.SetDefault("kafka.delivery_mode", "at-least-once")
 	v.SetDefault("kafka.backoff_base", "500ms")
 	v.SetDefault("kafka.backoff_max", "30s")
 	v.SetDefault("kafka.batch_timeout", "200ms")
