@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -117,8 +118,12 @@ func TestWriterAppends(t *testing.T) {
 }
 
 // TestWriterFileMode verifies the dead-letter file is created with restrictive
-// 0600 permissions (it may contain sensitive record payloads).
+// 0600 permissions (it may contain sensitive record payloads). Skipped on Windows,
+// which does not honor Unix permission bits (Stat reports 0666).
 func TestWriterFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not honor Unix file permission bits")
+	}
 	path := filepath.Join(t.TempDir(), "dl.jsonl")
 	w, err := NewWriter(path, "evm-sink-redis")
 	if err != nil {
