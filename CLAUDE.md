@@ -18,6 +18,7 @@ Go 1.22+ (toolchain pinned in `go.mod`).
 ```sh
 go build ./...                 # build all binaries/packages
 go test ./...                  # unit tests (golden + httptest); live-node tests are behind a build tag
+make integration               # compose stack (Kafka/Redis/Postgres/LocalStack/anvil) + `-tags integration` live tests
 go vet ./...
 golangci-lint run              # v2 config in .golangci.yml
 gofmt -l . && go mod tidy      # must be clean
@@ -51,6 +52,8 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 - `internal/redissink` — Redis Streams sink core (dedup-gated `XADD` via go-redis).
 - `internal/checkpoint` — durable resume cursor for evm-stream (atomic temp+fsync+rename).
 - `internal/keyperm` — shared private-key file-mode warning.
+- `internal/integration` — build-tagged (`integration`) live tests against the
+  `compose.yaml` stack; run via `make integration`. Offline `go test` skips them.
 
 ## Load-bearing conventions
 

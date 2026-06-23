@@ -79,6 +79,24 @@ jobs:
       - name: Test
         run: go test ./...
 
+  integration:
+    name: Integration (compose stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # ubuntu-latest ships Docker + the compose plugin. The runner brings the
+      # stack up with `--wait` (healthchecks gate readiness), runs the
+      # build-tagged live tests against it, and tears it down on exit.
+      - name: Run integration suite
+        run: make integration
+
   vuln:
     name: Vulnerability scan
     runs-on: ubuntu-latest
@@ -121,7 +139,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck install.sh scripts/cosign-sign.sh scripts/brew-cask-smoke.sh
+        run: shellcheck install.sh scripts/cosign-sign.sh scripts/brew-cask-smoke.sh scripts/integration.sh
 
   goreleaser:
     name: GoReleaser check + snapshot

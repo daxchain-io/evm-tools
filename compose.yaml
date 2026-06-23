@@ -1,0 +1,72 @@
+# Local infrastructure for the build-tagged integration tests (`make integration`
+# / scripts/integration.sh). Pure-Go clients, so CGO stays disabled. The default
+# `go test ./...` is offline; only `-tags integration` talks to these services.
+name: evm-tools-integration
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://127.0.0.1:9092
+      - --check=false
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health -X brokers=127.0.0.1:9092 | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evm
+      POSTGRES_PASSWORD: evm
+      POSTGRES_DB: evm
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evm -d evm"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3.8
+    environment:
+      SERVICES: sqs,sns
+      EAGER_SERVICE_LOADING: "1"
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues || curl -sf http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:stable
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--block-time", "1"]
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD-SHELL", "cast block-number --rpc-url http://127.0.0.1:8545 || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
