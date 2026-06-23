@@ -87,7 +87,15 @@ type Envelope struct {
 	LogIndex  *uint64 `json:"log_index,omitempty"`
 	Timestamp string  `json:"timestamp,omitempty"`
 	EmittedAt string  `json:"emitted_at"`
-	Data      any     `json:"data"`
+	// Finalized marks a record whose block is at or below the chain's finalized
+	// height at emit time — it can no longer be reorged out. It is an additive,
+	// best-effort signal (omitempty, no schema bump): present and true only when
+	// the producer can prove finality, and absent otherwise (not yet finalized, a
+	// chain without a finalized tag, or a producer that does not track finality).
+	// A reorg-sensitive sink can trust a finalized record unconditionally and gate
+	// non-finalized ones on the reorg marker or a confirmation lag.
+	Finalized bool `json:"finalized,omitempty"`
+	Data      any  `json:"data"`
 }
 
 // RFC3339 renders a time as the contract's timestamp format (RFC 3339 in UTC).

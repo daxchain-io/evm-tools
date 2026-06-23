@@ -84,6 +84,77 @@ func TestFinalizedUnsupportedDisablesPolling(t *testing.T) {
 	}
 }
 
+// TestFinalizedStampedOnRecords verifies emitted records carry finalized=true
+// when their block is at or below the chain's finalized height, and omit it
+// (false) above it — the additive finality signal.
+func TestFinalizedStampedOnRecords(t *testing.T) {
+	fc := &fakeClient{
+		chainID:   1,
+		heads:     []uint64{10},
+		finalized: 5, // blocks 1..5 are final; 6..10 are still reorganizable
+		getLogs: func(f rpc.LogFilter) ([]rpc.Log, error) {
+			var out []rpc.Log
+			for b := f.FromBlock; b <= f.ToBlock; b++ {
+				out = append(out, makeTransferLog(b, "1"))
+			}
+			return out, nil
+		},
+	}
+	em := &captureEmitter{}
+	s, err := New(Options{
+		Client: fc, Emitter: em, Metrics: &finalizedMetrics{},
+		ChainName: "test", ChainID: 1, Contracts: resolvedUSDC(t),
+		PollInterval: time.Second, LogChunkBlocks: 2000, FromBlock: "1",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.pollOnce(context.Background(), 1); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+
+	envs := em.snapshot()
+	if len(envs) != 10 {
+		t.Fatalf("expected 10 emitted records, got %d", len(envs))
+	}
+	for _, e := range envs {
+		want := e.BlockNumber <= 5
+		if e.Finalized != want {
+			t.Errorf("block %d: finalized=%v, want %v", e.BlockNumber, e.Finalized, want)
+		}
+	}
+}
+
+// TestFinalizedOmittedWhenUnknown verifies that before any finalized fetch (or on
+// a chain without a finalized tag) records are never speculatively stamped final.
+func TestFinalizedOmittedWhenUnknown(t *testing.T) {
+	fc := &fakeClient{
+		chainID:      1,
+		heads:        []uint64{3},
+		finalizedErr: errors.New("the method finalized is not available"),
+		getLogs: func(f rpc.LogFilter) ([]rpc.Log, error) {
+			return []rpc.Log{makeTransferLog(f.FromBlock, "1")}, nil
+		},
+	}
+	em := &captureEmitter{}
+	s, err := New(Options{
+		Client: fc, Emitter: em, Metrics: &finalizedMetrics{},
+		ChainName: "test", ChainID: 1, Contracts: resolvedUSDC(t),
+		PollInterval: time.Second, LogChunkBlocks: 2000, FromBlock: "1",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.pollOnce(context.Background(), 1); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	for _, e := range em.snapshot() {
+		if e.Finalized {
+			t.Errorf("block %d should not be stamped finalized on a chain without a finalized tag", e.BlockNumber)
+		}
+	}
+}
+
 // fakeCheckpoint is an in-memory Checkpointer for resume/save tests.
 type fakeCheckpoint struct {
 	mu      sync.Mutex

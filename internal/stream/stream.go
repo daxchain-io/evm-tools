@@ -153,6 +153,13 @@ type Stream struct {
 	// (a chain without finality, or a dev node), so the loop stops polling it and
 	// the finalized-block gauge stays at 0. Single-goroutine access.
 	finalizedUnsupported bool
+
+	// finalizedBlock is the chain's last-known finalized height, refreshed once per
+	// poll loop by updateFinalizedBlock; finalizedKnown gates it (false until the
+	// first successful fetch). A record whose block_number is at or below it is
+	// stamped finalized=true at emit. Single-goroutine access.
+	finalizedBlock uint64
+	finalizedKnown bool
 }
 
 // New builds a Stream from resolved options. It validates the derived state but
@@ -465,6 +472,17 @@ func (s *Stream) updateFinalizedBlock(ctx context.Context) {
 		return
 	}
 	s.opts.Metrics.SetFinalizedBlock(n)
+	s.finalizedBlock = n
+	s.finalizedKnown = true
+}
+
+// isFinalized reports whether a record at blockNum sits at or below the chain's
+// last-known finalized height — i.e. it can no longer be reorged out. It is
+// conservative: until the first successful finalized-tag fetch (or on a chain
+// without finality) it returns false, so the additive finalized field is set only
+// when the producer can actually prove finality, never speculatively.
+func (s *Stream) isFinalized(blockNum uint64) bool {
+	return s.finalizedKnown && blockNum <= s.finalizedBlock
 }
 
 // processRange handles one inclusive [from,to] block range: it queries matching
@@ -625,6 +643,7 @@ func (s *Stream) emitLog(l rpc.Log) error {
 		BlockHash:   l.BlockHash,
 		TxHash:      l.TxHash,
 		LogIndex:    &logIndex,
+		Finalized:   s.isFinalized(blockNum),
 		Data: record.EventData{
 			Event:     ev.Name,
 			Signature: ev.Signature,
@@ -693,6 +712,7 @@ func (s *Stream) emitNative(blk *rpc.Block, blkNum uint64, ts string, t nativeTr
 		BlockHash:   blk.Hash,
 		TxHash:      t.tx.Hash,
 		Timestamp:   ts,
+		Finalized:   s.isFinalized(blkNum),
 		Data:        data,
 	}
 	if err := s.opts.Emitter.Emit(env); err != nil {

@@ -413,13 +413,37 @@ func TestOmitEmpty(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, absent := range []string{`"log_index"`, `"to"`} {
+	for _, absent := range []string{`"log_index"`, `"to"`, `"finalized"`} {
 		if strings.Contains(out, absent) {
 			t.Errorf("expected %s to be omitted, got: %s", absent, out)
 		}
 	}
 	if strings.Contains(out, "null") {
 		t.Errorf("no field should be emitted as null, got: %s", out)
+	}
+}
+
+// TestFinalizedFieldJSON verifies the additive finalized field is present only
+// when true (omitempty), so existing consumers are unaffected when it is false.
+func TestFinalizedFieldJSON(t *testing.T) {
+	mk := func(finalized bool) string {
+		var buf bytes.Buffer
+		w := NewWriter(&buf)
+		w.now = func() time.Time { return fixedTime(0) }
+		if err := w.Emit(Envelope{
+			Type: TypeNativeTransfer, Tool: ToolStream, Name: "native",
+			Chain: "c", ChainID: 1, BlockNumber: 1, TxHash: "0xtx", Finalized: finalized,
+			Data: NativeTransferData{From: "0xf", To: "0xt", ValueWei: "1", Value: "0"},
+		}); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+		return buf.String()
+	}
+	if out := mk(true); !strings.Contains(out, `"finalized":true`) {
+		t.Errorf("finalized=true should appear in JSON, got: %s", out)
+	}
+	if out := mk(false); strings.Contains(out, "finalized") {
+		t.Errorf("finalized=false should be omitted, got: %s", out)
 	}
 }
 

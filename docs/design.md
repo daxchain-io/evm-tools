@@ -133,6 +133,7 @@ type-specific **`data`** payload.
 | `log_index` | integer | Log index within the block for `event` records. |
 | `timestamp` | string | Block timestamp (RFC 3339) when available. |
 | `emitted_at` | string | Wall-clock time the producer emitted the record (RFC 3339). Useful for latency and ordering at sinks. |
+| `finalized` | boolean | Additive, best-effort (`omitempty`): `true` when the record's block is at or below the chain's finalized height at emit time (can no longer be reorged out); absent otherwise. |
 | `data` | object | Type-specific payload (see [Record types and payloads](#record-types-and-payloads)). |
 
 Fields that do not apply to a record type are omitted rather than emitted as
@@ -167,10 +168,13 @@ near the head and emits a [`reorg` marker](#record-types-and-payloads) over the
 orphaned range before re-scanning the new canonical chain (see [Operational Notes
 and Known Limitations](#operational-notes-and-known-limitations)); a re-included
 transaction dedups against its first emission because event/native dedup keys are
-reorg-stable. Schema version 1 still carries no per-record finality flag, so a
-sink must treat head records as non-final until it sees them confirmed (or acts on
-the `reorg` marker). An optional `finalized` field may be added later as an
-additive change without a version bump.
+reorg-stable. Each record also carries an additive, best-effort **`finalized`**
+field (`omitempty`, no version bump): `evm-stream` stamps `finalized: true` when a
+record's block is at or below the chain's finalized height at emit time — it can
+no longer be reorged out — and omits the field otherwise (a still-reorganizable
+head record, a chain without a `finalized` tag, or a producer that does not track
+finality). A reorg-sensitive sink can trust a `finalized` record unconditionally
+and gate the rest on the `reorg` marker or a confirmation lag.
 
 ### Numeric encoding
 
@@ -1596,8 +1600,9 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   still caught), but blocks that were processed *above* the current head after the
   chain shortened are only re-scanned once the head climbs back. A reorg-sensitive
   sink should act on the `reorg` marker
-  (retract the orphaned range) or run behind a confirmation lag; `reorg_depth = 0`
-  disables the feature for chains where it is unneeded.
+  (retract the orphaned range), trust records stamped `finalized: true`, or run
+  behind a confirmation lag; `reorg_depth = 0` disables the feature for chains
+  where it is unneeded.
 - **Head-staleness readiness.** Both producers expose `head_staleness_threshold`
   (unset/`0`/`off` disables it). When set, `/readyz` flips to not-ready once the
   latest chain head block ages past the threshold — catching a halted chain or a
@@ -1698,9 +1703,12 @@ These are unresolved and worth deciding before or during the build:
 3. **Internal native transfers.** Confirm when trace-RPC-based internal transfer
    detection (`include_internal`) is in scope, given it is provider-dependent
    and deferred from the first milestone.
-4. **Finality signaling.** Near-head reorg detection landed in S7 (the `reorg`
-   marker + canonical re-scan). Still open: whether to add an additive
-   `finalized` envelope field so sinks can distinguish final from
-   still-reorganizable records, instead of acting on the `reorg` marker or a
-   confirmation lag. Awaiting finality (vs. detect-and-retract) remains a
+4. **Finality signaling.** *Resolved.* Near-head reorg detection landed in S7
+   (the `reorg` marker + canonical re-scan), and the additive, best-effort
+   `finalized` envelope field now lets a sink distinguish final from
+   still-reorganizable records without waiting on the `reorg` marker or a
+   confirmation lag. Per-record `removed` tombstones were deliberately *not*
+   added: the range-based `reorg` marker is the chosen retraction mechanism, since
+   the producer does not buffer the full set of emitted records needed to tombstone
+   them individually. Awaiting finality (vs. detect-and-retract) remains a
    deliberate non-goal for the low-latency default.
