@@ -121,6 +121,9 @@ func (noopMetrics) IncSkippedLog()                        {}
 func (noopMetrics) IncNativeTransferRecord()              {}
 func (noopMetrics) IncReorgsDetected()                    {}
 func (noopMetrics) IncReconnects()                        {}
+func (noopMetrics) IncConfigReload()                      {}
+func (noopMetrics) IncConfigReloadError()                 {}
+func (noopMetrics) ResetContractSeries(string, string)    {}
 func (noopMetrics) ObserveLoop(time.Duration)             {}
 func (noopMetrics) SetConsecutiveFailures(int)            {}
 func (noopMetrics) SetBackoffSeconds(time.Duration)       {}

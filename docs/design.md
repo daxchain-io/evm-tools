@@ -1124,11 +1124,13 @@ Flags:
 Metrics are driven by the same config the CLI uses for work — there is no second
 metrics-only watch list. If a tool is configured to watch a contract event or an
 account balance, the endpoint exposes progress and state for exactly that
-configured entry. In the initial milestones config is loaded once at startup, so
-the watched set is fixed for the process lifetime and changes take effect only
-on restart. Once config reload lands (currently deferred), account and contract
-metrics are removed or reset when a reload removes or disables the corresponding
-entry.
+configured entry. The watched set is hot-reloadable: a producer re-reads its
+config on `SIGHUP` and applies the new contract/target set at the next poll (see
+[Config reload](#operational-notes-and-known-limitations)), and the per-entry
+series of a contract/target the reload removes are dropped so a stale value does
+not linger. `evm_stream_config_reloads_total` / `evm_balance_config_reloads_total`
+count successful reloads and `_config_reload_errors_total` count failed ones (a
+bad reload keeps the running set).
 
 `9000` is the default bind port for `evm-stream` and `9001` for `evm-balance`
 when both run on the same host; operators can choose any bind address per CLI.
@@ -1606,13 +1608,22 @@ Deployment notes and the constraints an enterprise sign-off should account for.
   own progress, not downstream confirmation, so a checkpoint plus a downstream sink
   that dedups gives end-to-end no-loss. Without a checkpoint, set `from_block` to a
   known-safe height or minimize downtime under a supervisor.
-- **Config reload (log level/format only).** `SIGHUP` makes a running tool re-read
-  its config and live-apply the resolved `log.level`/`log.format` (e.g. bump to
-  `debug` during an incident without a restart and without losing the resume
-  position). Connection-level and entry-list changes (RPC URL/TLS, chain, bind
-  address, contracts/targets, sink destinations) are **not** hot-applied — change
-  them in config and restart; with `checkpoint_file` set, that restart is gap-free.
-  A malformed config on reload is logged and the running configuration is kept.
+- **Config reload (log level/format + producer watched set).** `SIGHUP` makes a
+  running tool re-read its config and live-apply the resolved `log.level`/`log.format`
+  (e.g. bump to `debug` during an incident without a restart and without losing the
+  resume position). On a **producer** it additionally hot-reloads the watched set:
+  `evm-stream` re-resolves `[[stream.contracts]]` + native-transfer settings and
+  `evm-balance` re-resolves its `[balance]` targets, applying the change at the next
+  poll — added entries are watched from the current frontier forward (no historical
+  backfill of a newly added entry), removed entries stop being watched and their
+  per-entry metric series are dropped. The reload is staged on the signal handler
+  and applied on the poll goroutine, so the watched state is swapped between polls,
+  never mid-poll. A malformed reload is logged, counted
+  (`*_config_reload_errors_total`), and the running set is kept; a successful one is
+  counted (`*_config_reloads_total`). Connection-level and structural changes (RPC
+  URL/TLS, chain, bind address, sampling cadence, sink destinations) are **not**
+  hot-applied — change them in config and restart; with `checkpoint_file` set, a
+  producer restart is gap-free.
 - **Reorg handling: detect-and-re-scan, bounded depth, no finality wait.** Near the
   head the stream tracks the canonical hash of each confirmed tip (bounded to
   `stream.reorg_depth` blocks, default 64). When its processing frontier is

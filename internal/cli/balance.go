@@ -149,6 +149,12 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 		return err
 	}
 
+	// SIGHUP also hot-reloads the watched target set: re-decode the config and
+	// stage the new targets, which the poll loop applies at the next tick (removed
+	// targets' gauge series are reset). Cadence and connection-level changes still
+	// need a restart. The run command's own SIGHUP watcher handles log level/format.
+	defer watchReload(rootCtx, func() { reloadBalanceTargets(cmd, f, poller, m) })()
+
 	m.SetWorkers(1)
 	runErr := poller.Run(rootCtx)
 
@@ -163,6 +169,46 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 		logger.Warn("final stdout flush", "error", flushErr)
 	}
 	return runErr
+}
+
+// reloadBalanceTargets re-decodes the config on SIGHUP and stages the new watched
+// target set for the poll loop to apply. On any decode/resolve failure — or a
+// reload that leaves no targets — it keeps the running set, logs, and counts the
+// failure. Only the target lists are applied at runtime; the cadence and the RPC
+// connection require a restart.
+func reloadBalanceTargets(cmd *cobra.Command, f *sharedFlags, p *balance.Poller, m *metrics.Balance) {
+	fail := func(err error) {
+		slog.Warn("config reload: keeping running target set", "error", err.Error())
+		m.IncConfigReloadError()
+	}
+	cfg, err := f.decodeBalance(cmd)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if err := applyBalanceFlags(f, cfg); err != nil {
+		fail(err)
+		return
+	}
+	resolved, err := balance.Resolve(cfg.Balance)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if len(resolved.Native)+len(resolved.ERC20)+len(resolved.Contracts)+
+		len(resolved.ERC721Balances)+len(resolved.ERC721Ownership) == 0 {
+		fail(fmt.Errorf("reloaded config has no targets to poll"))
+		return
+	}
+	p.QueueReload(resolved.Native, resolved.ERC20, resolved.Contracts,
+		resolved.ERC721Balances, resolved.ERC721Ownership)
+	// Reflect the new configured-entry gauges immediately; the success counter and
+	// the actual swap land on the poll goroutine in applyPendingReload.
+	m.SetConfiguredNative(len(resolved.Native))
+	m.SetConfiguredERC20(len(resolved.ERC20))
+	m.SetConfiguredERC721Balances(len(resolved.ERC721Balances))
+	m.SetConfiguredERC721Ownership(len(resolved.ERC721Ownership))
+	m.SetConfiguredContracts(len(resolved.Contracts))
 }
 
 // balanceValidate implements `evm-balance validate`: load+decode config,

@@ -121,6 +121,11 @@ func (noopMetrics) SetContractBalanceWei(string, string, *big.Int)              
 func (noopMetrics) SetContractBalanceEth(string, string, float64)                  {}
 func (noopMetrics) SetContractTokenTotalSupply(string, string, float64)            {}
 func (noopMetrics) SetContractTransferCount(string, string, float64)               {}
+func (noopMetrics) ResetAccountSeries(string, string)                              {}
+func (noopMetrics) ResetAccountTokenSeries(string, string, string, string)         {}
+func (noopMetrics) ResetContractSeries(string, string)                             {}
+func (noopMetrics) IncConfigReload()                                               {}
+func (noopMetrics) IncConfigReloadError()                                          {}
 func (noopMetrics) IncReconnects()                                                 {}
 func (noopMetrics) ObserveLoop(time.Duration)                                      {}
 func (noopMetrics) SetConsecutiveFailures(int)                                     {}

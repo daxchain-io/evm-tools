@@ -3,6 +3,8 @@ package metrics
 import (
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
 
@@ -63,6 +65,23 @@ func (s *Stream) IncEventRecord(contractName, contractAddr, eventName string) {
 // IncSkippedLog counts one filter-matched log that could not be decoded to the
 // configured event ABI (skipped, not emitted).
 func (s *Stream) IncSkippedLog() { s.skippedLogs.Inc() }
+
+// IncConfigReload counts one successful SIGHUP config reload.
+func (s *Stream) IncConfigReload() { s.configReloads.Inc() }
+
+// IncConfigReloadError counts one failed SIGHUP config reload (old config kept).
+func (s *Stream) IncConfigReloadError() { s.configReloadErrors.Inc() }
+
+// ResetContractSeries removes the per-contract event-record series for a contract
+// that a reload removed/disabled, so a stale counter no longer lingers on the
+// endpoint (design "Metrics": removed entries are reset). It deletes every
+// (event) series under the contract via a partial label match.
+func (s *Stream) ResetContractSeries(contractName, contractAddr string) {
+	s.contractEventRecords.DeletePartialMatch(prometheus.Labels{
+		labelContractName: contractName,
+		labelContractAddr: contractAddr,
+	})
+}
 
 // IncNativeTransferRecord counts one emitted native transfer record.
 func (s *Stream) IncNativeTransferRecord() {

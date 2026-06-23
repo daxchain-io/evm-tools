@@ -250,8 +250,13 @@ Producers take a few extra knobs: `[stream].checkpoint_file` (a durable resume
 cursor — restart resumes gap-free instead of jumping to the head), `reorg_depth`,
 and `head_staleness_threshold`; `[balance]` has `max_concurrency` / `target_timeout`.
 Sending a tool **`SIGHUP`** re-reads the config and live-applies `log.level` /
-`log.format` (e.g. bump to `debug` during an incident without a restart); other
-changes need a restart.
+`log.format` (e.g. bump to `debug` during an incident without a restart). On a
+**producer** it also hot-reloads the watched set — `evm-stream`'s contracts and
+`evm-balance`'s targets — applying adds/removes at the next poll and dropping the
+metric series of removed entries (added entries are watched from the current point
+forward, not backfilled). Connection-level and structural changes (RPC, chain,
+cadence, sink destinations) still need a restart; with `checkpoint_file` set, a
+producer restart is gap-free.
 
 Without `-c`, the file is auto-discovered by checking these directories in order
 (first match wins): `~/.evm-tools/`, then `~/.config/evm-tools/` (the OS

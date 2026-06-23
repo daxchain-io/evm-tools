@@ -78,6 +78,8 @@ type Stream struct {
 	skippedLogs           prometheus.Counter
 	reorgsDetected        prometheus.Counter
 	reconnects            prometheus.Counter
+	configReloads         prometheus.Counter
+	configReloadErrors    prometheus.Counter
 
 	// RPC + loop.
 	rpcCallDuration *prometheus.HistogramVec
@@ -144,6 +146,8 @@ func NewStream(chainName, chainID string) *Stream {
 	s.skippedLogs = c("evm_stream_logs_skipped_total", "Logs matched by the filter but not decodable to the configured event ABI (skipped, not emitted) — a signal of an ABI/config mismatch.")
 	s.reorgsDetected = c("evm_stream_reorgs_detected_total", "Detected chain reorganizations.")
 	s.reconnects = c("evm_stream_reconnects_total", "RPC reconnects after transport errors.")
+	s.configReloads = c("evm_stream_config_reloads_total", "Successful SIGHUP config reloads that re-applied the watched contract set.")
+	s.configReloadErrors = c("evm_stream_config_reload_errors_total", "Failed SIGHUP config reloads (the previous configuration was kept).")
 
 	s.contractEventRecords = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name:        "evm_stream_contract_event_records_emitted_total",

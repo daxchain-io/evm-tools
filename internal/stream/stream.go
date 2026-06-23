@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -52,6 +53,9 @@ type Metrics interface {
 	IncSkippedLog()
 	IncReorgsDetected()
 	IncReconnects()
+	IncConfigReload()
+	IncConfigReloadError()
+	ResetContractSeries(contractName, contractAddr string)
 	ObserveLoop(d time.Duration)
 	SetConsecutiveFailures(n int)
 	SetBackoffSeconds(d time.Duration)
@@ -160,6 +164,20 @@ type Stream struct {
 	// stamped finalized=true at emit. Single-goroutine access.
 	finalizedBlock uint64
 	finalizedKnown bool
+
+	// reloadMu guards pendingWatch. The SIGHUP handler goroutine (via QueueReload)
+	// stores a re-decoded watch set here; the Run goroutine drains and applies it at
+	// the top of the next poll (applyPendingReload). The derived watch state itself
+	// is therefore only ever mutated by the Run goroutine.
+	reloadMu     sync.Mutex
+	pendingWatch *watchSet
+}
+
+// watchSet is a re-decoded monitor configuration staged for a hot reload: the
+// resolved contract subscriptions and the native-transfer filter.
+type watchSet struct {
+	contracts []ResolvedContract
+	native    NativeFilter
 }
 
 // New builds a Stream from resolved options. It validates the derived state but
@@ -210,8 +228,23 @@ func New(opts Options) (*Stream, error) {
 		skippedSeen: map[string]bool{},
 		reorg:       newReorgTracker(opts.ReorgDepth),
 	}
+	s.setWatchSet(opts.Contracts, opts.NativeFilter)
+	return s, nil
+}
+
+// setWatchSet rebuilds the derived log-filter state — the address list, the
+// topic0 union, and the addr→topic0→event index — from contracts, and stores the
+// contract set + native-transfer filter on opts. It is called once at
+// construction and again on each hot reload; it runs only on the Run goroutine
+// (or before Run starts), so the derived fields stay single-goroutine-owned.
+func (s *Stream) setWatchSet(contracts []ResolvedContract, native NativeFilter) {
+	s.opts.Contracts = contracts
+	s.opts.NativeFilter = native
+	s.addresses = make([]string, 0, len(contracts))
+	s.topic0Set = s.topic0Set[:0]
+	s.byAddrTopic = make(map[string]map[string]eventABI, len(contracts))
 	topicSeen := map[string]bool{}
-	for _, c := range opts.Contracts {
+	for _, c := range contracts {
 		s.addresses = append(s.addresses, c.Address)
 		s.byAddrTopic[c.Address] = c.byTopic0
 		for t := range c.byTopic0 {
@@ -221,8 +254,71 @@ func New(opts Options) (*Stream, error) {
 			}
 		}
 	}
-	return s, nil
 }
+
+// QueueReload stages a re-decoded watch set (contracts + native filter) to be
+// applied at the top of the next poll. It is safe to call from another goroutine
+// (the SIGHUP handler): it only stores the staged set under reloadMu; the Run
+// goroutine does the actual swap. A second reload before the first is consumed
+// simply supersedes it (last one wins). It is a no-op before Run starts having
+// any effect, since the pending set is read each poll.
+func (s *Stream) QueueReload(contracts []ResolvedContract, native NativeFilter) {
+	s.reloadMu.Lock()
+	s.pendingWatch = &watchSet{contracts: contracts, native: native}
+	s.reloadMu.Unlock()
+}
+
+// applyPendingReload swaps in a staged watch set (if any) at a safe point on the
+// Run goroutine: it resets the per-contract metric series for entries the reload
+// removed, rebuilds the derived filter state, and counts the reload. Adding or
+// removing contracts takes effect on the next poll; the resume cursor/frontier is
+// untouched, so a newly added contract is observed from the current frontier
+// forward (backfill an added contract's history with a separate run if needed).
+func (s *Stream) applyPendingReload() {
+	s.reloadMu.Lock()
+	ws := s.pendingWatch
+	s.pendingWatch = nil
+	s.reloadMu.Unlock()
+	if ws == nil {
+		return
+	}
+
+	newKeys := make(map[string]bool, len(ws.contracts))
+	for _, c := range ws.contracts {
+		newKeys[contractKey(c.Name, c.Address)] = true
+	}
+	oldKeys := make(map[string]bool, len(s.opts.Contracts))
+	removed := 0
+	for _, c := range s.opts.Contracts {
+		oldKeys[contractKey(c.Name, c.Address)] = true
+		if !newKeys[contractKey(c.Name, c.Address)] {
+			// Drop the stale per-contract series so a removed contract's counter no
+			// longer lingers on the endpoint.
+			s.opts.Metrics.ResetContractSeries(c.Name, c.Address)
+			removed++
+		}
+	}
+	added := 0
+	for _, c := range ws.contracts {
+		if !oldKeys[contractKey(c.Name, c.Address)] {
+			added++
+		}
+	}
+
+	s.setWatchSet(ws.contracts, ws.native)
+	// Reset the once-per-pair undecodable-log warning suppression so a re-added
+	// contract (or one whose ABI changed in the reload) re-surfaces a mismatch.
+	s.skippedSeen = map[string]bool{}
+	s.opts.Metrics.IncConfigReload()
+	s.log.Info("config reloaded (SIGHUP): watched set updated",
+		"contracts", len(ws.contracts), "added", added, "removed", removed,
+		"native_transfers", ws.native.enabled,
+		"note", "added contracts are observed from the current frontier forward")
+}
+
+// contractKey is the identity used to diff the watched set across a reload: the
+// (name, address) pair, matching the metric label values reset on removal.
+func contractKey(name, addr string) string { return name + "\x00" + addr }
 
 // Run drives the monitor until ctx is cancelled. It resolves the starting
 // block, then on each tick advances from the last processed block to the head,
@@ -269,6 +365,9 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 	lastSaved := from
 	// Run an initial poll immediately rather than waiting a full interval.
 	for {
+		// Apply any SIGHUP-staged watch-set change at this safe point (between
+		// polls, on this goroutine) before the poll reads the derived filter state.
+		s.applyPendingReload()
 		loopStart := s.now()
 		next, err := s.pollOnce(ctx, nextBlock)
 		s.opts.Metrics.ObserveLoop(s.now().Sub(loopStart))

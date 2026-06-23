@@ -57,6 +57,10 @@ type Balance struct {
 	loopDuration    prometheus.Histogram
 	consecutiveFail prometheus.Gauge
 	backoffSeconds  prometheus.Gauge
+
+	// Config reload.
+	configReloads      prometheus.Counter
+	configReloadErrors prometheus.Counter
 }
 
 // NewBalance builds the balance metric set on a fresh registry. As with the
@@ -145,6 +149,9 @@ func NewBalance(chainName, chainID string) *Balance {
 
 	b.consecutiveFail = g("evm_balance_consecutive_failures", "Current consecutive failure count.")
 	b.backoffSeconds = g("evm_balance_backoff_duration_seconds", "Retry backoff duration after failures, in seconds.")
+
+	b.configReloads = c("evm_balance_config_reloads_total", "Successful SIGHUP config reloads that re-applied the watched target set.")
+	b.configReloadErrors = c("evm_balance_config_reload_errors_total", "Failed SIGHUP config reloads (the previous configuration was kept).")
 
 	return b
 }

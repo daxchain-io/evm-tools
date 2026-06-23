@@ -64,6 +64,16 @@ type Metrics interface {
 	SetContractTokenTotalSupply(contractName, contractAddr string, supply float64)
 	SetContractTransferCount(contractName, contractAddr string, count float64)
 
+	// Reset* drop the gauge series for a target a reload removed/disabled, so a
+	// stale value no longer lingers on the endpoint (design "Metrics").
+	ResetAccountSeries(accountName, accountAddr string)
+	ResetAccountTokenSeries(accountName, accountAddr, tokenName, tokenAddr string)
+	ResetContractSeries(contractName, contractAddr string)
+
+	// IncConfigReload / IncConfigReloadError count SIGHUP target-set reloads.
+	IncConfigReload()
+	IncConfigReloadError()
+
 	IncReconnects()
 	ObserveLoop(d time.Duration)
 	SetConsecutiveFailures(n int)
@@ -196,6 +206,13 @@ type Poller struct {
 	prior map[string]*big.Int
 	// priorOwner holds the last-observed ERC-721 owner per ownership target key.
 	priorOwner map[string]string
+
+	// reloadMu guards pendingWatch: the SIGHUP handler (via QueueReload) stages a
+	// re-decoded target set here; the Run goroutine drains and applies it between
+	// ticks (applyPendingReload), so the target lists are only ever swapped by the
+	// Run goroutine.
+	reloadMu     sync.Mutex
+	pendingWatch *watchSet
 }
 
 // New builds a Poller from resolved options. It validates the derived state but
@@ -361,6 +378,9 @@ func (p *Poller) runIntervalCadence(ctx context.Context) error {
 
 	consecutiveFailures := 0
 	for {
+		// Apply any SIGHUP-staged target-set change at this safe point (between
+		// ticks, on this goroutine) before the tick reads the target lists.
+		p.applyPendingReload(ctx)
 		if stop, err := p.tick(ctx, &consecutiveFailures); stop {
 			return err
 		}
@@ -385,6 +405,8 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 	var lastSampled, lastHeadTime uint64
 	haveSampled := false
 	for {
+		// Apply any SIGHUP-staged target-set change before reading targets this poll.
+		p.applyPendingReload(ctx)
 		head, err := p.opts.Client.BlockNumber(ctx)
 		if err != nil {
 			if ctx.Err() != nil {

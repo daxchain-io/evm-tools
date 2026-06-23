@@ -78,10 +78,12 @@ func resolvedLog(cmd *cobra.Command, configFile string, allowExec bool) (level, 
 }
 
 // reloadLogging re-reads the config (same precedence + interpolation as startup)
-// and live-applies the resolved log level/format. Only the log settings are
-// applied at runtime; connection-level and entry-list changes require a restart
-// (gapless when a resume cursor is configured). A bad or unreadable config is
-// logged and the running configuration is kept.
+// and live-applies the resolved log level/format. This handles the log settings
+// for every tool; producers additionally hot-reload their watched contract/target
+// set via their own SIGHUP watcher (see reloadStreamWatchSet / reloadBalanceTargets).
+// Connection-level and structural changes still require a restart (gapless when a
+// resume cursor is configured). A bad or unreadable config is logged and the
+// running configuration is kept.
 func reloadLogging(cmd *cobra.Command, configFile string, allowExec bool) {
 	level, format, err := resolvedLog(cmd, configFile, allowExec)
 	if err != nil {
@@ -94,7 +96,7 @@ func reloadLogging(cmd *cobra.Command, configFile string, allowExec bool) {
 	}
 	slog.Info("config reloaded (SIGHUP)",
 		"log_level", level, "log_format", format,
-		"note", "only log level/format apply at runtime; other changes require a restart")
+		"note", "log level/format applied; producers also reload their watched set; other changes need a restart")
 }
 
 // allowExec resolves the effective --allow-exec value, honoring the

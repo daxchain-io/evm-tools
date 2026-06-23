@@ -168,6 +168,13 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		return err
 	}
 
+	// SIGHUP also hot-reloads the watched contract set / native-transfer filter:
+	// re-decode the config and stage the new set, which the poll loop applies at
+	// the next tick (added/removed contracts take effect then; removed contracts'
+	// metric series are reset). Connection-level changes (RPC URL, chain) still
+	// need a restart. The run command's own SIGHUP watcher handles log level/format.
+	defer watchReload(rootCtx, func() { reloadStreamWatchSet(cmd, f, s, m) })()
+
 	// One poll loop drives the M1 stream, so a single worker is active for the
 	// run; per-monitor goroutines arrive with later milestones.
 	m.SetWorkers(1)
@@ -187,6 +194,37 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		logger.Warn("final stdout flush", "error", flushErr)
 	}
 	return runErr
+}
+
+// reloadStreamWatchSet re-decodes the config on SIGHUP and stages the new watched
+// contract set + native-transfer filter for the poll loop to apply. On any decode/
+// resolve failure it keeps the running watch set, logs, and counts the failure —
+// a bad reload never takes down a healthy stream. Only the watched set is applied
+// at runtime; connection-level changes (RPC, chain) require a restart.
+func reloadStreamWatchSet(cmd *cobra.Command, f *sharedFlags, s *stream.Stream, m *metrics.Stream) {
+	fail := func(err error) {
+		slog.Warn("config reload: keeping running watch set", "error", err.Error())
+		m.IncConfigReloadError()
+	}
+	cfg, err := f.decodeStream(cmd)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if err := applyStreamFlags(cmd, f, cfg); err != nil {
+		fail(err)
+		return
+	}
+	contracts, err := stream.ResolveContracts(cfg.Stream.Contracts)
+	if err != nil {
+		fail(err)
+		return
+	}
+	s.QueueReload(contracts, stream.NativeFilterFromConfig(cfg.Stream.NativeTransfers))
+	// Reflect the new configured-entry gauges immediately; the success counter and
+	// the actual swap land on the poll goroutine in applyPendingReload.
+	m.SetConfiguredContracts(len(contracts))
+	m.SetConfiguredNativeTransfers(cfg.Stream.NativeTransfers.Enabled)
 }
 
 // streamValidate implements `evm-stream validate`: load+decode config, validate

@@ -104,6 +104,34 @@ func (b *Balance) SetContractTransferCount(contractName, contractAddr string, co
 	b.contractTransferCount.WithLabelValues(contractName, contractAddr).Set(count)
 }
 
+// ResetAccountSeries drops the native-account balance gauges for a removed target.
+func (b *Balance) ResetAccountSeries(accountName, accountAddr string) {
+	b.accountBalanceWei.DeleteLabelValues(accountName, accountAddr)
+	b.accountBalanceEth.DeleteLabelValues(accountName, accountAddr)
+}
+
+// ResetAccountTokenSeries drops the token-balance gauges (ERC-20 / ERC-721
+// balance) for a removed target.
+func (b *Balance) ResetAccountTokenSeries(accountName, accountAddr, tokenName, tokenAddr string) {
+	b.accountTokenBalRaw.DeleteLabelValues(accountName, accountAddr, tokenName, tokenAddr)
+	b.accountTokenBalance.DeleteLabelValues(accountName, accountAddr, tokenName, tokenAddr)
+}
+
+// ResetContractSeries drops the contract gauges (native balance, token supply,
+// transfer count) for a removed target.
+func (b *Balance) ResetContractSeries(contractName, contractAddr string) {
+	b.contractBalanceWei.DeleteLabelValues(contractName, contractAddr)
+	b.contractBalanceEth.DeleteLabelValues(contractName, contractAddr)
+	b.contractTokenSupply.DeleteLabelValues(contractName, contractAddr)
+	b.contractTransferCount.DeleteLabelValues(contractName, contractAddr)
+}
+
+// IncConfigReload counts one successful SIGHUP config reload.
+func (b *Balance) IncConfigReload() { b.configReloads.Inc() }
+
+// IncConfigReloadError counts one failed SIGHUP config reload (old config kept).
+func (b *Balance) IncConfigReloadError() { b.configReloadErrors.Inc() }
+
 // IncReconnects counts an RPC reconnect after a transport error.
 func (b *Balance) IncReconnects() { b.reconnects.Inc() }
 
