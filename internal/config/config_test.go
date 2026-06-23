@@ -50,6 +50,7 @@ events = ["Transfer", "Approval"]
 
 [stream.native_transfers]
 enabled = true
+include_internal = true
 
 [balance]
 interval = "1m"
@@ -96,6 +97,9 @@ func TestDecodeStream(t *testing.T) {
 	}
 	if !cfg.Stream.NativeTransfers.Enabled {
 		t.Errorf("native_transfers should be enabled")
+	}
+	if !cfg.Stream.NativeTransfers.IncludeInternal {
+		t.Errorf("native_transfers.include_internal should decode true")
 	}
 }
 

@@ -131,6 +131,7 @@ type-specific **`data`** payload.
 | `block_hash` | string | Source block hash, for provenance; not part of the dedup key. |
 | `tx_hash` | string | Transaction hash when the record is transaction-backed. |
 | `log_index` | integer | Log index within the block for `event` records. |
+| `trace_address` | array of integers | EVM call path of an `internal_transfer` record (e.g. `[0,2,1]`); the per-transfer identity that makes sibling internal transfers within one tx unique (the analogue of `log_index`). Omitted for every other record class. |
 | `timestamp` | string | Block timestamp (RFC 3339) when available. |
 | `emitted_at` | string | Wall-clock time the producer emitted the record (RFC 3339). Useful for latency and ordering at sinks. |
 | `finalized` | boolean | Additive, best-effort (`omitempty`): `true` when the record's block is at or below the chain's finalized height at emit time (can no longer be reorged out); absent otherwise. |
@@ -151,6 +152,11 @@ actually unique and reorg-stable for each:
   `block_hash` is carried only for provenance and excluded from the key.
 - **Native transfers** (`native_transfer`): `chain_id` + `tx_hash` (one
   top-level value transfer per transaction).
+- **Internal transfers** (`internal_transfer`): `chain_id` + `tx_hash` +
+  `trace_address`. A transaction can move ETH at many points in its call tree, so
+  the EVM call path makes each one unique. It is reorg-stable for the same reason
+  `log_index` is — it is a function of the transaction's execution, not of
+  `block_hash` — so a re-included tx re-derives identical keys.
 - **Sampled records** (`*_sample`): `chain_id` + `type` + `name` +
   `block_number`. Under interval cadence a single block can be sampled more than
   once, so `emitted_at` disambiguates; a sink that wants one row per block per
@@ -237,6 +243,21 @@ Envelope carries `tx_hash`, `log_index`, and `block_hash`.
   contract (`to` is null).
 
 Envelope carries `tx_hash`; no `log_index`.
+
+**`internal_transfer`** (evm-stream) — a native ETH value movement that happened
+*inside* a transaction's execution (a value-bearing `CALL`/`CALLCODE`, an internal
+`CREATE`/`CREATE2` endowment, or a `SELFDESTRUCT` sweep). These emit no log, so
+only trace RPC surfaces them; they are opt-in behind
+`[stream.native_transfers].include_internal` (see [evm-stream](#evm-stream)). One
+transaction can produce many.
+
+- `from` (string); `to` (string, the destination/beneficiary or the created
+  contract address); `value_wei` (string); `value` (string, ether-decimal).
+- `call_type` (string): the EVM frame type that moved the value — `call`,
+  `callcode`, `create`, `create2`, or `selfdestruct`.
+- `contract_creation` (bool, optional): true for an internal `CREATE`/`CREATE2`.
+
+Envelope carries `tx_hash` and `trace_address` (the call path); no `log_index`.
 
 **`reorg`** (evm-stream) — a chain reorganization the stream detected near the
 head. It marks an orphaned block range so a sink can retract the records of
@@ -352,10 +373,34 @@ contract-creation transaction (`to` is null) that carries value is emitted with
 `to` omitted and `contract_creation: true`. By default every value-bearing
 transaction is emitted; `[stream.native_transfers]` accepts an optional
 `from`/`to` allowlist to scope the stream — without one, this is the full
-per-block value-transfer firehose, which is high-volume on busy chains. Internal
-ETH transfers caused by contract calls require trace RPC support, so
-`include_internal` is optional, provider-dependent, and out of the first
-milestone.
+per-block value-transfer firehose, which is high-volume on busy chains.
+
+**Internal transfers (opt-in, trace-based).** ETH moved *inside* a transaction —
+a value-bearing `CALL`, an internal `CREATE`/`CREATE2` endowment, or a
+`SELFDESTRUCT` sweep — emits no log, so top-level scanning misses it (a contract
+payout typically rides on a `value: 0` outer tx). Setting
+`[stream.native_transfers].include_internal = true` (or `--include-internal`,
+which requires `--native-transfers`) traces each block — reusing the block the
+top-level path already fetched — and emits an `internal_transfer` per value-bearing
+sub-call that passes the same `from`/`to` allowlist. Frames are gated like the
+top-level path: a reverted frame (and its whole subtree) moved nothing and is
+skipped, as is a fully-reverted transaction; `DELEGATECALL`/`STATICCALL`/`CALLCODE`
+are excluded by type (they move no value to a third party).
+
+Trace RPC is **provider-dependent** and unevenly exposed, so the stream cascades
+through three backends on first use and caches whichever the node serves:
+geth's block-level `debug_traceBlockByNumber` (callTracer, one call/block) → the
+parity `trace_block` (Erigon/Nethermind/Besu/anvil, one call/block) → per-tx
+`debug_traceTransaction` (one call/tx). It is capability-aware and never fails an
+otherwise-healthy run: if a node serves *none* of them, internal detection
+**self-disables** for the run (logged once, `evm_stream_internal_transfers_disabled`)
+while top-level transfers and logs keep flowing; a persistent per-block trace
+failure (an oversized response, a tracer crash) **skips that block's** internal
+transfers after bounded retries (logged, counted in
+`evm_stream_internal_trace_blocks_skipped_total`) rather than wedging the producer;
+a transient error is retried losslessly. `evm-stream check rpc` probes the cascade
+and reports `trace_supported` / `trace_backend` when `include_internal` is set, so
+an operator learns at config time which backend (if any) the endpoint supports.
 
 Native transfers belong in `evm-stream`, not `evm-balance`, because they are
 streamable chain activity rather than sampled account state.
@@ -536,8 +581,10 @@ events = ["Transfer", "Approval"]   # resolved via the built-in ERC-20 ABI
 
 [stream.native_transfers]
 enabled = true
-include_internal = false
-# Optional allowlist; without it, every value-bearing tx is emitted.
+include_internal = false   # also emit internal transfers via trace RPC (debug_traceBlockByNumber);
+                           # needs a trace-capable endpoint, else it self-disables for the run
+# Optional allowlist; without it, every value-bearing tx is emitted. Applies to
+# internal-transfer frame addresses too when include_internal is on.
 # from = ["0x..."]
 # to = ["0x..."]
 
@@ -1200,6 +1247,12 @@ Stream progress:
   configured contract and event name.
 - `evm_stream_native_transfer_records_emitted_total`: native transfer records
   emitted.
+- `evm_stream_internal_transfer_records_emitted_total`: internal (trace-derived)
+  native transfer records emitted (when `include_internal` is on).
+- `evm_stream_internal_transfers_disabled`: `1` when internal-transfer detection
+  self-disabled because the node serves no supported trace method, else `0`.
+- `evm_stream_internal_trace_blocks_skipped_total`: blocks whose internal transfers
+  were skipped after repeated trace failures (best-effort; the core stream advanced).
 - `evm_stream_reorgs_detected_total`: detected chain reorganizations.
 - `evm_stream_reconnects_total`: RPC reconnects after transport errors.
 
@@ -1738,9 +1791,15 @@ These are unresolved and worth deciding before or during the build:
    and the [evm-sink-kafka](#evm-sink-kafka) configuration subsection plus the S1
    milestone in [docs/plan.md](plan.md). The same at-least-once posture governs
    `evm-sink-webhook` (Open Question 1).
-3. **Internal native transfers.** Confirm when trace-RPC-based internal transfer
-   detection (`include_internal`) is in scope, given it is provider-dependent
-   and deferred from the first milestone.
+3. **Internal native transfers.** *Resolved.* Trace-RPC-based internal transfer
+   detection shipped behind the opt-in `[stream.native_transfers].include_internal`,
+   emitting an `internal_transfer` record per value-bearing sub-call. Because trace
+   RPC is provider-dependent and unevenly exposed, the stream cascades through three
+   backends (`debug_traceBlockByNumber` → parity `trace_block` → per-tx
+   `debug_traceTransaction`) and is capability-aware: a node serving none
+   self-disables internal detection for the run, a persistent per-block trace
+   failure skips that block rather than wedging, and `check rpc` reports trace
+   support + the selected backend up front. See [evm-stream](#evm-stream).
 4. **Finality signaling.** *Resolved.* Near-head reorg detection landed in S7
    (the `reorg` marker + canonical re-scan), and the additive, best-effort
    `finalized` envelope field now lets a sink distinguish final from

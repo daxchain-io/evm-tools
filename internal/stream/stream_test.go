@@ -39,7 +39,34 @@ type fakeClient struct {
 	// height's canonical hash changes between polls.
 	blockByNum func(n uint64) *rpc.Block
 
+	// trace* back the three trace backends; nil means "no traces" (the
+	// internal-transfer path is a no-op for tests that don't exercise it).
+	traceBlock  func(n uint64) ([]rpc.TxTrace, error)
+	traceTx     func(txHash string) (*rpc.CallFrame, error)
+	traceParity func(n uint64) ([]rpc.ParityTrace, error)
+
 	getLogsCalls []rpc.LogFilter
+}
+
+func (c *fakeClient) TraceBlockByNumber(_ context.Context, n uint64) ([]rpc.TxTrace, error) {
+	if c.traceBlock != nil {
+		return c.traceBlock(n)
+	}
+	return nil, nil
+}
+
+func (c *fakeClient) TraceTransaction(_ context.Context, txHash string) (*rpc.CallFrame, error) {
+	if c.traceTx != nil {
+		return c.traceTx(txHash)
+	}
+	return nil, nil
+}
+
+func (c *fakeClient) TraceBlockParity(_ context.Context, n uint64) ([]rpc.ParityTrace, error) {
+	if c.traceParity != nil {
+		return c.traceParity(n)
+	}
+	return nil, nil
 }
 
 func (c *fakeClient) ChainID(context.Context) (int64, error) { return c.chainID, nil }
@@ -369,6 +396,15 @@ func (c *failHeadClient) BlockByNumberUint(_ context.Context, n uint64, _ bool) 
 }
 func (c *failHeadClient) GetLogs(context.Context, rpc.LogFilter) ([]rpc.Log, error) { return nil, nil }
 func (c *failHeadClient) TransactionReceipt(context.Context, string) (*rpc.Receipt, error) {
+	return nil, nil
+}
+func (c *failHeadClient) TraceBlockByNumber(context.Context, uint64) ([]rpc.TxTrace, error) {
+	return nil, nil
+}
+func (c *failHeadClient) TraceTransaction(context.Context, string) (*rpc.CallFrame, error) {
+	return nil, nil
+}
+func (c *failHeadClient) TraceBlockParity(context.Context, uint64) ([]rpc.ParityTrace, error) {
 	return nil, nil
 }
 

@@ -26,15 +26,16 @@ type Type string
 
 // Record type discriminators.
 const (
-	TypeEvent           Type = "event"
-	TypeNativeTransfer  Type = "native_transfer"
-	TypeReorg           Type = "reorg"
-	TypeBalanceSample   Type = "balance_sample"
-	TypeBalanceChange   Type = "balance_change"
-	TypeOwnershipSample Type = "ownership_sample"
-	TypeOwnershipChange Type = "ownership_change"
-	TypeContractSample  Type = "contract_sample"
-	TypeContractChange  Type = "contract_change"
+	TypeEvent            Type = "event"
+	TypeNativeTransfer   Type = "native_transfer"
+	TypeInternalTransfer Type = "internal_transfer"
+	TypeReorg            Type = "reorg"
+	TypeBalanceSample    Type = "balance_sample"
+	TypeBalanceChange    Type = "balance_change"
+	TypeOwnershipSample  Type = "ownership_sample"
+	TypeOwnershipChange  Type = "ownership_change"
+	TypeContractSample   Type = "contract_sample"
+	TypeContractChange   Type = "contract_change"
 )
 
 // Tool names that produce records.
@@ -84,9 +85,16 @@ type Envelope struct {
 	TxHash        string `json:"tx_hash,omitempty"`
 	// LogIndex applies to event records. It is a pointer so index 0 is
 	// preserved and non-log records omit the field entirely.
-	LogIndex  *uint64 `json:"log_index,omitempty"`
-	Timestamp string  `json:"timestamp,omitempty"`
-	EmittedAt string  `json:"emitted_at"`
+	LogIndex *uint64 `json:"log_index,omitempty"`
+	// TraceAddress is the EVM call path of an internal_transfer record (e.g.
+	// [0,2,1] = the 2nd child of the 3rd child of the top-level call). It is the
+	// per-transfer identity that makes sibling internal transfers within one tx
+	// dedup-unique — the analogue of LogIndex for events — so it lives in the
+	// envelope and feeds DedupKey directly. Absent (omitted) for every other
+	// record class.
+	TraceAddress []int  `json:"trace_address,omitempty"`
+	Timestamp    string `json:"timestamp,omitempty"`
+	EmittedAt    string `json:"emitted_at"`
 	// Finalized marks a record whose block is at or below the chain's finalized
 	// height at emit time — it can no longer be reorged out. It is an additive,
 	// best-effort signal (omitempty, no schema bump): present and true only when
@@ -122,6 +130,29 @@ type NativeTransferData struct {
 	Value    string `json:"value"`
 	// ContractCreation is true when the transaction created a contract (To is
 	// null). Omitted otherwise.
+	ContractCreation bool `json:"contract_creation,omitempty"`
+}
+
+// InternalTransferData is the payload for an "internal_transfer" record: a native
+// (ETH) value movement that happened INSIDE a transaction's execution (a
+// value-bearing CALL/CALLCODE, an internal CREATE/CREATE2 endowment, or a
+// SELFDESTRUCT beneficiary sweep) rather than as the top-level transaction value
+// — the kind of move that emits no log and so is invisible without trace RPC.
+// The record's identity (which sibling within the tx) lives in the envelope's
+// TraceAddress. Like native_transfer, amounts are JSON strings.
+type InternalTransferData struct {
+	From string `json:"from"`
+	// To is the destination/beneficiary, or the created contract address for an
+	// internal CREATE/CREATE2.
+	To       string `json:"to,omitempty"`
+	ValueWei string `json:"value_wei"`
+	Value    string `json:"value"`
+	// CallType is the EVM frame type that moved the value: call, callcode, create,
+	// create2, or selfdestruct (lowercased). Lets a sink tell a payout from a
+	// contract endowment from a self-destruct sweep.
+	CallType string `json:"call_type"`
+	// ContractCreation is true for an internal CREATE/CREATE2 frame (To is the new
+	// contract address). Omitted otherwise.
 	ContractCreation bool `json:"contract_creation,omitempty"`
 }
 

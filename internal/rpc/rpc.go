@@ -130,10 +130,24 @@ type rpcResponse struct {
 	Error   *rpcError       `json:"error"`
 }
 
-// call performs a single JSON-RPC method call and unmarshals Result into out.
-// It observes the call's duration and error category through the observer. The
-// returned error is always classified via Classify by the caller for metrics.
-func (c *Client) call(ctx context.Context, method string, out any, params ...any) (err error) {
+// defaultMaxBodyBytes caps a normal RPC response; traceMaxBodyBytes is the larger
+// cap for trace responses, whose full call trees are far bigger than a block or
+// log page. Reading is bounded so a pathological response cannot exhaust memory.
+const (
+	defaultMaxBodyBytes int64 = 64 << 20
+	traceMaxBodyBytes   int64 = 256 << 20
+)
+
+// call performs a single JSON-RPC method call with the default body cap.
+func (c *Client) call(ctx context.Context, method string, out any, params ...any) error {
+	return c.callLimited(ctx, method, out, defaultMaxBodyBytes, params...)
+}
+
+// callLimited performs a single JSON-RPC method call, reading at most bodyLimit
+// bytes of response, and unmarshals Result into out. It observes the call's
+// duration and error category through the observer. The returned error is always
+// classified via Classify by the caller for metrics.
+func (c *Client) callLimited(ctx context.Context, method string, out any, bodyLimit int64, params ...any) (err error) {
 	start := time.Now()
 	defer func() {
 		if c.obs != nil {
@@ -164,13 +178,19 @@ func (c *Client) call(ctx context.Context, method string, out any, params ...any
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	// Read one byte past the cap so an over-limit body is detected explicitly
+	// rather than silently truncated into a confusing decode error.
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
 	if readErr != nil {
 		return fmt.Errorf("rpc: %s read body: %w", method, readErr)
 	}
-
+	// A definitive HTTP status (a method/namespace rejection) takes precedence over
+	// the body-size cap, so a large error page can't mask a method gap.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("rpc: %s http status %d", method, resp.StatusCode)
+		return &HTTPError{Method: method, Status: resp.StatusCode}
+	}
+	if int64(len(body)) > bodyLimit {
+		return &ResponseTooLargeError{Method: method, Limit: bodyLimit}
 	}
 
 	var rpcResp rpcResponse
@@ -186,6 +206,31 @@ func (c *Client) call(ctx context.Context, method string, out any, params ...any
 		}
 	}
 	return nil
+}
+
+// HTTPError is a non-2xx HTTP response from the RPC endpoint — e.g. a reverse
+// proxy or managed provider rejecting a method namespace (`debug_*`) with
+// 401/403/404, or 501 for an unimplemented method. Callers can errors.As it to
+// distinguish a definitive method rejection from a transient 5xx.
+type HTTPError struct {
+	Method string
+	Status int
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("rpc: %s http status %d", e.Method, e.Status)
+}
+
+// ResponseTooLargeError reports a response body that exceeded the read cap. It is
+// returned explicitly instead of silently truncating the body (which would surface
+// as a misleading decode error and, for an immutable block, retry forever).
+type ResponseTooLargeError struct {
+	Method string
+	Limit  int64
+}
+
+func (e *ResponseTooLargeError) Error() string {
+	return fmt.Sprintf("rpc: %s response exceeds %d-byte cap", e.Method, e.Limit)
 }
 
 // decodeError wraps a JSON decoding failure so Classify can categorize it.

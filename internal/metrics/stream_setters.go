@@ -89,6 +89,20 @@ func (s *Stream) IncNativeTransferRecord() {
 	s.nativeTransferRecords.Inc()
 }
 
+// IncInternalTransferRecord counts one emitted internal (trace-derived) transfer.
+func (s *Stream) IncInternalTransferRecord() {
+	s.recordsEmitted.Inc()
+	s.internalTransferRecords.Inc()
+}
+
+// IncInternalTraceSkipped counts one block whose internal transfers were skipped
+// after repeated trace failures (best-effort; the core stream still advanced).
+func (s *Stream) IncInternalTraceSkipped() { s.internalTraceSkipped.Inc() }
+
+// SetInternalTransfersDisabled records whether internal-transfer detection
+// self-disabled because the node does not expose trace RPC.
+func (s *Stream) SetInternalTransfersDisabled(disabled bool) { s.internalDisabled.Set(b2f(disabled)) }
+
 // IncReorgsDetected counts a chain reorg detected near the head (emitted with a
 // reorg marker and a re-scan of the canonical chain; see internal/stream/reorg.go).
 func (s *Stream) IncReorgsDetected() { s.reorgsDetected.Inc() }

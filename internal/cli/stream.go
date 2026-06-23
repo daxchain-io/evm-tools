@@ -263,7 +263,11 @@ func streamCheckRPC(cmd *cobra.Command, f *sharedFlags) error {
 	if err != nil {
 		return err
 	}
-	return runCheckRPC(cmd, rpcMaterial{URL: cfg.RPC.URL, TLS: rpcTLSFromConfig(cfg.RPC)})
+	if err := applyStreamFlags(cmd, f, cfg); err != nil {
+		return err
+	}
+	return runCheckRPC(cmd, rpcMaterial{URL: cfg.RPC.URL, TLS: rpcTLSFromConfig(cfg.RPC)},
+		cfg.Stream.NativeTransfers.IncludeInternal)
 }
 
 // validateStream applies the cross-field invariants that strict decoding cannot
@@ -293,11 +297,15 @@ func validateStream(cfg *config.StreamFull) error {
 		return fmt.Errorf("nothing to monitor: pass --contract (with --events) and/or --native-transfers, " +
 			"or configure [[stream.contracts]] / [stream.native_transfers]")
 	}
+	if cfg.Stream.NativeTransfers.IncludeInternal && !cfg.Stream.NativeTransfers.Enabled {
+		return fmt.Errorf("native_transfers.include_internal requires native_transfers.enabled " +
+			"(internal transfers refine native-transfer detection): set --native-transfers or [stream.native_transfers].enabled")
+	}
 	return nil
 }
 
 // applyStreamFlags merges the evm-stream config-free flags (--contract/--events/
-// --native-transfers) onto the decoded config, so the producer can run with no
+// --native-transfers/--include-internal) onto the decoded config, so the producer can run with no
 // config file. Flags add to any configured contracts. A bool/list flag is only
 // applied when the user actually set it, so it never overrides config with a zero
 // default. Each --contract becomes a contract resolved against the built-in
@@ -306,6 +314,9 @@ func validateStream(cfg *config.StreamFull) error {
 func applyStreamFlags(cmd *cobra.Command, f *sharedFlags, cfg *config.StreamFull) error {
 	if cmd.Flags().Changed("native-transfers") {
 		cfg.Stream.NativeTransfers.Enabled = f.streamNativeTransfers
+	}
+	if cmd.Flags().Changed("include-internal") {
+		cfg.Stream.NativeTransfers.IncludeInternal = f.streamIncludeInternal
 	}
 	if cmd.Flags().Changed("events") && len(f.streamContracts) == 0 {
 		return fmt.Errorf("--events requires at least one --contract")

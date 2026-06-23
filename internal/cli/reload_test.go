@@ -57,6 +57,15 @@ func (noopStreamClient) GetLogs(context.Context, rpc.LogFilter) ([]rpc.Log, erro
 func (noopStreamClient) TransactionReceipt(context.Context, string) (*rpc.Receipt, error) {
 	return nil, nil
 }
+func (noopStreamClient) TraceBlockByNumber(context.Context, uint64) ([]rpc.TxTrace, error) {
+	return nil, nil
+}
+func (noopStreamClient) TraceTransaction(context.Context, string) (*rpc.CallFrame, error) {
+	return nil, nil
+}
+func (noopStreamClient) TraceBlockParity(context.Context, uint64) ([]rpc.ParityTrace, error) {
+	return nil, nil
+}
 
 type discardEmitter struct{}
 

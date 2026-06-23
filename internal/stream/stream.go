@@ -36,6 +36,12 @@ type Client interface {
 	FinalizedBlockNumber(ctx context.Context) (uint64, error)
 	GetLogs(ctx context.Context, f rpc.LogFilter) ([]rpc.Log, error)
 	TransactionReceipt(ctx context.Context, txHash string) (*rpc.Receipt, error)
+	// Trace methods back the three internal-transfer backends (used only when
+	// native_transfers.include_internal is set). The stream cascades through them
+	// and self-disables if a node serves none.
+	TraceBlockByNumber(ctx context.Context, n uint64) ([]rpc.TxTrace, error)
+	TraceTransaction(ctx context.Context, txHash string) (*rpc.CallFrame, error)
+	TraceBlockParity(ctx context.Context, n uint64) ([]rpc.ParityTrace, error)
 }
 
 // Metrics is the subset of *metrics.Stream the loop reports to. A nil Metrics
@@ -50,6 +56,9 @@ type Metrics interface {
 	SetEmitBlockedSeconds(sec float64)
 	IncEventRecord(contractName, contractAddr, eventName string)
 	IncNativeTransferRecord()
+	IncInternalTransferRecord()
+	IncInternalTraceSkipped()
+	SetInternalTransfersDisabled(disabled bool)
 	IncSkippedLog()
 	IncReorgsDetected()
 	IncReconnects()
@@ -157,6 +166,11 @@ type Stream struct {
 	// (a chain without finality, or a dev node), so the loop stops polling it and
 	// the finalized-block gauge stays at 0. Single-goroutine access.
 	finalizedUnsupported bool
+
+	// traceBackend is the internal-transfer trace method selected for this node
+	// (block-level, parity, or per-tx), cached after the first probe; backendDisabled
+	// when no trace method is supported. Single-goroutine access.
+	traceBackend traceBackend
 
 	// finalizedBlock is the chain's last-known finalized height, refreshed once per
 	// poll loop by updateFinalizedBlock; finalizedKnown gates it (false until the
@@ -758,20 +772,17 @@ func (s *Stream) emitLog(l rpc.Log) error {
 	return nil
 }
 
-// processNative scans each block in [from,to] for success-gated value transfers
-// and emits one native_transfer record per qualifying transaction.
+// processNative scans each block in [from,to] for success-gated top-level value
+// transfers and emits one native_transfer record per qualifying transaction. When
+// native_transfers.include_internal is set it also traces each block and emits an
+// internal_transfer per value-bearing sub-call — reusing the block already fetched
+// here for the timestamp, so internal detection costs one extra trace call per
+// block and no redundant fetch.
 func (s *Stream) processNative(ctx context.Context, from, to uint64) error {
 	for n := from; n <= to; n++ {
 		blk, err := s.opts.Client.BlockByNumberUint(ctx, n, true)
 		if err != nil {
 			return err
-		}
-		transfers, err := detectNativeTransfers(ctx, s.opts.Client, s.opts.NativeFilter, blk)
-		if err != nil {
-			return err
-		}
-		if len(transfers) == 0 {
-			continue
 		}
 		blkNum, err := blk.NumberUint()
 		if err != nil {
@@ -781,8 +792,19 @@ func (s *Stream) processNative(ctx context.Context, from, to uint64) error {
 		if bt, ok := chain.BlockTime(blk); ok {
 			ts = record.RFC3339(bt)
 		}
+
+		transfers, err := detectNativeTransfers(ctx, s.opts.Client, s.opts.NativeFilter, blk)
+		if err != nil {
+			return err
+		}
 		for _, t := range transfers {
 			if err := s.emitNative(blk, blkNum, ts, t); err != nil {
+				return err
+			}
+		}
+
+		if s.opts.NativeFilter.includeInternal {
+			if err := s.emitInternalTransfers(ctx, blk, blkNum, ts); err != nil {
 				return err
 			}
 		}

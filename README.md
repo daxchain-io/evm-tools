@@ -108,7 +108,23 @@ evm-stream run --rpc-url "${RPC_URL}" \
   --chain ethereum --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 | jq
 
 evm-stream run --rpc-url "${RPC_URL}" --native-transfers | jq
+
+# Also follow ETH moved *inside* transactions (router/multisig payouts, withdrawals,
+# selfdestruct sweeps) — needs a trace-capable endpoint:
+evm-stream run --rpc-url "${RPC_URL}" --native-transfers --include-internal | jq
 ```
+
+`--native-transfers` emits top-level ETH transfers. `--include-internal` adds
+**internal transfers** — ETH moved during a transaction's execution, which emits no
+log and is otherwise invisible — via trace RPC. It is opt-in and
+**provider-dependent**, so the stream cascades through three trace backends
+(`debug_traceBlockByNumber` → parity `trace_block` → `debug_traceTransaction`) and
+uses whichever the node serves; on an endpoint that serves none it self-disables
+for the run (top-level transfers and logs keep flowing) rather than failing, and
+`evm-stream check rpc` reports `trace_supported` + the chosen `trace_backend` so
+you know up front. Internal transfers arrive as a distinct `internal_transfer`
+record carrying a `trace_address` call path. See the
+[design doc](docs/design.md#evm-stream) for the gating and capability details.
 
 The shell expands `${RPC_URL}` before `evm-stream` sees it — use double quotes (or
 no quotes), not single quotes. (`evm-tools`' own `${VAR}` interpolation applies to

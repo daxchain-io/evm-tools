@@ -119,6 +119,9 @@ func (noopMetrics) SetEmitBlockedSeconds(float64)         {}
 func (noopMetrics) IncEventRecord(string, string, string) {}
 func (noopMetrics) IncSkippedLog()                        {}
 func (noopMetrics) IncNativeTransferRecord()              {}
+func (noopMetrics) IncInternalTransferRecord()            {}
+func (noopMetrics) IncInternalTraceSkipped()              {}
+func (noopMetrics) SetInternalTransfersDisabled(bool)     {}
 func (noopMetrics) IncReorgsDetected()                    {}
 func (noopMetrics) IncReconnects()                        {}
 func (noopMetrics) IncConfigReload()                      {}

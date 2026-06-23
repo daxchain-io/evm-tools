@@ -3,7 +3,7 @@
 Derived from [design.md](design.md): the design is the *what and why*, this is
 the *how and in what order*. The suite was built milestone by milestone
 (summarized below); the forward-looking backlog lives under
-[Deferred](#deferred-post-10) and the design's [Open Questions](design.md#open-questions).
+[Deferred](#deferred) and the design's [Open Questions](design.md#open-questions).
 
 Every milestone landed green —
 `go build ./... && go vet ./... && go test -race ./... && golangci-lint run && goreleaser check` —
@@ -37,16 +37,14 @@ private vulnerability reporting, org base permission read-only.
 | post-S7 | `config.toml` auto-discovery from `~/.evm-tools` (legacy `evm-tools.toml` fallback). |
 | S8 | Pluggable record transport (Unix socket / Windows named pipe, fan-out); SIGHUP checkpoint/resume; Windows support + CI. |
 | S9 (1.0 gate) | Integration test harness (compose stack + live sink/producer tests + CI job); opt-in dead-letter quarantine for poison records; additive `finalized` envelope field; producer HA runbook; hot config reload of the watched set. |
+| post-1.0 | Internal (trace-RPC) native transfers — opt-in `include_internal`, new `internal_transfer` record; trace-backend cascade (`debug_traceBlockByNumber` → `trace_block` → `debug_traceTransaction`) with capability-aware self-disable and per-block skip. |
 
-## Deferred (post-1.0)
+## Deferred
 
-Two items remain deliberately out of scope for 1.0 — each is **externally
-blocked** on a dependency the project does not control (see design
+One item remains deliberately out of scope — **externally blocked** on a
+dependency the project does not control (see design
 [Open Questions](design.md#open-questions)):
 
-- **Internal/trace native transfers** (`include_internal`) — provider-dependent
-  (needs a trace RPC, e.g. `debug_traceBlock` / `trace_block`, that many endpoints
-  don't expose); intentionally not built.
 - **Kafka exactly-once** — an idempotent/transactional producer, which requires
   swapping the Kafka client (`segmentio/kafka-go` → `franz-go`); the existing
   at-least-once path with an idempotent sink already gives effective
@@ -54,8 +52,9 @@ blocked** on a dependency the project does not control (see design
 
 Resolved since this section was first written: **finality signaling** (the additive
 `finalized` field shipped in S9), **config reload** (watched-set hot reload shipped
-in S9, on top of the S-series log-level reload), and the **consolidated metrics
-endpoint** (resolved at the scrape layer; `deploy/README.md`).
+in S9, on top of the S-series log-level reload), **internal/trace native transfers**
+(the opt-in `include_internal` / `internal_transfer` record shipped post-1.0), and the
+**consolidated metrics endpoint** (resolved at the scrape layer; `deploy/README.md`).
 
 Shipped since the milestones above:
 

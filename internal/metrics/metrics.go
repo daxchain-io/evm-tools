@@ -71,15 +71,18 @@ type Stream struct {
 	emitBlockedSeconds prometheus.Gauge
 
 	// Record counters.
-	recordsEmitted        prometheus.Counter
-	eventRecordsEmitted   prometheus.Counter
-	contractEventRecords  *prometheus.CounterVec
-	nativeTransferRecords prometheus.Counter
-	skippedLogs           prometheus.Counter
-	reorgsDetected        prometheus.Counter
-	reconnects            prometheus.Counter
-	configReloads         prometheus.Counter
-	configReloadErrors    prometheus.Counter
+	recordsEmitted          prometheus.Counter
+	eventRecordsEmitted     prometheus.Counter
+	contractEventRecords    *prometheus.CounterVec
+	nativeTransferRecords   prometheus.Counter
+	internalTransferRecords prometheus.Counter
+	internalTraceSkipped    prometheus.Counter
+	internalDisabled        prometheus.Gauge
+	skippedLogs             prometheus.Counter
+	reorgsDetected          prometheus.Counter
+	reconnects              prometheus.Counter
+	configReloads           prometheus.Counter
+	configReloadErrors      prometheus.Counter
 
 	// RPC + loop.
 	rpcCallDuration *prometheus.HistogramVec
@@ -143,6 +146,9 @@ func NewStream(chainName, chainID string) *Stream {
 	s.recordsEmitted = c("evm_stream_records_emitted_total", "Total JSONL records emitted.")
 	s.eventRecordsEmitted = c("evm_stream_event_records_emitted_total", "Contract event records emitted.")
 	s.nativeTransferRecords = c("evm_stream_native_transfer_records_emitted_total", "Native transfer records emitted.")
+	s.internalTransferRecords = c("evm_stream_internal_transfer_records_emitted_total", "Internal (trace-derived) native transfer records emitted.")
+	s.internalTraceSkipped = c("evm_stream_internal_trace_blocks_skipped_total", "Blocks whose internal transfers were skipped after repeated trace failures (best-effort).")
+	s.internalDisabled = g("evm_stream_internal_transfers_disabled", "Whether internal-transfer detection self-disabled because the node lacks trace RPC (1) or not (0).")
 	s.skippedLogs = c("evm_stream_logs_skipped_total", "Logs matched by the filter but not decodable to the configured event ABI (skipped, not emitted) — a signal of an ABI/config mismatch.")
 	s.reorgsDetected = c("evm_stream_reorgs_detected_total", "Detected chain reorganizations.")
 	s.reconnects = c("evm_stream_reconnects_total", "RPC reconnects after transport errors.")

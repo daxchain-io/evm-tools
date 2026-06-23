@@ -242,7 +242,7 @@ func balanceCheckRPC(cmd *cobra.Command, f *sharedFlags) error {
 	if err != nil {
 		return err
 	}
-	return runCheckRPC(cmd, rpcMaterial{URL: cfg.RPC.URL, TLS: rpcTLSFromConfig(cfg.RPC)})
+	return runCheckRPC(cmd, rpcMaterial{URL: cfg.RPC.URL, TLS: rpcTLSFromConfig(cfg.RPC)}, false)
 }
 
 // validateBalance applies the cross-field invariants strict decoding cannot

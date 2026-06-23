@@ -66,6 +66,7 @@ type sharedFlags struct {
 	streamContracts       []string
 	streamEvents          []string
 	streamNativeTransfers bool
+	streamIncludeInternal bool
 	streamFromBlock       string
 	streamPollInterval    string
 
@@ -163,6 +164,7 @@ func bindStreamFlags(root *cobra.Command, f *sharedFlags) {
 	pf.StringArrayVar(&f.streamContracts, "contract", nil, "contract address to watch (repeatable); resolves --events against the built-in ERC-20/721/1155 ABIs")
 	pf.StringSliceVar(&f.streamEvents, "events", nil, "comma-separated event names for --contract addresses (default: Transfer)")
 	pf.BoolVar(&f.streamNativeTransfers, "native-transfers", false, "emit native ETH transfers (enable without any config file)")
+	pf.BoolVar(&f.streamIncludeInternal, "include-internal", false, "also emit internal native transfers via trace RPC (requires --native-transfers; needs a trace-capable endpoint)")
 	pf.StringVar(&f.streamFromBlock, "from-block", "", `start block: "latest" (new activity only) or a block number to backfill from (default: latest; a checkpoint cursor still wins)`)
 	pf.StringVar(&f.streamPollInterval, "poll-interval", "", "head-poll cadence, e.g. 2s (default: 2s)")
 }

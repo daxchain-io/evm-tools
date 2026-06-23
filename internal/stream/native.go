@@ -25,14 +25,18 @@ const nativeReceiptConcurrency = 8
 // design's "from/to allowlist to scope the stream").
 type NativeFilter struct {
 	enabled bool
-	from    map[string]bool
-	to      map[string]bool
+	// includeInternal also surfaces value transfers made inside a transaction's
+	// execution (via trace RPC), not just the top-level transaction value. It is a
+	// refinement of native-transfer detection and shares the from/to allowlist.
+	includeInternal bool
+	from            map[string]bool
+	to              map[string]bool
 }
 
 // NativeFilterFromConfig builds the allowlist filter from the
 // [stream.native_transfers] section.
 func NativeFilterFromConfig(cfg config.NativeTransfersConfig) NativeFilter {
-	f := NativeFilter{enabled: cfg.Enabled}
+	f := NativeFilter{enabled: cfg.Enabled, includeInternal: cfg.IncludeInternal}
 	if len(cfg.From) > 0 {
 		f.from = toLowerSet(cfg.From)
 	}

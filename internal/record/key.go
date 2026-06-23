@@ -14,6 +14,10 @@ import (
 //   - event:           chain_id + tx_hash + log_index (reorg-stable; block_hash
 //     is excluded so a log re-observed after a reorg yields the same key).
 //   - native_transfer: chain_id + tx_hash (one top-level transfer per tx).
+//   - internal_transfer: chain_id + tx_hash + trace_address (a tx can produce
+//     many internal transfers; the EVM call path makes each one unique, and it is
+//     reorg-stable because it is a function of execution, not block_hash — the
+//     trace_address analogue of an event's log_index).
 //   - *_sample:         chain_id + type + name + block_number + emitted_at
 //     (interval cadence can sample one block more than once, so emitted_at
 //     disambiguates; a sink wanting one row per block can ignore the tail).
@@ -33,6 +37,8 @@ func (e Envelope) DedupKey() string {
 		return strings.Join([]string{chainID, e.TxHash, logIndexStr(e.LogIndex)}, sep)
 	case TypeNativeTransfer:
 		return strings.Join([]string{chainID, e.TxHash}, sep)
+	case TypeInternalTransfer:
+		return strings.Join([]string{chainID, e.TxHash, traceAddrStr(e.TraceAddress)}, sep)
 	case TypeReorg:
 		// A detected reorg is identified by the orphaned tip (block_number) and the
 		// canonical hash now at that height (block_hash); a later re-reorg over the
@@ -76,7 +82,10 @@ func (e Envelope) PartitionIdentity() string {
 	switch e.Type {
 	case TypeEvent:
 		return strings.Join([]string{chainID, e.TxHash, logIndexStr(e.LogIndex)}, sep)
-	case TypeNativeTransfer:
+	case TypeNativeTransfer, TypeInternalTransfer:
+		// Co-partition all of a tx's transfers (top-level + internal) so their
+		// relative order is preserved; the fuller DedupKey (with trace_address)
+		// remains the consumer-side uniqueness key.
 		return strings.Join([]string{chainID, e.TxHash}, sep)
 	case TypeReorg:
 		// All reorg markers for a chain share one partition so their relative order
@@ -97,4 +106,19 @@ func logIndexStr(p *uint64) string {
 		return "_"
 	}
 	return strconv.FormatUint(*p, 10)
+}
+
+// traceAddrStr renders an internal_transfer's trace_address call path as a stable
+// string for the dedup key: dash-joined non-negative ints (e.g. [0,2,1] -> "0-2-1"),
+// and "_" for the empty/absent path. Neither "-" nor digits can collide with the
+// "|" component separator, so the encoding stays unambiguous (mirroring logIndexStr).
+func traceAddrStr(path []int) string {
+	if len(path) == 0 {
+		return "_"
+	}
+	parts := make([]string, len(path))
+	for i, n := range path {
+		parts[i] = strconv.Itoa(n)
+	}
+	return strings.Join(parts, "-")
 }
