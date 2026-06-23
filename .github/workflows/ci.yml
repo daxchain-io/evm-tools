@@ -100,10 +100,12 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: govulncheck (windows build config)
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-        env:
-          GOOS: windows
-          GOARCH: amd64
+        # Install for the host, then run with GOOS set so govulncheck (a host
+        # binary) analyzes the windows build config. `go run` with GOOS would
+        # cross-build the tool itself and fail to exec on the linux runner.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOOS=windows GOARCH=amd64 "$(go env GOPATH)/bin/govulncheck" ./...
 
   docs:
     name: Markdown lint
