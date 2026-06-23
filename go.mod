@@ -1,6 +1,6 @@
 module github.com/daxchain-io/evm-tools
 
-go 1.25.0
+go 1.25.11
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
