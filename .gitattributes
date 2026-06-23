@@ -1,0 +1,4 @@
+# Normalize line endings to LF on checkout for every platform so golden testdata,
+# scripts, and configs are byte-identical on Windows (otherwise git's autocrlf
+# would check golden *.json files out as CRLF and break TestGolden on Windows).
+* text=auto eol=lf

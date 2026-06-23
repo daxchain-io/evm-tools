@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -444,7 +445,12 @@ func TestWriterCloseRemovesSocket(t *testing.T) {
 }
 
 // TestSocketIsOwnerOnly verifies the listener restricts the socket to mode 0600.
+// Unix-only: Windows does not enforce a Unix socket file's mode (chmod can only
+// toggle the read-only bit), and the pipe: transport uses ACLs instead.
 func TestSocketIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket file mode is not enforced on Windows; pipe: uses ACLs")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	path := socketPath(t)
