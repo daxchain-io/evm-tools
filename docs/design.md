@@ -963,8 +963,8 @@ the Administrators group under an elevated/service token.) Both backends share t
 same fan-out writer and reconnecting reader; the `pipe:` backend is built behind
 `//go:build windows` via `github.com/Microsoft/go-winio` (on non-Windows it
 returns a clear "Windows only" error). stdout/stdin remains the portable default
-everywhere. (`evm-sink-file` rotation/compression has known Windows limitations —
-see #22.)
+everywhere. The full test suite runs on a `windows-latest` CI job, so every tool
+(including `evm-sink-file` rotation/compression) is exercised on Windows.
 
 ## RPC Transport Security
 
