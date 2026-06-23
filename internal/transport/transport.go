@@ -30,8 +30,12 @@ import (
 	"time"
 )
 
-// unixScheme prefixes a Unix-domain-socket address, e.g. "unix:/run/evm.sock".
-const unixScheme = "unix:"
+// Transport address schemes. unix: is a Unix-domain socket (Linux/macOS); pipe:
+// is a Windows named pipe (e.g. "pipe:evm-events" or "pipe:\\.\pipe\evm-events").
+const (
+	unixScheme = "unix:"
+	pipeScheme = "pipe:"
+)
 
 // WriterOptions tunes a "unix:" output. It is ignored for stdout.
 type WriterOptions struct {
@@ -54,8 +58,10 @@ func OpenWriter(ctx context.Context, spec string, std io.Writer, opts WriterOpti
 		return nopWriteCloser{std}, nil
 	case strings.HasPrefix(spec, unixScheme):
 		return listenUnix(ctx, strings.TrimPrefix(spec, unixScheme), opts.BlockUntilConsumer)
+	case strings.HasPrefix(spec, pipeScheme):
+		return listenPipe(ctx, strings.TrimPrefix(spec, pipeScheme), opts.BlockUntilConsumer)
 	default:
-		return nil, fmt.Errorf("transport: unsupported --output %q (use %q, %q, or %q)", spec, "-", "stdout", "unix:/path")
+		return nil, fmt.Errorf("transport: unsupported --output %q (use %q/%q, %q, or %q)", spec, "-", "stdout", "unix:/path", "pipe:name")
 	}
 }
 
@@ -70,8 +76,10 @@ func OpenReader(ctx context.Context, spec string, std io.Reader) (io.ReadCloser,
 		return io.NopCloser(std), nil
 	case strings.HasPrefix(spec, unixScheme):
 		return dialUnix(ctx, strings.TrimPrefix(spec, unixScheme))
+	case strings.HasPrefix(spec, pipeScheme):
+		return dialPipe(ctx, strings.TrimPrefix(spec, pipeScheme))
 	default:
-		return nil, fmt.Errorf("transport: unsupported --input %q (use %q, %q, or %q)", spec, "-", "stdin", "unix:/path")
+		return nil, fmt.Errorf("transport: unsupported --input %q (use %q/%q, %q, or %q)", spec, "-", "stdin", "unix:/path", "pipe:name")
 	}
 }
 

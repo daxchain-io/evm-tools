@@ -230,7 +230,7 @@ func TestUnixFanOut(t *testing.T) {
 		}
 		defer func() { _ = w.Close() }()
 		// Wait until both consumers are registered so both receive every record.
-		if err := w.(*unixFanoutWriter).waitForConns(2); err != nil {
+		if err := w.(*fanoutWriter).waitForConns(2); err != nil {
 			werr <- err
 			return
 		}
@@ -325,7 +325,7 @@ func TestUnixBlockUntilConsumerWaitsAtStartup(t *testing.T) {
 func TestFanoutWriterResendsWhenLastConsumerDies(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := &unixFanoutWriter{ctx: ctx, blockUntil: true, conns: make(map[net.Conn]struct{})}
+	w := &fanoutWriter{ctx: ctx, blockUntil: true, conns: make(map[net.Conn]struct{})}
 	w.cond = sync.NewCond(&w.mu)
 
 	// One consumer whose read side is closed, so a write to it fails.
@@ -379,7 +379,7 @@ func TestFanoutWriterResendsWhenLastConsumerDies(t *testing.T) {
 func TestFanoutWriterDropsDeadConsumerKeepsOthers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := &unixFanoutWriter{ctx: ctx, blockUntil: true, conns: make(map[net.Conn]struct{})}
+	w := &fanoutWriter{ctx: ctx, blockUntil: true, conns: make(map[net.Conn]struct{})}
 	w.cond = sync.NewCond(&w.mu)
 
 	liveA, liveB := net.Pipe()

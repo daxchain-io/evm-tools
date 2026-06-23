@@ -951,9 +951,16 @@ What the socket transport deliberately does **not** provide is durability or
 replay: a sink that connects late or reconnects after downtime receives the live
 tail, not the records it missed. Durable, replay-from-offset fan-out remains the
 job of a broker sink (`evm-sink-kafka` / `evm-sink-redis`), which persists a log
-that any number of independent consumers read at their own pace. Linux and macOS
-are first-class; on Windows the stdout/stdin pipe remains the portable path (a
-named-pipe backend could slot behind the same flags later).
+that any number of independent consumers read at their own pace.
+
+**Platforms.** `unix:` is the Linux/macOS carrier. On Windows, use `pipe:` — a
+named pipe (`pipe:evm-events` expands to `\\.\pipe\evm-events`) whose ACL (an
+owner-restricted security descriptor granting the owner, SYSTEM, and
+Administrators) is the access control. Both backends share the same fan-out
+writer and reconnecting reader (the `pipe:` backend is built behind
+`//go:build windows` via `github.com/Microsoft/go-winio`; on non-Windows it
+returns a clear "Windows only" error). stdout/stdin remains the portable default
+everywhere.
 
 ## RPC Transport Security
 

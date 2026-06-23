@@ -198,7 +198,15 @@ after downtime gets the live tail, not history. When you need durable,
 replay-from-the-beginning fan-out, use a broker sink (`evm-sink-kafka` /
 `evm-sink-redis`) and read from its log.
 
-> **Linux & macOS** are first-class. On Windows, prefer the stdout/stdin pipe.
+**On Windows**, use a named pipe instead of `unix:` — same flags, `pipe:` scheme:
+
+```text
+evm-stream  run … --output pipe:evm-events        # → \\.\pipe\evm-events
+evm-sink-file run … --input pipe:evm-events
+```
+
+The pipe's ACL (an owner-restricted security descriptor) is the access control,
+the Windows analogue of the `0600` socket. stdout/stdin works on every platform.
 
 ## Configuration
 

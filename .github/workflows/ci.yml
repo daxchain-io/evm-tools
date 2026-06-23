@@ -55,6 +55,30 @@ jobs:
         with:
           version: v2.12.2
 
+  windows:
+    name: Windows build + test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # Builds the windows binaries (incl. the go-winio named-pipe backend) and
+      # runs the windows-tagged transport tests — the named-pipe path can only be
+      # exercised on Windows. (Race detection runs on the Linux job above.)
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
   vuln:
     name: Vulnerability scan
     runs-on: ubuntu-latest
