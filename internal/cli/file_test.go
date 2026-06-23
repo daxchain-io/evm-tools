@@ -53,7 +53,9 @@ func TestFileSinkHelpListsFlags(t *testing.T) {
 }
 
 func TestFileSinkValidateOK(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "events.jsonl")
+	// ToSlash so the path embeds cleanly in a TOML double-quoted string on Windows
+	// (backslashes would be read as escapes); Windows file APIs accept forward slashes.
+	out := filepath.ToSlash(filepath.Join(t.TempDir(), "events.jsonl"))
 	cfg := writeFileConfig(t, `
 [file]
 path = "`+out+`"
@@ -117,7 +119,9 @@ func TestFileSinkValidateRotationDisableSpellings(t *testing.T) {
 }
 
 func TestFileSinkRunWritesAndFilters(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "events.jsonl")
+	// ToSlash so the path embeds cleanly in a TOML double-quoted string on Windows
+	// (backslashes would be read as escapes); Windows file APIs accept forward slashes.
+	out := filepath.ToSlash(filepath.Join(t.TempDir(), "events.jsonl"))
 	cfg := writeFileConfig(t, `
 [file]
 path = "`+out+`"

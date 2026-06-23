@@ -146,7 +146,10 @@ func (w *Writer) Write(line []byte) (int, error) {
 		// clean append, so surface a (permanent) error and fail fast rather than
 		// risk corrupting the stream.
 		if n > 0 {
-			if terr := w.f.Truncate(w.size); terr != nil {
+			// Truncate via the path, not the append-mode handle: Windows rejects
+			// SetEndOfFile on a FILE_APPEND_DATA handle ("Access is denied"), while a
+			// path truncate opens its own write handle. Equivalent to ftruncate on POSIX.
+			if terr := os.Truncate(w.cfg.Path, w.size); terr != nil {
 				return n, fmt.Errorf("filesink: rollback of %d-byte partial write failed: %w (write error: %v)", n, terr, err)
 			}
 		}
@@ -347,6 +350,10 @@ func compressFile(src string) (string, error) {
 		_ = os.Remove(tmp)
 		return "", err
 	}
+	// Close the source before removing it: Windows cannot remove a file that still
+	// has an open handle (unlike POSIX unlink-while-open). The deferred Close then
+	// no-ops.
+	_ = in.Close()
 	if err := os.Remove(src); err != nil {
 		// The .gz is durable; a leftover source is harmless but worth reporting.
 		return dst, err

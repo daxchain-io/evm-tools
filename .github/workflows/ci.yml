@@ -67,19 +67,17 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
-      # Build + vet the whole module on Windows (incl. the go-winio named-pipe
-      # backend), then run the transport tests — the named-pipe path can only be
-      # exercised on Windows. (Race detection runs on the Linux job above.) The
-      # rest of the suite has pre-existing Windows gaps tracked in #22, so the test
-      # step is scoped to the transport package until those are fixed.
+      # Build + vet + test the whole module on Windows, including the go-winio
+      # named-pipe backend (the named-pipe path can only be exercised on Windows).
+      # Race detection runs on the Linux job above.
       - name: Build
         run: go build ./...
 
       - name: Vet
         run: go vet ./...
 
-      - name: Test (transport)
-        run: go test ./internal/transport/...
+      - name: Test
+        run: go test ./...
 
   vuln:
     name: Vulnerability scan

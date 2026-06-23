@@ -14,7 +14,9 @@ import (
 func TestStreamConfigFree(t *testing.T) {
 	home := t.TempDir() // isolate so no real ~/.evm-tools config is discovered
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "empty"))
+	t.Setenv("APPDATA", filepath.Join(home, "empty")) // os.UserConfigDir on Windows
 
 	const usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 	cases := []struct {

@@ -17,7 +17,9 @@ import (
 func TestBalanceConfigFree(t *testing.T) {
 	home := t.TempDir() // isolate so no real ~/.evm-tools config is discovered
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "empty"))
+	t.Setenv("APPDATA", filepath.Join(home, "empty")) // os.UserConfigDir on Windows
 
 	const (
 		holder = "0x1111111111111111111111111111111111111111"

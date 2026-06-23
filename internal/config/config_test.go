@@ -272,10 +272,13 @@ func TestAllowExecThreaded(t *testing.T) {
 func discoverChain(t *testing.T, files map[string]string) string {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", home)        // os.UserHomeDir on Linux
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	// Keep the XDG/OS user-config dir out of the way so ~/.evm-tools is
 	// unambiguously the directory that wins on every platform.
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-empty"))
+	empty := filepath.Join(home, "user-config-empty")
+	t.Setenv("XDG_CONFIG_HOME", empty) // os.UserConfigDir on Linux
+	t.Setenv("APPDATA", empty)         // os.UserConfigDir on Windows
 
 	dir := filepath.Join(home, ".evm-tools")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

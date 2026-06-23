@@ -170,7 +170,9 @@ func TestOutputInputSpecPrecedence(t *testing.T) {
 func TestStreamValidateAcceptsOutputFlag(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "empty"))
+	t.Setenv("APPDATA", filepath.Join(home, "empty")) // os.UserConfigDir on Windows
 	if _, err := runWithCtx(context.Background(), t, ToolStream, "validate",
 		"--rpc-url", "https://x", "--native-transfers", "--output", "unix:/tmp/evm-out.sock"); err != nil {
 		t.Fatalf("validate with --output should succeed without listening: %v", err)
