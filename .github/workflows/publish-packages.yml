@@ -71,8 +71,14 @@ jobs:
           set -eux
           helm registry login ghcr.io -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
           mkdir -p dist
+          # Lock the chart version to the release version (== the image tag), so
+          # images/evm-tools:X, charts/evm-stream:X and charts/evm-balance:X all
+          # move together. The tag is the single source of truth (Chart.yaml's
+          # version/appVersion are the in-repo default for local installs).
           for c in evm-stream evm-balance; do
-            helm package "charts/$c" --app-version "${{ steps.meta.outputs.version }}" -d dist
+            helm package "charts/$c" \
+              --version "${{ steps.meta.outputs.version }}" \
+              --app-version "${{ steps.meta.outputs.version }}" -d dist
           done
           helm push dist/evm-stream-*.tgz oci://ghcr.io/daxchain-io/charts
           helm push dist/evm-balance-*.tgz oci://ghcr.io/daxchain-io/charts

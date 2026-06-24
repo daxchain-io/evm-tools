@@ -2,7 +2,7 @@
 
 image:
   repository: ghcr.io/daxchain-io/images/evm-tools
-  # tag defaults to the chart appVersion (2.1.1) when empty.
+  # tag defaults to the chart appVersion (2.1.2) when empty.
   tag: ""
   pullPolicy: IfNotPresent
 
