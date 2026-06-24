@@ -1,0 +1,42 @@
+name: Cleanup packages
+
+# Manually-dispatched maintenance: delete superseded GHCR package versions by their
+# EXACT tag, using the in-CI GITHUB_TOKEN (packages: write) — no personal token or
+# scope needed. Targets are passed as space-separated <package>:<tag> pairs. As a
+# guard the "latest" tag is never deleted, and selection is by exact tag match, so a
+# current release tag is only removed if you name it explicitly.
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Space-separated <package>:<tag> to delete (e.g. "images/evm-tools:2.1.1 charts/evm-stream:0.1.0")'
+        required: true
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete package versions by tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          for t in $TARGETS; do
+            pkg="${t%:*}"; tag="${t##*:}"
+            if [ "$tag" = "latest" ]; then
+              echo "refusing to delete protected tag: $t"; continue
+            fi
+            enc="${pkg//\//%2F}"
+            id=$(gh api "/orgs/daxchain-io/packages/container/$enc/versions" \
+                  --jq ".[] | select(.metadata.container.tags | index(\"$tag\")) | .id" || true)
+            if [ -n "${id:-}" ]; then
+              gh api -X DELETE "/orgs/daxchain-io/packages/container/$enc/versions/$id"
+              echo "deleted $pkg:$tag (version $id)"
+            else
+              echo "no version tagged $tag in $pkg — already clean"
+            fi
+          done
