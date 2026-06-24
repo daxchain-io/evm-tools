@@ -22,8 +22,9 @@ Why it looks like this:
 - **Same UID.** Both containers run as UID `10001` (the image's user) so the
   producer's `0600` socket is reachable by the sink.
 - **Lossless, self-healing.** `--block-until-consumer` (on by default) makes the
-  producer wait for the sink before emitting; if the sink dies, the producer's
-  emit blocks and `/readyz` flips not-ready, so the kubelet restarts the pod.
+  producer wait for the sink before emitting; if the sink dies, the kubelet
+  restarts the sink container while the producer's emit blocks and `/readyz` flips
+  not-ready (removed from endpoints) until it reconnects — nothing is lost.
 - **One producer per chain.** `replicas: 1` — a producer is a singleton (scaling
   it would double-emit). Run a second pod for a second chain.
 

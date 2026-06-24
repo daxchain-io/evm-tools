@@ -11,8 +11,9 @@
 #   - The two containers run as the SAME UID so the 0600 socket is mutually
 #     accessible (the producer creates it; the sink dials it).
 #   - block-until-consumer is on by default, so the producer waits for the sink to
-#     connect before emitting (lossless); if the sink dies, the producer's emit
-#     blocks and /readyz flips not-ready, so the platform restarts the pod.
+#     connect before emitting (lossless); if the sink dies, the kubelet restarts the
+#     sink container while the producer's emit blocks and /readyz flips not-ready
+#     (removed from Service endpoints) until it reconnects — nothing is lost.
 #
 # The example sink is evm-sink-stdout, so records are visible in
 # `kubectl logs deploy/evm-stream -c sink` — swap it for evm-sink-kafka /
