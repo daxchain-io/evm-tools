@@ -94,50 +94,57 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-        {{- range .Values.sinks }}
-        # sink sidecar — dials the shared socket; the producer's writer fans out to
-        # every connected sink, so each gets the full record stream.
-        - name: sink-{{ .name }}
+        {{- range $s := .Values.sinks }}
+        # sink sidecar — dials the shared socket (records fan out to every sink).
+        # A sink consumes records only; it carries its OWN config/secrets (env,
+        # envFrom, config) and has no RPC — unlike the producer.
+        - name: sink-{{ $s.name }}
           image: {{ include "evm-stream.image" $ | quote }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args:
-            - {{ .tool }}
+            - {{ $s.tool }}
             - run
-            - --config=/etc/evm-tools/sink-{{ .name }}.toml
+            {{- if $s.config }}
+            - --config=/etc/evm-tools/sink-{{ $s.name }}.toml
+            {{- end }}
             - --input=unix:/run/evm/records.sock
             - --log-level={{ $.Values.log.level }}
             - --log-format={{ $.Values.log.format }}
             - --metrics
-            - --metrics-addr=:{{ .metricsPort }}
-            {{- range .extraArgs }}
+            - --metrics-addr=:{{ $s.metricsPort }}
+            {{- range $s.extraArgs }}
             - {{ . | quote }}
             {{- end }}
+          {{- with $s.env }}
           env:
-            - name: RPC_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "evm-stream.rpcSecretName" $ }}
-                  key: {{ include "evm-stream.rpcSecretKey" $ }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $s.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
-            - name: p{{ .metricsPort }}
-              containerPort: {{ .metricsPort }}
+            - name: p{{ $s.metricsPort }}
+              containerPort: {{ $s.metricsPort }}
           readinessProbe:
             httpGet:
               path: /readyz
-              port: {{ .metricsPort }}
+              port: {{ $s.metricsPort }}
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
+            {{- if $s.config }}
             - name: config
               mountPath: /etc/evm-tools
               readOnly: true
+            {{- end }}
             - name: ipc
               mountPath: /run/evm
-            {{- with .volumeMounts }}
+            {{- with $s.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           resources:
-            {{- toYaml .resources | nindent 12 }}
+            {{- toYaml $s.resources | nindent 12 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

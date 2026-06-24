@@ -64,11 +64,23 @@ sinks:
   - name: stdout              # unique; becomes container `sink-stdout`
     tool: evm-sink-stdout     # the sink binary; may repeat across entries
     metricsPort: 9009         # unique; must not collide with metrics.port or siblings
-    # Extra args appended after `<tool> run` (e.g. --topic for evm-sink-kafka).
+    # Args appended after `<tool> run` (e.g. --topic / --queue-url / --path).
     extraArgs: []
-    # This sink's own TOML section (e.g. [file], [kafka]). Rendered to a per-sink
-    # config file, so two sinks of the same tool can be configured independently.
+    # This sink's own TOML config (its [file]/[kafka]/[aws_sqs]/… section), rendered
+    # to sink-<name>.toml and passed via --config. Omit if the sink is fully
+    # configured by flags. Sinks do NOT use [rpc]/[chain] — they only consume records.
     config: ""
+    # Per-sink environment: each sink brings its OWN secrets/settings (AWS creds, a
+    # DB DSN, a Kafka SASL password, …). Standard k8s env entries — pull secret
+    # values with valueFrom.secretKeyRef.
+    env: []
+    #  - name: AWS_REGION
+    #    value: us-east-1
+    #  - name: AWS_ACCESS_KEY_ID
+    #    valueFrom: { secretKeyRef: { name: aws-creds, key: access-key-id } }
+    # Or pull whole Secrets/ConfigMaps in as env:
+    envFrom: []
+    #  - secretRef: { name: aws-creds }
     # Mount volumes into this sink (e.g. a file sink's output dir). Reference a
     # volume declared in `extraVolumes` below.
     volumeMounts: []

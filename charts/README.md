@@ -52,8 +52,11 @@ kubectl logs deploy/eth-events -c sink-stdout -f
 `sinks` is a list — each entry renders one sidecar container `sink-<name>` that
 dials the shared socket. Because the socket fans out, every sink gets the full
 stream, so you can run several at once — **including duplicates of the same tool**.
-Each sink needs its own unique `name` and `metricsPort`, and its own `config`
-(rendered to a per-sink `sink-<name>.toml`, so duplicates can differ):
+Each sink needs a unique `name` and `metricsPort`, and carries its **own config
+and secrets**: `config`/`extraArgs` for settings (rendered to a per-sink
+`sink-<name>.toml` when `config` is set), and `env`/`envFrom` for secrets (AWS
+creds, a DB DSN, a Kafka password). Sinks consume records only — they don't use
+RPC — so each is configured independently of the producer and of one another:
 
 ```yaml
 extraVolumes:
@@ -82,6 +85,17 @@ sinks:
       path = "/audit/records.jsonl"
     volumeMounts:
       - { name: audit, mountPath: /audit }
+  - name: sqs                    # an AWS sink with its OWN credentials
+    tool: evm-sink-aws-sqs
+    metricsPort: 9012
+    extraArgs: ["--queue-url", "https://sqs.us-east-1.amazonaws.com/123456789012/evm"]
+    env:                         # this sink's secrets — unrelated to RPC or other sinks
+      - name: AWS_REGION
+        value: us-east-1
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom: { secretKeyRef: { name: aws-creds, key: access-key-id } }
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom: { secretKeyRef: { name: aws-creds, key: secret-access-key } }
 ```
 
 **Losslessness with multiple sinks:** the producer waits for the *first* consumer,
