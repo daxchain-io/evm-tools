@@ -1,3 +1,4 @@
+{{- include "evm-stream.validateSinks" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -30,7 +31,14 @@ data:
 
     {{ . | nindent 4 | trim }}
     {{- end }}
-    {{- with .Values.sink.config }}
+  {{- range .Values.sinks }}
+  sink-{{ .name }}.toml: |
+    chain = "{{ $.Values.chain }}"
+
+    [rpc]
+    url = "${RPC_URL}"
+    {{- with .config }}
 
     {{ . | nindent 4 | trim }}
     {{- end }}
+  {{- end }}

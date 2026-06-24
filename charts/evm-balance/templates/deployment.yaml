@@ -4,6 +4,7 @@
 {{- if gt (int .Values.replicaCount) 1 }}
 {{- fail "evm-balance: replicaCount must be 1 — a producer is a singleton per chain (a second active replica would double-emit). Run a separate release per chain." }}
 {{- end }}
+{{- include "evm-balance.validateSinks" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,6 +41,9 @@ spec:
         - name: config
           configMap:
             name: {{ include "evm-balance.fullname" . }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       containers:
         - name: evm-balance
           image: {{ include "evm-balance.image" . | quote }}
@@ -48,7 +52,7 @@ spec:
             - evm-balance
             - run
             - --config=/etc/evm-tools/evm-tools.toml
-            {{- if .Values.sink.enabled }}
+            {{- if gt (len .Values.sinks) 0 }}
             - --output=unix:/run/evm/records.sock
             {{- end }}
             - --log-level={{ .Values.log.level }}
@@ -84,41 +88,43 @@ spec:
             - name: config
               mountPath: /etc/evm-tools
               readOnly: true
-            {{- if .Values.sink.enabled }}
+            {{- if gt (len .Values.sinks) 0 }}
             - name: ipc
               mountPath: /run/evm
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-        {{- if .Values.sink.enabled }}
-        - name: sink
-          image: {{ include "evm-balance.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- range .Values.sinks }}
+        # sink sidecar — dials the shared socket; the producer's writer fans out to
+        # every connected sink, so each gets the full record stream.
+        - name: sink-{{ .name }}
+          image: {{ include "evm-balance.image" $ | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args:
-            - {{ .Values.sink.tool }}
+            - {{ .tool }}
             - run
-            - --config=/etc/evm-tools/evm-tools.toml
+            - --config=/etc/evm-tools/sink-{{ .name }}.toml
             - --input=unix:/run/evm/records.sock
-            - --log-level={{ .Values.log.level }}
-            - --log-format={{ .Values.log.format }}
+            - --log-level={{ $.Values.log.level }}
+            - --log-format={{ $.Values.log.format }}
             - --metrics
-            - --metrics-addr=:{{ .Values.sink.metricsPort }}
-            {{- range .Values.sink.extraArgs }}
+            - --metrics-addr=:{{ .metricsPort }}
+            {{- range .extraArgs }}
             - {{ . | quote }}
             {{- end }}
           env:
             - name: RPC_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "evm-balance.rpcSecretName" . }}
-                  key: {{ include "evm-balance.rpcSecretKey" . }}
+                  name: {{ include "evm-balance.rpcSecretName" $ }}
+                  key: {{ include "evm-balance.rpcSecretKey" $ }}
           ports:
-            - name: sink-metrics
-              containerPort: {{ .Values.sink.metricsPort }}
+            - name: p{{ .metricsPort }}
+              containerPort: {{ .metricsPort }}
           readinessProbe:
             httpGet:
               path: /readyz
-              port: {{ .Values.sink.metricsPort }}
+              port: {{ .metricsPort }}
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
@@ -127,8 +133,11 @@ spec:
               readOnly: true
             - name: ipc
               mountPath: /run/evm
+            {{- with .volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
-            {{- toYaml .Values.sink.resources | nindent 12 }}
+            {{- toYaml .resources | nindent 12 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

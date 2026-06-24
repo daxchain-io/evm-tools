@@ -49,25 +49,39 @@ log:
   level: info
   format: json
 
-# Sink sidecar. When disabled the producer runs exporter-only (serves /metrics,
-# emits no records).
-sink:
-  enabled: true
-  # The sink binary. evm-sink-stdout writes records to its stdout (visible via
-  # `kubectl logs … -c sink`); swap for evm-sink-kafka / evm-sink-postgres / etc.
-  tool: evm-sink-stdout
-  metricsPort: 9009
-  # Extra args appended after `<tool> run`. For evm-sink-kafka, e.g. --topic.
-  extraArgs: []
-  # Sink-specific TOML appended to the shared config (e.g. a [kafka] block). The
-  # sink reads its own section and ignores [stream].
-  config: ""
-  resources:
-    requests:
-      cpu: 25m
-      memory: 32Mi
-    limits:
-      memory: 128Mi
+# Sink sidecars. Each entry renders one sidecar container named `sink-<name>` that
+# dials the producer's socket and delivers records. The socket FANS OUT, so every
+# sink receives the full record stream. Run as many as you like — including
+# duplicates of the same tool (e.g. two evm-sink-file writing different paths);
+# that is why each sink needs its own unique `name` and `metricsPort`, and its own
+# `config` (rendered to a per-sink TOML so duplicates can differ).
+#
+# Losslessness with multiple sinks: the producer waits for the FIRST consumer, then
+# keeps emitting while ANY sink is connected — so a sink that restarts while another
+# stays up misses that gap. For durable per-sink delivery use a broker/DB sink
+# (Kafka/Postgres/Redis). An empty list runs the producer exporter-only (no records).
+sinks:
+  - name: stdout              # unique; becomes container `sink-stdout`
+    tool: evm-sink-stdout     # the sink binary; may repeat across entries
+    metricsPort: 9009         # unique; must not collide with metrics.port or siblings
+    # Extra args appended after `<tool> run` (e.g. --topic for evm-sink-kafka).
+    extraArgs: []
+    # This sink's own TOML section (e.g. [file], [kafka]). Rendered to a per-sink
+    # config file, so two sinks of the same tool can be configured independently.
+    config: ""
+    # Mount volumes into this sink (e.g. a file sink's output dir). Reference a
+    # volume declared in `extraVolumes` below.
+    volumeMounts: []
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
+
+# Pod-level volumes made available to sinks (e.g. an emptyDir or PVC for a file
+# sink's output). Mount them per-sink via `sinks[].volumeMounts`.
+extraVolumes: []
 
 resources:
   requests:

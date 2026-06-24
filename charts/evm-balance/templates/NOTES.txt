@@ -1,12 +1,12 @@
 evm-balance {{ .Chart.AppVersion }} deployed as "{{ include "evm-balance.fullname" . }}".
 
-Shape: producer{{ if .Values.sink.enabled }} + {{ .Values.sink.tool }} sidecar (records over a shared Unix socket){{ else }} only — exporter mode, no records emitted{{ end }}.
+Shape: producer{{ if gt (len .Values.sinks) 0 }} + {{ len .Values.sinks }} sink sidecar(s) (records fan out over a shared Unix socket){{ else }} only — exporter mode, no records emitted{{ end }}.
 Records never touch stdout; stdout/stderr are logs.
 
 Follow it:
   kubectl logs deploy/{{ include "evm-balance.fullname" . }} -c evm-balance -f
-{{- if .Values.sink.enabled }}
-  kubectl logs deploy/{{ include "evm-balance.fullname" . }} -c sink -f
+{{- range .Values.sinks }}
+  kubectl logs deploy/{{ include "evm-balance.fullname" $ }} -c sink-{{ .name }} -f      # {{ .tool }}
 {{- end }}
 
 {{- if .Values.metrics.enabled }}

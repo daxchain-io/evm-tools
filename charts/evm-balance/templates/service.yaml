@@ -1,3 +1,4 @@
+{{- include "evm-balance.validateSinks" . }}
 {{- if .Values.metrics.enabled }}
 apiVersion: v1
 kind: Service
@@ -17,9 +18,9 @@ spec:
     - name: producer
       port: {{ .Values.metrics.port }}
       targetPort: {{ .Values.metrics.port }}
-    {{- if .Values.sink.enabled }}
-    - name: sink
-      port: {{ .Values.sink.metricsPort }}
-      targetPort: {{ .Values.sink.metricsPort }}
+    {{- range .Values.sinks }}
+    - name: sink-{{ .name | trunc 56 | trimSuffix "-" }}
+      port: {{ .metricsPort }}
+      targetPort: {{ .metricsPort }}
     {{- end }}
 {{- end }}
