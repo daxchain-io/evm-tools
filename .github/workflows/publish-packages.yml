@@ -2,8 +2,9 @@ name: Publish packages
 
 # Publishes the container image and the Helm charts to GHCR. Binaries are released
 # separately by release.yml (goreleaser); this publishes ONE image
-# (ghcr.io/daxchain-io/evm-tools) and TWO charts (evm-stream, evm-balance) on each
-# version tag, and on demand via workflow_dispatch (so a version can be published
+# (ghcr.io/daxchain-io/images/evm-tools) and TWO charts
+# (ghcr.io/daxchain-io/charts/evm-stream, .../charts/evm-balance) on each version
+# tag, and on demand via workflow_dispatch (so a version can be published
 # without cutting a new tag). Uses the in-CI GITHUB_TOKEN — no stored secret.
 on:
   push:
@@ -55,8 +56,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/daxchain-io/evm-tools:${{ steps.meta.outputs.version }}
-            ghcr.io/daxchain-io/evm-tools:latest
+            ghcr.io/daxchain-io/images/evm-tools:${{ steps.meta.outputs.version }}
+            ghcr.io/daxchain-io/images/evm-tools:latest
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ github.sha }}
@@ -64,7 +65,7 @@ jobs:
 
       - uses: azure/setup-helm@v4
 
-      # TWO charts, as OCI artifacts under the same org namespace.
+      # TWO charts, as OCI artifacts under the charts/ namespace.
       - name: Package and push charts
         run: |
           set -eux
@@ -73,5 +74,5 @@ jobs:
           for c in evm-stream evm-balance; do
             helm package "charts/$c" --app-version "${{ steps.meta.outputs.version }}" -d dist
           done
-          helm push dist/evm-stream-*.tgz oci://ghcr.io/daxchain-io
-          helm push dist/evm-balance-*.tgz oci://ghcr.io/daxchain-io
+          helm push dist/evm-stream-*.tgz oci://ghcr.io/daxchain-io/charts
+          helm push dist/evm-balance-*.tgz oci://ghcr.io/daxchain-io/charts

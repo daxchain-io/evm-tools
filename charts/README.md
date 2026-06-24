@@ -15,7 +15,7 @@ differs (`stream:` vs `balance:`).
 
 ## Install
 
-The charts default to the published image `ghcr.io/daxchain-io/evm-tools` (built
+The charts default to the published image `ghcr.io/daxchain-io/images/evm-tools` (built
 and pushed by the release), so no local build is needed. For a custom image,
 `docker build -f images/evm-tools/Dockerfile -t <ref> .`, push it, and add
 `--set image.repository=<ref> --set image.tag=<tag>`.

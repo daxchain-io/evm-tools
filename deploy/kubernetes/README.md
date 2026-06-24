@@ -30,7 +30,7 @@ Why it looks like this:
 ## Deploy
 
 ```sh
-# 1. The manifest pulls the published image ghcr.io/daxchain-io/evm-tools:2.1.0
+# 1. The manifest pulls the published image ghcr.io/daxchain-io/images/evm-tools:2.1.1
 #    by default — nothing to build. For a custom image, docker build -f
 #    images/evm-tools/Dockerfile -t <ref> ., push it, and update the image: refs
 #    in evm-tools.yaml (or for a local cluster: kind load / k3d image import).
