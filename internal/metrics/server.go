@@ -16,7 +16,7 @@ import (
 // Health holds the readiness signals consulted by /readyz, kept as atomics so
 // the poll loop can update them without locking the HTTP handler. /healthz
 // reflects only process liveness; /readyz additionally requires RPC
-// reachability, an unblocked stdout writer (within threshold), and lag within
+// reachability, an unblocked record writer (within threshold), and lag within
 // bound — so a producer wedged on a stalled sink or far behind head reads as
 // not-ready (see docs/design.md, "RPC Health Checks").
 type Health struct {
@@ -25,7 +25,7 @@ type Health struct {
 	live atomic.Bool
 	// rpcReachable reflects the most recent RPC interaction outcome.
 	rpcReachable atomic.Bool
-	// emitBlockedMillis is the current/last stdout-write blocked duration.
+	// emitBlockedMillis is the current/last record-write blocked duration.
 	emitBlockedMillis atomic.Int64
 	// lagBlocks is head-minus-processed.
 	lagBlocks atomic.Uint64
@@ -81,7 +81,7 @@ func (h *Health) SetLive(v bool) { h.live.Store(v) }
 // SetRPCReachable records the latest RPC reachability.
 func (h *Health) SetRPCReachable(v bool) { h.rpcReachable.Store(v) }
 
-// SetEmitBlocked records the current/last stdout-write blocked duration.
+// SetEmitBlocked records the current/last record-write blocked duration.
 func (h *Health) SetEmitBlocked(d time.Duration) { h.emitBlockedMillis.Store(d.Milliseconds()) }
 
 // SetLag records head-minus-processed lag.
@@ -101,7 +101,7 @@ func (h *Health) readyReason() (string, bool) {
 	}
 	if h.emitBlockedThreshold > 0 {
 		if time.Duration(h.emitBlockedMillis.Load())*time.Millisecond >= h.emitBlockedThreshold {
-			return "stdout write blocked beyond threshold", false
+			return "record write blocked beyond threshold", false
 		}
 	}
 	if h.lagThreshold > 0 && h.lagBlocks.Load() > h.lagThreshold {

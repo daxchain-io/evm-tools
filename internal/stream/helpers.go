@@ -41,7 +41,7 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 const watchdogInterval = 250 * time.Millisecond
 
 // blockTrackingEmitter wraps a record.Emitter and reports how long the current
-// or last stdout write has been blocked by downstream backpressure. Because the
+// or last record write has been blocked by downstream backpressure. Because the
 // underlying write blocks when the OS pipe fills, a write that never returns
 // (a genuinely wedged sink) would never update the gauge if measured only on
 // return — the very case the gauge exists to catch. So a concurrent watchdog,

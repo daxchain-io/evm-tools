@@ -2,11 +2,15 @@
 
 image:
   repository: ghcr.io/daxchain-io/images/evm-tools
-  # tag defaults to the chart appVersion (2.1.2) when empty.
+  # tag defaults to the chart appVersion when empty.
   tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
+
+# Override the generated resource names (rarely needed).
+nameOverride: ""
+fullnameOverride: ""
 
 # A producer is a singleton per chain (HA = exactly one active). Do NOT set > 1 —
 # a second active producer would double-emit. Run a separate release per chain.
@@ -109,6 +113,17 @@ podSecurityContext:
   runAsUser: 10001
   runAsGroup: 10001
   fsGroup: 10001
+
+# Per-container hardening applied to the producer and every sink. Conservative
+# defaults (no privilege escalation, all capabilities dropped, runtime seccomp);
+# readOnlyRootFilesystem is intentionally omitted (the producer may write a
+# checkpoint/temp file). Set to {} to disable.
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
 
 service:
   type: ClusterIP

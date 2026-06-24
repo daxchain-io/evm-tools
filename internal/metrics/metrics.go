@@ -144,7 +144,7 @@ func NewStream(chainName, chainID string) *Stream {
 	s.lastProcessedBlock = g("evm_stream_last_processed_block_number", "Highest block processed.")
 	s.lastEmittedBlock = g("evm_stream_last_emitted_block_number", "Highest block that produced at least one emitted record.")
 	s.lagBlocks = g("evm_stream_lag_blocks", "Difference between RPC head and last processed block.")
-	s.emitBlockedSeconds = g("evm_stream_emit_blocked_seconds", "Time the current or last stdout write has been blocked by downstream backpressure.")
+	s.emitBlockedSeconds = g("evm_stream_emit_blocked_seconds", "Time the current or last record write has been blocked by downstream backpressure.")
 
 	s.recordsEmitted = c("evm_stream_records_emitted_total", "Total JSONL records emitted.")
 	s.eventRecordsEmitted = c("evm_stream_event_records_emitted_total", "Contract event records emitted.")

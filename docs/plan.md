@@ -13,8 +13,9 @@ tests. Full per-task detail is in the git history; design rationale is in
 
 ## Status
 
-Shipped through **v0.5.2**: all nine CLIs (two producers, seven sinks), signed
-releases (cosign keyless), a single Homebrew cask, and a container image.
+Shipped through **v2.3.0**: all ten CLIs (two producers, eight sinks), signed
+releases (cosign keyless), a single Homebrew cask, and now also a multi-arch
+container image and two Helm charts.
 Governance in place — `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE` (Apache-2.0),
 private vulnerability reporting, org base permission read-only.
 

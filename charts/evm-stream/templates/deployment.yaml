@@ -21,9 +21,11 @@ spec:
       labels:
         {{- include "evm-stream.selectorLabels" . | nindent 8 }}
       annotations:
+        # Roll the pod when the rendered config (producer or any sink) changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- if .Values.metrics.enabled }}
         prometheus.io/scrape: "true"
-        prometheus.io/port: {{ .Values.metrics.port | quote }}
+        prometheus.io/port: {{ .Values.metrics.port | quote }}   # producer; scrape sinks via the Service / a ServiceMonitor
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -36,8 +38,10 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       volumes:
-        - name: ipc
+        {{- if gt (len .Values.sinks) 0 }}
+        - name: ipc                  # the shared record socket; only needed with a sink
           emptyDir: {}
+        {{- end }}
         - name: config
           configMap:
             name: {{ include "evm-stream.fullname" . }}
@@ -48,6 +52,10 @@ spec:
         - name: evm-stream
           image: {{ include "evm-stream.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
             - evm-stream
             - run
@@ -101,6 +109,10 @@ spec:
         - name: sink-{{ $s.name }}
           image: {{ include "evm-stream.image" $ | quote }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- with $.Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
             - {{ $s.tool }}
             - run
@@ -143,8 +155,10 @@ spec:
             {{- with $s.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- with $s.resources }}
           resources:
-            {{- toYaml $s.resources | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

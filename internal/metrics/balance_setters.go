@@ -52,7 +52,7 @@ func (b *Balance) SetLastSampledBlock(n uint64) { b.lastSampledBlock.Set(float64
 // SetLagBlocks records head-minus-sampled lag.
 func (b *Balance) SetLagBlocks(lag uint64) { b.lagBlocks.Set(float64(lag)) }
 
-// SetEmitBlockedSeconds records how long the current/last stdout write blocked.
+// SetEmitBlockedSeconds records how long the current/last record write blocked.
 func (b *Balance) SetEmitBlockedSeconds(sec float64) { b.emitBlockedSeconds.Set(sec) }
 
 // IncSampleRecord counts one emitted *_sample record.

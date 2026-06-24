@@ -4,8 +4,8 @@ This repository is a suite of composable command-line tools for observing EVM
 chains and moving that data into downstream systems. The tools follow a
 Unix-pipeline philosophy: each binary does one job
 well, reads its settings from a shared configuration namespace, and speaks a
-single common data contract — newline-delimited JSON (JSONL) on standard
-output.
+single common data contract — newline-delimited JSON (JSONL) emitted over a
+record transport (a Unix socket); stdout carries logs, not records.
 
 The first two tools are producers:
 
@@ -119,7 +119,7 @@ Every tool reads and writes the same versioned record format. This is the
 integration point for the entire suite, so it is defined explicitly rather than
 left to each tool.
 
-Each line of stdout is a single JSON object with a common **envelope** plus a
+Each record line is a single JSON object with a common **envelope** plus a
 type-specific **`data`** payload.
 
 ### Envelope fields
@@ -329,7 +329,7 @@ depend on it directly.
 All records are emitted through a single synchronized writer in the `record`
 package, so each JSONL line (object plus trailing newline) is written as one
 atomic operation. This matters because a producer runs many concurrent monitors
-(per-contract watchers, per-account pollers) sharing one stdout — without
+(per-contract watchers, per-account pollers) sharing one record output — without
 serialization, writes larger than the OS pipe-atomic size would interleave and
 corrupt the stream. The writer flushes after every line so a downstream `jq`,
 `tail`, or sink sees each record promptly and `emitted_at` reflects the true
@@ -495,7 +495,8 @@ custom ABIs in the file).
 export RPC_URL="https://rpc.example/v2/<your-key>"
 evm-balance run --rpc-url "${RPC_URL}" --chain ethereum --interval 30s \
   --native 0xADDR \
-  --erc20 0xdAC17F958D2ee523a2206206994597C13D831ec7:0xADDR | jq
+  --erc20 0xdAC17F958D2ee523a2206206994597C13D831ec7:0xADDR --output socket &
+evm-sink-stdout run | jq
 ```
 
 **Token decimals.** To produce human-readable balances and the
@@ -1040,6 +1041,17 @@ returns a clear "Windows only" error). The `socket` keyword and an empty
 resolves to the platform backend (`unix:` or `pipe:`). The full test suite runs on a `windows-latest` CI job, so every tool
 (including `evm-sink-file` rotation/compression) is exercised on Windows.
 
+### evm-sink-stdout
+
+`evm-sink-stdout` is the one sanctioned tool that writes records to stdout (it
+logs to stderr) — the deliberate carve-out to the suite-wide "records never touch
+stdout" invariant. It reads the record transport like any other sink and writes
+each record's verbatim JSONL line back to stdout, restoring the Unix `| jq`
+composability that the socket transport otherwise routes around. Because it speaks
+the same `--input` defaults as every sink, it is also the default sink in the
+Helm charts and k8s deployments, where it pairs with a producer so records surface
+in `kubectl logs` when no broker/database sink is wired up.
+
 ## RPC Transport Security
 
 RPC access uses TLS, and mTLS is supported but not mandatory. HTTPS endpoints
@@ -1140,7 +1152,7 @@ including mTLS. It:
 The long-running `run` command also serves HTTP health endpoints, independent of
 whether metrics scraping is enabled: `/healthz` for process liveness (the
 process is up and not in an unrecoverable state) and `/readyz` for readiness.
-`/readyz` returns `200` only when the RPC endpoint is reachable, the stdout
+`/readyz` returns `200` only when the RPC endpoint is reachable, the record/output
 writer is not blocked beyond its threshold, and `evm_stream_lag_blocks` is
 within a configured bound; otherwise it returns `503` — so a producer wedged on
 a stalled sink or far behind the head reads as not-ready. The one-shot
@@ -1219,7 +1231,7 @@ when both run on the same host; operators can choose any bind address per CLI.
 
 ### Style and labels
 
-Metrics follow the operational style of the parallel `blockchain-exporter`
+Metrics inherit the operational conventions of the retired `blockchain-exporter`
 project: Prometheus-compatible metrics, stable names, low-cardinality labels,
 and enough chain/RPC/runtime visibility to debug from metrics alone. Metric
 types follow Prometheus convention: counters end in `_total`, gauges carry no
@@ -1230,7 +1242,7 @@ Address and name labels (`*_address`, `*_name`) are attached only to metrics
 keyed by a configured entry, so cardinality is bounded by config size.
 Per-transaction or per-counterparty identifiers — `tx_hash`, `log_index`, and
 the `from`/`to` of an observed transfer — are never labels. The shared label
-vocabulary stays close to `blockchain-exporter`:
+vocabulary stays close to the retired `blockchain-exporter`:
 
 - `blockchain`: chain label — the configured chain name (such as `my-chain`), or,
   when `--chain` / `[chain]` is blank, one derived from the resolved chain id
@@ -1442,8 +1454,8 @@ working; see the suite `Dockerfile`, which uses such a base for that reason.
 
 The `run` commands derive a root context from `signal.NotifyContext` for
 SIGINT/SIGTERM. On signal the producer stops accepting new work, finishes or
-skips the in-flight line so a partial JSONL line is never emitted, flushes
-stdout, and shuts down the metrics/health HTTP server cleanly. A bounded grace
+skips the in-flight line so a partial JSONL line is never emitted, flushes the
+in-flight record write, and shuts down the metrics/health HTTP server cleanly. A bounded grace
 period applies; a second signal forces exit. A clean shutdown exits `0`.
 
 ### Run-loop failure handling
@@ -1467,7 +1479,7 @@ which GoReleaser populates.
 
 Build `evm-stream` and `evm-balance` together, keeping the first milestone
 narrow: two working vertical slices that exercise the shared config, mTLS RPC
-client, JSON stdout output, and metrics server.
+client, JSONL record output, and metrics server.
 
 Initial `evm-stream` scope:
 
@@ -1582,7 +1594,7 @@ downgrades to an unauthenticated same-channel SHA-256 check. Downloads are HTTPS
 and fail closed. Because `curl | sh` runs `install.sh` before any verification,
 a download-inspect-run alternative is documented for high-assurance
 environments. The installer downloads the single bundle archive and installs all
-four binaries by default into the chosen directory; set `EVM_TOOLS_BIN` to a
+ten binaries by default into the chosen directory; set `EVM_TOOLS_BIN` to a
 single binary name to install just one.
 
 ### Release automation
@@ -1615,14 +1627,37 @@ Required workflow permissions and secrets:
   unavailable.
 
 Adding a binary later (each new sink such as `evm-sink-kafka`) is a new
-GoReleaser build target plus a tap formula — no new workflow. Container images
-can be added as an additional GoReleaser target (`dockers`) if the
-container-deployment path needs them.
+GoReleaser build target plus a tap formula — no new workflow. The
+container-deployment path is covered by a companion workflow rather than a
+GoReleaser `dockers` target (see below), so the two release artifacts stay
+independent.
+
+### Container images and Helm charts
+
+On every `v*` tag a companion workflow,
+`.github/workflows/publish-packages.yml`, publishes the container-deployment
+artifacts to GHCR: ONE multi-arch (`linux/amd64`, `linux/arm64`) image,
+`ghcr.io/daxchain-io/images/evm-tools`, and TWO Helm charts,
+`ghcr.io/daxchain-io/charts/evm-stream` and
+`ghcr.io/daxchain-io/charts/evm-balance`. It authenticates with the in-CI
+`GITHUB_TOKEN` — both image and charts live in this org's GHCR, so no
+cross-repository credential like the Homebrew tap's is needed.
+
+The artifacts are **version-locked**: the chart `version`, the chart
+`appVersion`, the image tag, and the release tag are all the same value. The
+workflow stamps `--version`/`--app-version` from the tag at publish time (the
+in-repo chart defaults are for local installs), so a deployed chart always pulls
+the image built from the same source. A `workflow_dispatch` input republishes a
+specific version on demand without re-tagging.
+
+A second manual workflow, `.github/workflows/cleanup-packages.yml`
+(`workflow_dispatch` only), prunes superseded GHCR package versions by exact tag;
+it refuses to delete `latest`.
 
 ## Naming Conventions
 
 - `evm-stream` — the primary behavior is long-running live monitoring. It keeps
-  the Unix-style stdout workflow while being clear about its purpose.
+  the Unix-style streaming/pipeline workflow while being clear about its purpose.
 - `evm-balance` — singular and category-like, even though it can poll many
   accounts and tokens.
 - `evm-tools` — the shared configuration namespace and repository name. One repo

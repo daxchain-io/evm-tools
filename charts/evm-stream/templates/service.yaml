@@ -19,7 +19,9 @@ spec:
       port: {{ .Values.metrics.port }}
       targetPort: {{ .Values.metrics.port }}
     {{- range .Values.sinks }}
-    - name: sink-{{ .name | trunc 56 | trimSuffix "-" }}
+    # port-derived name: a Service port name is an IANA_SVC_NAME (max 15 chars),
+    # which a long sink name would exceed. The port is unique (validateSinks).
+    - name: p{{ .metricsPort }}
       port: {{ .metricsPort }}
       targetPort: {{ .metricsPort }}
     {{- end }}

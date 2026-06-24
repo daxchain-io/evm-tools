@@ -1,15 +1,15 @@
 apiVersion: v2
 name: evm-stream
 description: >-
-  evm-stream producer (with an optional sink sidecar) — observe live EVM contract
-  events and native transfers, emit JSONL records over a Unix socket to the sink,
-  log to stdout/stderr, and expose Prometheus metrics. The cloud-native sidecar
-  pattern: producer + sink in one pod, records over a shared-volume socket.
+  evm-stream producer (with one or more optional sink sidecars) — observe live EVM
+  contract events and native transfers, emit JSONL records over a Unix socket to the
+  sinks, log to stdout/stderr, and expose Prometheus metrics. The cloud-native
+  sidecar pattern: producer + sinks in one pod, records over a shared-volume socket.
 type: application
 # version, appVersion, and the image tag are locked together: the release tag is
 # the source of truth and overrides both at publish time (publish-packages.yml).
-version: 2.3.0
-appVersion: "2.3.0"
+version: 2.4.0
+appVersion: "2.4.0"
 keywords:
   - ethereum
   - evm

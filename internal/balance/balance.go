@@ -9,7 +9,7 @@
 // reads every configured target at a single block, emits a *_sample record, and
 // emits a *_change record when the polled value moved since the last tick.
 // Emission goes through the same synchronized record.Writer, so backpressure is
-// lossless (a blocked stdout write propagates upstream and throttles polling
+// lossless (a blocked record write propagates upstream and throttles polling
 // rather than dropping records).
 package balance
 
@@ -92,7 +92,7 @@ type Healther interface {
 }
 
 // Emitter is the record sink (record.Writer satisfies it). It returns an error
-// when the underlying stdout write blocks-then-fails, propagating backpressure.
+// when the underlying record write blocks-then-fails, propagating backpressure.
 type Emitter interface {
 	Emit(env record.Envelope) error
 }
@@ -259,7 +259,7 @@ func New(opts Options) (*Poller, error) {
 		maxConcurrency = defaultMaxConcurrency
 	}
 
-	// Wrap the emitter so every stdout write's blocked duration feeds the
+	// Wrap the emitter so every record write's blocked duration feeds the
 	// emit-blocked gauge and the readiness signal (lossless: measure only).
 	opts.Emitter = newBlockTrackingEmitter(opts.Emitter, opts.Metrics, opts.Health, nowFn)
 
@@ -339,7 +339,7 @@ func (e *permanentErr) Error() string { return e.err.Error() }
 func (e *permanentErr) Unwrap() error { return e.err }
 
 // emitErr marks a failure that originated from the output Emitter (a broken
-// stdout pipe / dead downstream sink) rather than the RPC client — terminal, and
+// output socket / dead downstream sink) rather than the RPC client — terminal, and
 // never treated as a transient RPC fault.
 type emitErr struct{ err error }
 
@@ -360,7 +360,7 @@ func (p *Poller) handleError(ctx context.Context, consecutiveFailures *int, err 
 		// record is never dropped.
 		p.log.Error("output write failed; downstream gone, stopping", "error", ee.err.Error())
 		p.opts.Metrics.SetPollOutcome(false, p.now()) // a dying process did not poll successfully
-		return true, fmt.Errorf("emit to stdout failed: %w", ee.err)
+		return true, fmt.Errorf("emit to output failed: %w", ee.err)
 	}
 	var pe *permanentErr
 	if errors.As(err, &pe) {

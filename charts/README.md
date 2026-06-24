@@ -4,7 +4,8 @@ Two charts, one per producer — each deploys the **cloud-native sidecar pattern
 the producer plus one or more sink containers in one pod, connected by a Unix
 socket over a shared `emptyDir`. The socket **fans out**, so every sink receives
 the full record stream. stdout/stderr carry only logs (collected by the platform);
-`/metrics` is scraped per container.
+each container serves its own `/metrics` (the producer on `metrics.port`, each sink
+on its `metricsPort`), all exposed through the Service for a `ServiceMonitor`.
 
 | Chart | Deploys |
 | --- | --- |
@@ -113,7 +114,8 @@ single sink the producer blocks when it drops, so nothing is lost.
 - **Unique sink `name` and `metricsPort`** — render fails on duplicate names,
   duplicate ports, or a sink port that collides with the producer's `metrics.port`.
 - **Same UID** for both producer and sinks (`10001`) so the producer's `0600`
-  socket is reachable; `--block-until-consumer` keeps the first consumer lossless
-  and flips `/readyz` not-ready if every consumer drops (the kubelet restarts).
+  socket is reachable; `--block-until-consumer` keeps the first consumer lossless,
+  and `/readyz` flips not-ready if every consumer drops (the producer is removed
+  from Service endpoints until a sink reconnects).
 
 For a no-Helm equivalent, see [`../deploy/kubernetes/evm-tools.yaml`](../deploy/kubernetes/evm-tools.yaml).

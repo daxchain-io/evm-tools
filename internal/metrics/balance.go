@@ -106,7 +106,7 @@ func NewBalance(chainName, chainID string) *Balance {
 
 	b.lastSampledBlock = g("evm_balance_last_sampled_block_number", "Highest block at which a sample was taken.")
 	b.lagBlocks = g("evm_balance_lag_blocks", "Blocks the RPC head has advanced since the last sample (sampling staleness; informational — not a /readyz signal for the poller).")
-	b.emitBlockedSeconds = g("evm_balance_emit_blocked_seconds", "Time the current or last stdout write has been blocked by downstream backpressure.")
+	b.emitBlockedSeconds = g("evm_balance_emit_blocked_seconds", "Time the current or last record write has been blocked by downstream backpressure.")
 
 	b.recordsEmitted = c("evm_balance_records_emitted_total", "Total JSONL records emitted.")
 	b.sampleRecords = c("evm_balance_sample_records_emitted_total", "Sample records (*_sample) emitted.")

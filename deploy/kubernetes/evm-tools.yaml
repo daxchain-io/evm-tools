@@ -18,6 +18,11 @@
 # `kubectl logs deploy/evm-stream -c sink` — swap it for evm-sink-kafka /
 # evm-sink-postgres / etc. in production (only the sink container's args change).
 #
+# This is the minimal single-sink shape. The Helm charts (../../charts) generalize
+# it to multiple sinks per producer — containers named sink-<name>, each with its
+# own config/secrets — over the same fan-out socket. Use the charts for more than
+# one sink; this manifest stays single-sink on purpose for readability.
+#
 #   kubectl apply -f deploy/kubernetes/evm-tools.yaml
 ---
 apiVersion: v1
@@ -84,7 +89,7 @@ spec:
       containers:
         # ----- producer: evm-stream -----
         - name: evm-stream
-          image: ghcr.io/daxchain-io/images/evm-tools:2.3.0         # build locally / pull from your registry
+          image: ghcr.io/daxchain-io/images/evm-tools:2.4.0         # build locally / pull from your registry
           imagePullPolicy: IfNotPresent
           args:
             - evm-stream
@@ -124,7 +129,7 @@ spec:
         # ----- sink sidecar: evm-sink-stdout (records -> its stdout, visible in
         #       `kubectl logs ... -c sink`). Swap for evm-sink-kafka run / etc. -----
         - name: sink
-          image: ghcr.io/daxchain-io/images/evm-tools:2.3.0
+          image: ghcr.io/daxchain-io/images/evm-tools:2.4.0
           imagePullPolicy: IfNotPresent
           args:
             - evm-sink-stdout

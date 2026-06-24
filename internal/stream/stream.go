@@ -83,7 +83,7 @@ type Healther interface {
 }
 
 // emitErr marks a failure that originated from the output Emitter (a broken
-// stdout pipe / dead downstream sink) rather than the RPC client. It is terminal:
+// output socket / dead downstream sink) rather than the RPC client. It is terminal:
 // the run loop stops with this error instead of entering the RPC backoff (a dead
 // output is not recoverable by re-polling the chain), and it is never counted as
 // an RPC reconnect or as RPC-unreachable — so an output fault does not poison the
@@ -94,7 +94,7 @@ func (e *emitErr) Error() string { return "emit: " + e.err.Error() }
 func (e *emitErr) Unwrap() error { return e.err }
 
 // Emitter is the record sink (record.Writer satisfies it). It returns an error
-// when the underlying stdout write blocks-then-fails, propagating backpressure.
+// when the underlying record write blocks-then-fails, propagating backpressure.
 type Emitter interface {
 	Emit(env record.Envelope) error
 }
@@ -231,7 +231,7 @@ func New(opts Options) (*Stream, error) {
 		opts.BackoffMax = 30 * time.Second
 	}
 
-	// Wrap the emitter so every stdout write's blocked duration feeds the
+	// Wrap the emitter so every record write's blocked duration feeds the
 	// emit-blocked gauge and the readiness signal (lossless: measure only).
 	opts.Emitter = newBlockTrackingEmitter(opts.Emitter, opts.Metrics, opts.Health, nowFn)
 
@@ -396,11 +396,11 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 				// the chain cannot fix a broken output, so stop with a terminal error
 				// — a clean non-signal exit so a supervisor restarts the pipeline —
 				// rather than spinning the RPC backoff loop forever. Other, recoverable
-				// output errors (e.g. a full disk when stdout is a file) fall through
+				// output errors (e.g. transient socket backpressure) fall through
 				// to the transient retry below so a record is never dropped.
 				s.log.Error("output write failed; downstream gone, stopping", "error", ee.err.Error())
 				s.opts.Metrics.SetPollOutcome(false, s.now()) // a dying process did not poll successfully
-				return fmt.Errorf("emit to stdout failed: %w", ee.err)
+				return fmt.Errorf("emit to output failed: %w", ee.err)
 			}
 			consecutiveFailures++
 			s.opts.Health.SetRPCReachable(false)

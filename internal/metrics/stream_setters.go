@@ -51,7 +51,7 @@ func (s *Stream) SetLastEmittedBlock(n uint64) { s.lastEmittedBlock.Set(float64(
 // SetLagBlocks records head-minus-processed lag.
 func (s *Stream) SetLagBlocks(lag uint64) { s.lagBlocks.Set(float64(lag)) }
 
-// SetEmitBlockedSeconds records how long the current/last stdout write blocked.
+// SetEmitBlockedSeconds records how long the current/last record write blocked.
 func (s *Stream) SetEmitBlockedSeconds(sec float64) { s.emitBlockedSeconds.Set(sec) }
 
 // IncEventRecord counts one emitted contract event record, both overall and by

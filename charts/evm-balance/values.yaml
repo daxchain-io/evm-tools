@@ -2,20 +2,28 @@
 
 image:
   repository: ghcr.io/daxchain-io/images/evm-tools
-  # tag defaults to the chart appVersion (2.1.2) when empty.
+  # tag defaults to the chart appVersion when empty.
   tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
 
-# A producer is a singleton per chain (HA = exactly one active). Do NOT set > 1.
+# Override the generated resource names (rarely needed).
+nameOverride: ""
+fullnameOverride: ""
+
+# A producer is a singleton per chain (HA = exactly one active). Do NOT set > 1 —
+# a second active producer would double-emit. Run a separate release per chain.
 replicaCount: 1
 
 # RPC endpoint. It usually carries an API key, so it lives in a Secret.
 rpc:
+  # Reference an existing Secret holding the URL (preferred). Leave empty to have
+  # the chart create one from `rpc.url` below.
   existingSecret: ""
   existingSecretKey: RPC_URL
-  # Used only when existingSecret is empty; for a quick test:
+  # Used only when existingSecret is empty: the chart creates a Secret from this.
+  # For real deployments prefer existingSecret; for a quick test:
   #   helm install evm-balance … --set rpc.url="$RPC_URL"
   url: ""
 
@@ -109,6 +117,17 @@ podSecurityContext:
   runAsUser: 10001
   runAsGroup: 10001
   fsGroup: 10001
+
+# Per-container hardening applied to the producer and every sink. Conservative
+# defaults (no privilege escalation, all capabilities dropped, runtime seccomp);
+# readOnlyRootFilesystem is intentionally omitted (the producer may write a
+# checkpoint/temp file). Set to {} to disable.
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
 
 service:
   type: ClusterIP
