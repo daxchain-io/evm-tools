@@ -607,7 +607,7 @@ func (m *headTimeMetrics) snapshot() (time.Time, int) {
 
 // TestHeadBlockTimePublished verifies pollOnce fetches the head block header and
 // publishes its timestamp to the chain-health gauges (so
-// blockchain_chain_head_block_timestamp_seconds is non-zero after a poll, not
+// evm_chain_head_block_timestamp_seconds is non-zero after a poll, not
 // stubbed at 0). See design.md, "Chain health".
 func TestHeadBlockTimePublished(t *testing.T) {
 	const headNum = uint64(10)

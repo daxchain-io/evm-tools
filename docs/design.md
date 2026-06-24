@@ -44,14 +44,16 @@ makes the suite composable.
 
 These principles apply to every tool in the repo.
 
-1. **JSONL on stdout is the contract.** Every long-running tool writes one
-   complete JSON object per line to standard output, and each line is written
-   atomically so records from concurrent workers never interleave. JSONL keeps
-   the tools easy to pipe, tail, archive, inspect with `jq`, and forward to
-   another process.
-2. **Stdout is for data; stderr is for humans.** Logs, warnings, progress
-   messages, and diagnostics go to standard error so stdout stays
-   machine-readable.
+1. **JSONL is the contract.** Every long-running tool writes one
+   complete JSON object per line, and each line is written atomically so records
+   from concurrent workers never interleave. JSONL keeps the records easy to
+   tail, archive, inspect with `jq`, and forward to another process.
+2. **Stdout is for logs; records travel over the transport.** The JSONL record
+   stream never touches stdout — it flows over the record transport (a Unix
+   socket). Logs are the process's normal output, split the conventional way:
+   `debug`/`info`/`warn` on stdout, `error` on stderr. This is exactly what a
+   container runtime expects, so logs land in `kubectl logs`/`docker logs`
+   without any extra wiring.
 3. **One job per tool.** Producers observe the chain. Sinks deliver data. A
    producer never embeds a Kafka client, a database driver, or a webhook
    sender; those are separate tools downstream of the pipe.
@@ -85,21 +87,24 @@ A single binary release and a single shared config file cover the whole suite.
 | `evm-sink-aws-sns` | Sink — publish records to an AWS SNS topic (FIFO-aware) |
 | `evm-sink-postgres` | Sink — idempotent insert into a PostgreSQL table |
 | `evm-sink-redis` | Sink — append records to a Redis Stream (XADD, idempotent) |
+| `evm-sink-stdout` | Sink — write records to stdout (the `\| jq`/piping hatch; logs to stderr) |
 
-The pipeline shape is always the same: a producer writes JSONL to stdout, and a
-sink reads it from stdin.
+The pipeline shape is always the same: a producer emits JSONL records over a Unix
+socket and a sink dials in to consume them (stdout carries logs, not records).
 
 ```sh
-# Stream contract events straight into Kafka.
-evm-stream run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-kafka --topic evm.events
+# Stream contract events straight into Kafka. --output socket listens on the
+# well-known socket; the sink's --input defaults to it, so they auto-pair.
+evm-stream run -c ~/.config/evm-tools/my-chain.toml --output socket &
+evm-sink-kafka run --topic evm.events
 
 # Poll balances and forward changes to an alerting webhook.
-evm-balance run -c ~/.config/evm-tools/my-chain.toml \
-  | evm-sink-webhook --url https://hooks.internal.example.com/evm
+evm-balance run -c ~/.config/evm-tools/my-chain.toml --output socket &
+evm-sink-webhook run --url https://hooks.internal.example.com/evm
 
-# Or just inspect it locally.
-evm-stream run -c ~/.config/evm-tools/my-chain.toml | jq
+# Or inspect records locally — evm-sink-stdout writes them to stdout for jq.
+evm-stream run -c ~/.config/evm-tools/my-chain.toml --output socket &
+evm-sink-stdout run | jq
 ```
 
 Because the producers and sinks share the same monorepo and the same internal
@@ -331,9 +336,9 @@ corrupt the stream. The writer flushes after every line so a downstream `jq`,
 emit time, including the low-volume case (e.g. `evm-balance` on a 1-minute
 interval).
 
-Producers are lossless. When a downstream sink is slow or stalled the OS pipe
-fills and the stdout write blocks; that backpressure propagates upstream and
-throttles RPC reads rather than dropping records or buffering without bound. A
+Producers are lossless. When a downstream sink is slow or stalled the output
+socket fills and the record write blocks; that backpressure propagates upstream
+and throttles RPC reads rather than dropping records or buffering without bound. A
 blocked writer is observable: `evm_stream_emit_blocked_seconds` reports how long
 the current or last write has been blocked, and `/readyz` flips to not-ready
 once a write has been blocked beyond a threshold, so a wedged producer is
@@ -342,8 +347,8 @@ distinguishable from one that is merely lagging.
 ## evm-stream
 
 `evm-stream` is a long-running CLI for live EVM activity monitoring. It reads a
-configuration file, watches configured chain activity, and writes each observed
-record to stdout as JSONL.
+configuration file, watches configured chain activity, and emits each observed
+record as JSONL over its configured output.
 
 ### Monitoring model
 
@@ -968,23 +973,28 @@ Rules:
 
 ## Record Transport
 
-By default a producer writes JSONL to stdout and a sink reads it from stdin, so a
-shell pipe (`evm-stream | evm-sink-file`) connects them. That is simple and fast
-(a pipe is an in-kernel buffer) but couples their lifecycles to one process tree
-and is strictly one producer → one sink.
+stdout never carries records — it carries logs ([Logging](#logging)). A producer
+emits its JSONL record stream over a **Unix-domain-socket transport**, and the two
+ends auto-pair on a **well-known default socket**: `--output socket` makes the
+producer listen on it, and a sink's `--input` **defaults** to it, so neither side
+types a path. (`socket` resolves per-host to a Unix socket under `$XDG_RUNTIME_DIR`
+or the per-user temp dir — see `transport.DefaultSpec`; on Windows it is a named
+pipe.) With no `--output`, a producer is exporter-only — it just serves `/metrics`
+and discards records. Run more than one pipeline on a host and you give each an
+explicit `--output unix:/path` / `--input unix:/path`. A sink's `--input -`/`stdin`
+reads stdin instead, useful for replaying a JSONL file
+(`cat records.jsonl | evm-sink-file run --input -`).
 
-The optional **Unix-domain-socket transport** lets a producer and a sink run as
-independent processes and connect directly, with no shell pipe. It is opt-in and
-sits behind the unchanged `record` contract: producers take `--output` and sinks
-take `--input` (top-level `[output]`/`[input]` config keys, or
-`EVM_TOOLS_OUTPUT`/`EVM_TOOLS_INPUT`), each resolving to stdout/stdin by default
-or a `unix:/path` socket. The transport only swaps the `io.Writer`/`io.Reader`
+The transport sits behind the unchanged `record` contract: producers take
+`--output` and sinks take `--input` (top-level `[output]`/`[input]` config keys,
+or `EVM_TOOLS_OUTPUT`/`EVM_TOOLS_INPUT`; the value may be `socket`, a specific
+`unix:/path`, or — for input — `-`). It only swaps the `io.Writer`/`io.Reader`
 that `record.Writer`/`record.Reader` wrap, so the JSONL bytes on the wire are
-identical to the pipe.
+unchanged.
 
 ```sh
-evm-stream  run … --output unix:/run/evm/events.sock     # producer listens
-evm-sink-*  run … --input  unix:/run/evm/events.sock     # sink dials, reconnects
+evm-stream  run … --output socket     # producer listens on the well-known socket
+evm-sink-*  run …                     # sink's --input defaults to it; dials, reconnects
 ```
 
 Behavior (`internal/transport`):
@@ -1025,8 +1035,9 @@ explicitly rather than via the dynamic OWNER-RIGHTS alias, which would widen to
 the Administrators group under an elevated/service token.) Both backends share the
 same fan-out writer and reconnecting reader; the `pipe:` backend is built behind
 `//go:build windows` via `github.com/Microsoft/go-winio` (on non-Windows it
-returns a clear "Windows only" error). stdout/stdin remains the portable default
-everywhere. The full test suite runs on a `windows-latest` CI job, so every tool
+returns a clear "Windows only" error). The `socket` keyword and an empty
+`--output` (exporter-only) are the portable defaults everywhere — `socket`
+resolves to the platform backend (`unix:` or `pipe:`). The full test suite runs on a `windows-latest` CI job, so every tool
 (including `evm-sink-file` rotation/compression) is exercised on Windows.
 
 ## RPC Transport Security
@@ -1142,6 +1153,18 @@ Every CLI can expose a Prometheus HTTP endpoint for operators who want to scrape
 runtime health and monitored EVM state. Metrics are disabled unless configured
 or explicitly enabled by a flag.
 
+All metrics live under one `evm_` namespace with subsystem grouping: cross-tool
+chain/state observables are `evm_chain_*`, `evm_rpc_*`, `evm_account_*`,
+`evm_contract_*`, and `evm_log_*` (carrying the `blockchain` chain-name and
+`chain_id` labels), while each tool's own lifecycle and poll cycle stay under
+`evm_stream_*` / `evm_balance_*` (e.g. `evm_stream_poll_success`).
+This supersedes the retired blockchain-exporter: every observable it tracked is
+covered here (chain head/finality, account/contract balances and token supply,
+transfer-count windows, poll success/timestamp/duration, RPC and log-chunk
+timings), and evm-tools goes beyond it with reorg detection, internal
+trace-derived transfers, finalized-block tracking, per-event-type record counts,
+and the sinks' delivery/dead-letter metrics.
+
 The shared `[metrics]` section provides defaults; each tool overrides them in
 its own namespace so `evm-stream` and `evm-balance` can run on the same host
 with independent switches and ports.
@@ -1237,12 +1260,12 @@ Process metrics:
 
 Chain health (mirroring `blockchain-exporter`):
 
-- `blockchain_chain_head_block_number`: latest block number reported by RPC.
-- `blockchain_chain_finalized_block_number`: finalized block number when the RPC
+- `evm_chain_head_block_number`: latest block number reported by RPC.
+- `evm_chain_finalized_block_number`: finalized block number when the RPC
   endpoint supports it.
-- `blockchain_chain_head_block_timestamp_seconds`: timestamp of the latest
+- `evm_chain_head_block_timestamp_seconds`: timestamp of the latest
   observed head block.
-- `blockchain_chain_time_since_last_block_seconds`: wall-clock age of the latest
+- `evm_chain_time_since_last_block_seconds`: wall-clock age of the latest
   head block.
 
 Stream progress:
@@ -1251,7 +1274,7 @@ Stream progress:
 - `evm_stream_last_emitted_block_number`: highest block that produced at least
   one emitted record.
 - `evm_stream_lag_blocks`: difference between RPC head and last processed block.
-- `evm_stream_emit_blocked_seconds`: time the current or last stdout write has
+- `evm_stream_emit_blocked_seconds`: time the current or last output write has
   been blocked by downstream backpressure.
 - `evm_stream_records_emitted_total`: total JSONL records emitted.
 - `evm_stream_event_records_emitted_total`: contract event records emitted.
@@ -1270,34 +1293,46 @@ Stream progress:
 
 RPC and loop metrics:
 
-- `blockchain_rpc_call_duration_seconds`: RPC call duration by chain, chain ID,
+- `evm_rpc_call_duration_seconds`: RPC call duration by chain, chain ID,
   operation.
-- `blockchain_rpc_error_total`: RPC errors by chain, chain ID, operation, error
+- `evm_rpc_errors_total`: RPC errors by chain, chain ID, operation, error
   type.
-- `evm_stream_loop_duration_seconds`: duration of each poll loop.
+- `evm_stream_poll_duration_seconds`: duration of each poll cycle.
+- `evm_stream_poll_success`: whether the most recent poll cycle succeeded (1) or
+  failed (0).
+- `evm_stream_poll_timestamp_seconds`: Unix timestamp of the most recent
+  successful poll cycle.
 - `evm_stream_consecutive_failures`: current consecutive failure count.
 - `evm_stream_backoff_duration_seconds`: retry backoff duration after failures.
 
 Log query metrics (for chunked `eth_getLogs` backfill/replay):
 
-- `blockchain_log_chunks_created_total`: log query chunks created.
-- `blockchain_log_chunk_blocks`: histogram of blocks covered per chunk.
-- `blockchain_log_chunk_duration_seconds`: duration of each log chunk query.
+- `evm_log_chunks_created_total`: log query chunks created.
+- `evm_log_blocks_queried_per_chunk`: histogram of blocks covered per chunk.
+- `evm_log_chunk_duration_seconds`: duration of each log chunk query.
 
 ### Balance metrics
 
 `evm-balance` reuses the shared chain and RPC metrics, plus exporter-aligned
 gauges emitted from the configured `[balance]` sections:
 
-- `blockchain_account_balance_wei`.
-- `blockchain_account_balance_eth`.
-- `blockchain_account_token_balance_raw`.
-- `blockchain_account_token_balance`.
-- `blockchain_contract_balance_wei`.
-- `blockchain_contract_balance_eth`.
-- `blockchain_contract_token_total_supply`.
-- `blockchain_contract_transfer_count`: transfers observed in the configured
-  window, by contract.
+- `evm_account_balance_wei`.
+- `evm_account_balance_eth`.
+- `evm_account_token_balance_raw`.
+- `evm_account_token_balance`.
+- `evm_contract_balance_wei`.
+- `evm_contract_balance_eth`.
+- `evm_contract_token_total_supply`.
+- `evm_contract_transfer_count_window`: transfers observed in the configured
+  window, by contract; a `window_blocks` label carries the window width.
+
+`evm-balance` also emits the shared poll-cycle metrics (`evm_balance_poll_duration_seconds`,
+`evm_balance_poll_success`, `evm_balance_poll_timestamp_seconds`,
+`evm_balance_consecutive_failures`, `evm_balance_backoff_duration_seconds`).
+Where the blockchain-exporter put contract addresses behind an `is_contract` label
+on a single account metric, evm-balance models accounts and contracts as separate
+`evm_account_*` / `evm_contract_*` families, and exposes both raw and
+decimals-applied token balances rather than carrying decimals as a label.
 
 Contract metrics are first-class: configured contracts can expose native
 contract balance, token total supply for ERC-compatible contracts, and transfer
@@ -1334,6 +1369,7 @@ evm-tools/
     evm-sink-aws-sns/      # thin entrypoint
     evm-sink-postgres/     # thin entrypoint
     evm-sink-redis/        # thin entrypoint
+    evm-sink-stdout/       # thin entrypoint
   internal/
     config/                # shared loading, precedence, interpolation, per-tool decoding
     rpc/                   # TLS RPC transport + client (server-auth by default, optional mTLS)
@@ -1347,6 +1383,7 @@ evm-tools/
     awssink/               # shared AWS SQS/SNS sink core
     pgsink/                # evm-sink-postgres core logic (pgx)
     redissink/             # evm-sink-redis core logic (go-redis; dedup-gated XADD)
+    stdoutsink/            # evm-sink-stdout core logic (verbatim record line -> stdout)
     checkpoint/            # evm-stream durable resume cursor (atomic temp+fsync+rename)
     keyperm/               # shared private-key file-mode warning
     kafkasink/             # evm-sink-kafka core logic
@@ -1362,42 +1399,37 @@ producers and any sink that parses records depend on it.
 
 ### Logging
 
-Human-readable diagnostics use the standard library `log/slog` on stderr. A
-`--log-level` flag (`debug`/`info`/`warn`/`error`, default `info`) controls
-verbosity and `--log-format` selects `text` (default) or `json`. Logging is
-configured once in an internal package so every binary behaves identically. Per
-Principle 5, metrics — not logs — are the primary operational surface.
+Logs use the standard library `log/slog` and are the process's normal output,
+split by level: `debug`/`info`/`warn` go to **stdout** and `error` (and above)
+go to **stderr** — the conventional Unix split. A `--log-level` flag
+(`debug`/`info`/`warn`/`error`, default `info`) controls verbosity and
+`--log-format` selects `text` (default) or `json`. Logging is configured once in
+an internal package so every binary behaves identically. Per Principle 5,
+metrics — not logs — are the primary operational surface.
 
 #### Logging in containers
 
-The stdout/stderr split (Principle 2) is exactly what a container runtime
-expects, so it satisfies the 12-factor "logs as a stream" model without ever
-putting logs on stdout. **stdout carries the JSONL data stream; stderr carries
-the `log/slog` diagnostics.** Docker and Kubernetes capture *both* streams, so
-`docker logs` and `kubectl logs` surface the stderr diagnostics for free — the
-operator sees the human-readable log stream while the data contract on stdout
-stays uncorrupted. Putting logs on stdout to "make them show up in
-`kubectl logs`" would break the JSONL contract for any consumer of that stream;
-it is unnecessary because the runtime already captures stderr. Set
-`--log-format json` (or the `[log].format` key) when those diagnostics feed a
-log aggregator such as Loki, Elasticsearch, or Cloud Logging, so each line
-parses as structured JSON.
+The JSONL record stream never shares stdout — it travels over the record
+transport (a Unix socket; see [Record transport](#record-transport)) — so stdout
+is free to carry logs the conventional 12-factor way. Docker and Kubernetes
+capture *both* stdout and stderr, so `docker logs` and `kubectl logs` surface the
+full log stream for free, with the level split preserved (stdout vs stderr). Set
+`--log-format json` (or the `[log].format` key) when those diagnostics feed a log
+aggregator such as Loki, Elasticsearch, or Cloud Logging, so each line parses as
+structured JSON.
 
-How you wire stdout depends on whether the container runs a producer alone or a
-producer-to-sink pipeline:
+Records never touch stdout, so there is nothing to keep out of the log stream —
+both stdout (info/warn) and stderr (error) are logs, and the runtime collects
+them as the container's log stream. Wiring the record pipeline is independent of
+logging:
 
-- **Pipeline (producer → sink).** Run the producer's stdout into a sink — either
-  both processes in one container connected by a shell pipe, or two containers
-  with the producer's stdout redirected into the sink's stdin (e.g. a sidecar).
-  The JSONL never reaches the container log stream; only the two processes'
-  stderr diagnostics do.
-- **Standalone producer.** stdout *is* the data. Redirect it to the next stage
-  (a file, a named pipe, a sink container's stdin) rather than letting it land in
-  the container log stream as undifferentiated lines. **Never merge stderr into
-  stdout** — do not use `2>&1` or a shell redirect that folds the two together,
-  because that interleaves human log lines into the JSONL and corrupts the data
-  contract. Keep the streams separate and let the runtime collect stderr on its
-  own.
+- **Pipeline (producer → sink).** The producer listens on a socket
+  (`--output socket`, or a `unix:/path` on a shared volume) and the sink dials it
+  (`--input` defaults to that socket). Co-locate them in one pod — a sidecar
+  container sharing an `emptyDir` for the socket, or both in one container — so
+  the JSONL flows over the socket, never the log stream.
+- **Standalone producer.** With no `--output` it is exporter-only: it just serves
+  `/metrics` and logs, with no record stream at all.
 
 One container caveat affects secret resolution: a distroless or `scratch` base
 image has no shell, so config `_cmd` keys (which run via `sh -c`) fail with a
@@ -1520,7 +1552,7 @@ checksums file (cosign), publishes GitHub releases, and updates the shared
 Daxchain Homebrew tap from one workflow.
 
 Homebrew publishes a single `evm-tools` cask to `daxchain-io/homebrew-tap` that
-bundles all nine binaries, so one command installs the whole suite:
+bundles all ten binaries, so one command installs the whole suite:
 
 ```sh
 brew install --cask daxchain-io/tap/evm-tools

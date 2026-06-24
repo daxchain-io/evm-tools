@@ -1,7 +1,8 @@
-# Multi-stage build for the evm-tools suite. The final image contains all nine
+# Multi-stage build for the evm-tools suite. The final image contains all ten
 # binaries (evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook,
 # evm-sink-file, evm-sink-aws-sqs, evm-sink-aws-sns, evm-sink-postgres,
-# evm-sink-redis) so one image serves every tool in a producer | sink pipeline.
+# evm-sink-redis, evm-sink-stdout) so one image serves every tool in a
+# producer → sink pipeline.
 #
 # Base image choice: the runtime stage uses alpine — an image WITH a shell —
 # on purpose. Config `_cmd` keys run via `sh -c` (see docs/design.md
@@ -13,10 +14,10 @@
 #
 # Build:   docker build -t evm-tools .
 # Run:     docker run --rm evm-tools evm-stream version
-# Pipeline (stdout is data, stderr is diagnostics — never merge them):
+# Pipeline (records travel over a Unix socket; stdout carries logs):
 #   docker run --rm -v "$PWD/my-chain.toml:/etc/evm-tools/my-chain.toml:ro" \
-#     evm-tools sh -c 'evm-stream run -c /etc/evm-tools/my-chain.toml \
-#       | evm-sink-kafka run -c /etc/evm-tools/my-chain.toml'
+#     evm-tools sh -c 'evm-stream run -c /etc/evm-tools/my-chain.toml --output socket & \
+#       evm-sink-kafka run -c /etc/evm-tools/my-chain.toml'
 
 # --- build stage -------------------------------------------------------------
 # Pin the builder to the toolchain the module targets (see go.mod).
@@ -30,8 +31,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Build the static binaries. CGO stays disabled to match the release matrix
-# (segmentio/kafka-go is pure Go), so the binaries are fully static and run on
-# the minimal runtime image unchanged.
+# (franz-go is pure Go), so the binaries are fully static and run on the minimal
+# runtime image unchanged.
 COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
@@ -42,7 +43,7 @@ RUN set -eux; \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version=${VERSION} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit=${COMMIT} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date=${DATE}"; \
-    for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres evm-sink-redis; do \
+    for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres evm-sink-redis evm-sink-stdout; do \
       go build -trimpath -ldflags "${ldflags}" -o "/out/${tool}" "./cmd/${tool}"; \
     done
 
@@ -58,7 +59,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates dumb-init \
     && adduser -D -H -u 10001 evmtools
 
-COPY --from=build /out/evm-stream /out/evm-balance /out/evm-sink-kafka /out/evm-sink-webhook /out/evm-sink-file /out/evm-sink-aws-sqs /out/evm-sink-aws-sns /out/evm-sink-postgres /out/evm-sink-redis /usr/local/bin/
+COPY --from=build /out/evm-stream /out/evm-balance /out/evm-sink-kafka /out/evm-sink-webhook /out/evm-sink-file /out/evm-sink-aws-sqs /out/evm-sink-aws-sns /out/evm-sink-postgres /out/evm-sink-redis /out/evm-sink-stdout /usr/local/bin/
 
 # Run as a non-root user; the tools need no privileges.
 USER evmtools

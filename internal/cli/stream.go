@@ -25,8 +25,9 @@ import (
 const shutdownGrace = 10 * time.Second
 
 // readyEmitBlockedThreshold and readyLagThreshold are the /readyz bounds. A
-// stdout write blocked beyond the first, or lag beyond the second, flips
-// readiness to not-ready (see docs/design.md, "RPC Health Checks").
+// record emit blocked beyond the first (a stalled consumer on the output socket),
+// or lag beyond the second, flips readiness to not-ready (see docs/design.md,
+// "RPC Health Checks").
 const (
 	readyEmitBlockedThreshold = 30 * time.Second
 	readyLagThreshold         = 5000
@@ -126,7 +127,7 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		return fmt.Errorf("invalid stream.poll_interval %q: %w", cfg.Stream.PollInterval, err)
 	}
 
-	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout(),
+	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output),
 		transport.WriterOptions{BlockUntilConsumer: f.blockUntilConsumer})
 	if err != nil {
 		return fmt.Errorf("open output: %w", err)
@@ -181,8 +182,8 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 
 	runErr := s.Run(rootCtx)
 
-	// Graceful shutdown: stop the server and flush stdout within the grace
-	// window. A clean (signal) stop returns nil.
+	// Graceful shutdown: stop the server and flush the record writer within the
+	// grace window. A clean (signal) stop returns nil.
 	m.SetWorkers(0)
 	m.SetUp(false)
 	shutCtx, cancelShut := context.WithTimeout(context.Background(), shutdownGrace)
@@ -191,7 +192,7 @@ func streamRun(cmd *cobra.Command, f *sharedFlags) error {
 		logger.Warn("metrics server shutdown", "error", shutErr)
 	}
 	if flushErr := writer.Flush(); flushErr != nil {
-		logger.Warn("final stdout flush", "error", flushErr)
+		logger.Warn("final record flush", "error", flushErr)
 	}
 	return runErr
 }

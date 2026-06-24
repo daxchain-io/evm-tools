@@ -90,7 +90,8 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	// behind head between samples — that gap is the configured cadence, not an
 	// unhealthy state), so the lag dimension of /readyz is disabled here. The
 	// evm_balance_lag_blocks gauge still reports real staleness for dashboards;
-	// emit-blocked (a stalled stdout) remains the meaningful readiness signal.
+	// emit-blocked (a stalled consumer on the output socket) remains the meaningful
+	// readiness signal.
 	health := metrics.NewHealth(readyEmitBlockedThreshold, 0)
 	health.SetHeadStalenessThreshold(headStaleness)
 	health.SetRPCReachable(true)
@@ -114,7 +115,7 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 	}()
 	logger.Info("health/metrics server listening", "addr", srv.Addr(), "metrics_enabled", mc.Enabled)
 
-	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output), cmd.OutOrStdout(),
+	out, err := transport.OpenWriter(rootCtx, f.outputSpec(cmd, cfg.Output),
 		transport.WriterOptions{BlockUntilConsumer: f.blockUntilConsumer})
 	if err != nil {
 		return fmt.Errorf("open output: %w", err)
@@ -166,7 +167,7 @@ func balanceRun(cmd *cobra.Command, f *sharedFlags) error {
 		logger.Warn("metrics server shutdown", "error", shutErr)
 	}
 	if flushErr := writer.Flush(); flushErr != nil {
-		logger.Warn("final stdout flush", "error", flushErr)
+		logger.Warn("final record flush", "error", flushErr)
 	}
 	return runErr
 }

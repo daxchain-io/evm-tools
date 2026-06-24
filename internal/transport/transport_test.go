@@ -2,10 +2,10 @@ package transport
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -30,27 +30,31 @@ func socketPath(t *testing.T) string {
 	return filepath.Join(dir, "s.sock")
 }
 
-func TestOpenStdDefaults(t *testing.T) {
+func TestOpenWriterDestinations(t *testing.T) {
 	ctx := context.Background()
-	// The stdout aliases write to the provided std writer (so cobra's
-	// cmd.OutOrStdout redirection is preserved) and Close is a no-op.
-	for _, s := range []string{"", "-", "stdout"} {
-		var buf bytes.Buffer
-		w, err := OpenWriter(ctx, s, &buf, WriterOptions{})
-		if err != nil {
-			t.Fatalf("OpenWriter(%q): %v", s, err)
-		}
-		if _, err := io.WriteString(w, "hi\n"); err != nil {
-			t.Fatalf("write(%q): %v", s, err)
-		}
-		if err := w.Close(); err != nil { // no-op: must not close the underlying stream
-			t.Errorf("Close writer(%q): %v", s, err)
-		}
-		if buf.String() != "hi\n" {
-			t.Errorf("std writer(%q): got %q, want %q", s, buf.String(), "hi\n")
+	// An empty output is exporter-only: writes succeed (discarded) and Close is a
+	// no-op.
+	w, err := OpenWriter(ctx, "", WriterOptions{})
+	if err != nil {
+		t.Fatalf("OpenWriter(\"\"): %v", err)
+	}
+	if _, err := io.WriteString(w, "hi\n"); err != nil {
+		t.Fatalf("write to discard: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Errorf("Close discard writer: %v", err)
+	}
+	// stdout is no longer a record destination — it carries logs.
+	for _, s := range []string{"-", "stdout"} {
+		if _, err := OpenWriter(ctx, s, WriterOptions{}); err == nil {
+			t.Errorf("OpenWriter(%q): want error (stdout carries logs, not records)", s)
 		}
 	}
-	// The stdin aliases read from the provided std reader.
+	if _, err := OpenWriter(ctx, "tcp://x", WriterOptions{}); err == nil {
+		t.Error("OpenWriter with unsupported spec: want error")
+	}
+
+	// The stdin aliases still read from the provided std reader.
 	for _, s := range []string{"", "-", "stdin"} {
 		r, err := OpenReader(ctx, s, strings.NewReader("yo\n"))
 		if err != nil {
@@ -61,9 +65,6 @@ func TestOpenStdDefaults(t *testing.T) {
 			t.Errorf("std reader(%q): got %q, want %q", s, got, "yo\n")
 		}
 		_ = r.Close()
-	}
-	if _, err := OpenWriter(ctx, "tcp://x", io.Discard, WriterOptions{}); err == nil {
-		t.Error("OpenWriter with unsupported spec: want error")
 	}
 	if _, err := OpenReader(ctx, "bogus:/x", strings.NewReader("")); err == nil {
 		t.Error("OpenReader with unsupported spec: want error")
@@ -78,7 +79,7 @@ func TestUnixRoundTrip(t *testing.T) {
 
 	werr := make(chan error, 1)
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true}) // blocks until the reader connects
+		w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: true}) // blocks until the reader connects
 		if err != nil {
 			werr <- err
 			return
@@ -123,7 +124,7 @@ func TestUnixReconnectAcrossPeerRestart(t *testing.T) {
 	serveOnce := func(line string) <-chan error {
 		done := make(chan error, 1)
 		go func() {
-			w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+			w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: true})
 			if err != nil {
 				done <- err
 				return
@@ -224,7 +225,7 @@ func TestUnixFanOut(t *testing.T) {
 
 	werr := make(chan error, 1)
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			werr <- err
 			return
@@ -288,7 +289,7 @@ func TestUnixBlockUntilConsumerWaitsAtStartup(t *testing.T) {
 
 	emitted := make(chan struct{})
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			return
 		}
@@ -429,7 +430,7 @@ func TestWriterCloseRemovesSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	path := socketPath(t)
-	w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: false})
+	w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: false})
 	if err != nil {
 		t.Fatalf("OpenWriter: %v", err)
 	}
@@ -454,7 +455,7 @@ func TestSocketIsOwnerOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	path := socketPath(t)
-	w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: false})
+	w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: false})
 	if err != nil {
 		t.Fatalf("OpenWriter: %v", err)
 	}
@@ -475,7 +476,7 @@ func TestUnixFireAndForget(t *testing.T) {
 	defer cancel()
 	path := socketPath(t)
 
-	w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: false})
+	w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: false})
 	if err != nil {
 		t.Fatalf("OpenWriter: %v", err)
 	}
@@ -500,7 +501,7 @@ func TestReaderCtxCancelUnblocksRead(t *testing.T) {
 
 	// Producer accepts but sends nothing, holding the connection open until ctx.
 	go func() {
-		w, err := OpenWriter(ctx, "unix:"+path, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		w, err := OpenWriter(ctx, "unix:"+path, WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			return
 		}
@@ -528,5 +529,123 @@ func TestReaderCtxCancelUnblocksRead(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Read did not unblock within 3s of ctx cancel")
+	}
+}
+
+// safeBuf is a mutex-guarded buffer so the acceptLoop goroutine's log writes and
+// the test's reads don't race.
+type safeBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *safeBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// TestAcceptLoopSurfacesUnexpectedFailure verifies that when the listener dies
+// for a reason other than a clean teardown (closed stays false), the accept loop
+// logs an error instead of exiting silently — so a producer that can no longer
+// accept consumers is observable. The clean-close path (no log) is exercised by
+// every other test here.
+func TestAcceptLoopSurfacesUnexpectedFailure(t *testing.T) {
+	path := socketPath(t)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rec safeBuf
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&rec, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// blockUntil=false: returns without waiting for a consumer, with acceptLoop running.
+	w, err := newFanoutWriter(ctx, ln, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Kill the listener out from under acceptLoop WITHOUT a clean shutdown, so
+	// w.closed stays false and the Accept failure must be surfaced.
+	_ = ln.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(rec.String(), "accept loop stopped") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected an error log on unexpected accept failure, got: %q", rec.String())
+}
+
+// TestDefaultSpecAndSocketKeyword verifies the "socket" keyword resolves to the
+// platform default and that a producer/sink auto-pair on it end to end.
+func TestDefaultSpecAndSocketKeyword(t *testing.T) {
+	if got := resolveSocketKeyword("unix:/x"); got != "unix:/x" {
+		t.Errorf("resolveSocketKeyword passthrough: %q", got)
+	}
+	if resolveSocketKeyword("socket") != DefaultSpec() {
+		t.Error(`"socket" should resolve to DefaultSpec()`)
+	}
+	if resolveSocketKeyword("") != "" {
+		t.Error(`"" should pass through unchanged`)
+	}
+
+	if runtime.GOOS == "windows" {
+		if !strings.HasPrefix(DefaultSpec(), pipeScheme) {
+			t.Errorf("windows DefaultSpec should be a pipe: %q", DefaultSpec())
+		}
+		return
+	}
+	if !strings.HasPrefix(DefaultSpec(), unixScheme) {
+		t.Fatalf("unix DefaultSpec should be a unix socket: %q", DefaultSpec())
+	}
+
+	// Point XDG_RUNTIME_DIR at a short temp dir so the default socket path stays
+	// under the sun_path limit, then round-trip a record via the "socket" keyword.
+	dir, err := os.MkdirTemp("", "evt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	werr := make(chan error, 1)
+	go func() {
+		w, err := OpenWriter(ctx, "socket", WriterOptions{BlockUntilConsumer: true})
+		if err != nil {
+			werr <- err
+			return
+		}
+		defer func() { _ = w.Close() }()
+		_, e := io.WriteString(w, "rec-0\n")
+		werr <- e
+	}()
+	r, err := OpenReader(ctx, "socket", os.Stdin)
+	if err != nil {
+		t.Fatalf("OpenReader(socket): %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	sc := bufio.NewScanner(r)
+	if !sc.Scan() || sc.Text() != "rec-0" {
+		t.Fatalf("socket round-trip: got %q err %v", sc.Text(), sc.Err())
+	}
+	if e := <-werr; e != nil {
+		t.Fatalf("writer: %v", e)
 	}
 }

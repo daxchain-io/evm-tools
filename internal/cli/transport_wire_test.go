@@ -77,7 +77,7 @@ func TestSinkRunInputUnix(t *testing.T) {
 	// Producer: listen on the socket, write the records once a consumer connects,
 	// then hold the connection open until shutdown.
 	go func() {
-		out, err := transport.OpenWriter(ctx, "unix:"+sock, os.Stdout, transport.WriterOptions{BlockUntilConsumer: true})
+		out, err := transport.OpenWriter(ctx, "unix:"+sock, transport.WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			return
 		}
@@ -122,7 +122,7 @@ topic = "t"
 
 // TestOutputInputSpecPrecedence verifies flag-over-config precedence for the
 // transport specs: an explicit flag wins, an unset flag falls back to config, and
-// no config means the stdout/stdin default.
+// no config means the empty default (exporter-only output / stdin input).
 func TestOutputInputSpecPrecedence(t *testing.T) {
 	// outputSpec is a pure resolver.
 	f := &sharedFlags{}

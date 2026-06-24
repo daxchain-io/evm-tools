@@ -108,7 +108,7 @@ func TestMetricsEndpointServesStreamSet(t *testing.T) {
 		"evm_stream_records_emitted_total",
 		"evm_stream_native_transfer_records_emitted_total",
 		`evm_stream_contract_event_records_emitted_total{`,
-		"blockchain_rpc_call_duration_seconds",
+		"evm_rpc_call_duration_seconds",
 		"evm_stream_lag_blocks",
 	} {
 		if !strings.Contains(body, want) {
@@ -130,7 +130,7 @@ func TestMetricsEndpointServesBalanceSet(t *testing.T) {
 	b.SetAccountBalanceEth("treasury", "0xabc", 4.2)
 	b.SetAccountTokenBalanceRaw("usdc", "0xabc", "usdc", "0xtok", big.NewInt(1_000_000))
 	b.SetContractTokenTotalSupply("usdc", "0xtok", 50_000_000)
-	b.SetContractTransferCount("usdc", "0xtok", 3)
+	b.SetContractTransferCount("usdc", "0xtok", 5000, 3)
 	b.IncSampleRecord()
 	b.IncChangeRecord()
 	b.RPCObserver()("eth_call", time.Millisecond, "")
@@ -147,18 +147,18 @@ func TestMetricsEndpointServesBalanceSet(t *testing.T) {
 		"evm_balance_records_emitted_total",
 		"evm_balance_sample_records_emitted_total",
 		"evm_balance_change_records_emitted_total",
-		`blockchain_account_balance_wei{`,
-		`blockchain_account_token_balance_raw{`,
-		`blockchain_contract_token_total_supply{`,
-		`blockchain_contract_transfer_count{`,
-		"blockchain_rpc_call_duration_seconds",
+		`evm_account_balance_wei{`,
+		`evm_account_token_balance_raw{`,
+		`evm_contract_token_total_supply{`,
+		`evm_contract_transfer_count_window{`,
+		"evm_rpc_call_duration_seconds",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics missing %q", want)
 		}
 	}
 	// Gauges must not carry a _total suffix.
-	if strings.Contains(body, "blockchain_contract_transfer_count_total") {
+	if strings.Contains(body, "evm_contract_transfer_count_total") {
 		t.Error("transfer count gauge should not have _total suffix")
 	}
 }

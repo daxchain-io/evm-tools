@@ -36,3 +36,5 @@ scrape_configs:
         labels: { tool: evm-sink-postgres }
       - targets: ["localhost:9008"]
         labels: { tool: evm-sink-redis }
+      - targets: ["localhost:9009"]
+        labels: { tool: evm-sink-stdout }

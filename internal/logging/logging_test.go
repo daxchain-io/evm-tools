@@ -76,12 +76,13 @@ func TestLevelFiltering(t *testing.T) {
 // becomes visible), a format change switches to JSON, and a bad reload is
 // rejected without mutating the running logger.
 func TestReloadLevelAndFormat(t *testing.T) {
+	// Debug/Info/Warn route to outWriter; redirect it to capture them.
 	var buf bytes.Buffer
 	curMu.Lock()
-	prev := curWriter
-	curWriter = &buf
+	prev := outWriter
+	outWriter = &buf
 	curMu.Unlock()
-	t.Cleanup(func() { curMu.Lock(); curWriter = prev; curMu.Unlock() })
+	t.Cleanup(func() { curMu.Lock(); outWriter = prev; curMu.Unlock() })
 
 	if _, err := Setup("info", "text"); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -111,6 +112,42 @@ func TestReloadLevelAndFormat(t *testing.T) {
 
 	if err := Reload("nope", "text"); err == nil {
 		t.Error("a bad level on reload must error (and leave the logger intact)")
+	}
+}
+
+// TestLevelSplit verifies the default logger routes debug/info/warn to the
+// stdout writer and error to the stderr writer.
+func TestLevelSplit(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	curMu.Lock()
+	prevOut, prevErr := outWriter, errWriter
+	outWriter, errWriter = &outBuf, &errBuf
+	curMu.Unlock()
+	t.Cleanup(func() { curMu.Lock(); outWriter, errWriter = prevOut, prevErr; curMu.Unlock() })
+
+	if _, err := Setup("debug", "text"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	l := slog.Default()
+	l.Debug("dbg-line")
+	l.Info("info-line")
+	l.Warn("warn-line")
+	l.Error("err-line")
+
+	out, errs := outBuf.String(), errBuf.String()
+	for _, want := range []string{"dbg-line", "info-line", "warn-line"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout writer missing %q:\n%s", want, out)
+		}
+		if strings.Contains(errs, want) {
+			t.Errorf("stderr writer should not contain %q:\n%s", want, errs)
+		}
+	}
+	if !strings.Contains(errs, "err-line") {
+		t.Errorf("stderr writer missing error:\n%s", errs)
+	}
+	if strings.Contains(out, "err-line") {
+		t.Errorf("stdout writer should not contain the error:\n%s", out)
 	}
 }
 

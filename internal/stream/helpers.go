@@ -127,7 +127,8 @@ func (noopMetrics) IncReconnects()                        {}
 func (noopMetrics) IncConfigReload()                      {}
 func (noopMetrics) IncConfigReloadError()                 {}
 func (noopMetrics) ResetContractSeries(string, string)    {}
-func (noopMetrics) ObserveLoop(time.Duration)             {}
+func (noopMetrics) ObservePoll(time.Duration)             {}
+func (noopMetrics) SetPollOutcome(bool, time.Time)        {}
 func (noopMetrics) SetConsecutiveFailures(int)            {}
 func (noopMetrics) SetBackoffSeconds(time.Duration)       {}
 func (noopMetrics) ObserveLogChunk(uint64, time.Duration) {}

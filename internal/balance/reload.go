@@ -87,12 +87,24 @@ func (p *Poller) resetRemoved(ws *watchSet) {
 	}
 
 	newContracts := names(len(ws.contracts), func(i int) string { return ws.contracts[i].Name })
+	newContractWindow := make(map[string]uint64, len(ws.contracts))
+	for _, t := range ws.contracts {
+		newContractWindow[t.Name] = t.TransferCountWindowBlocks
+	}
 	for _, t := range p.opts.Contracts {
 		if !newContracts[t.Name] {
 			p.opts.Metrics.ResetContractSeries(t.Name, lower(t.Address))
 			delete(p.prior, "contract-native:"+t.Name)
 			delete(p.prior, "contract-supply:"+t.Name)
 			delete(p.prior, "contract-transfers:"+t.Name)
+			continue
+		}
+		// A surviving contract whose transfer-count window changed would otherwise
+		// strand its old window_blocks label variant as a never-updated series; drop
+		// the contract's series so the next sample re-creates it under the current
+		// window. (The balance/supply gauges re-populate on that same tick.)
+		if nw := newContractWindow[t.Name]; nw != t.TransferCountWindowBlocks {
+			p.opts.Metrics.ResetContractSeries(t.Name, lower(t.Address))
 		}
 	}
 

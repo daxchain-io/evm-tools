@@ -120,14 +120,15 @@ func (noopMetrics) SetAccountTokenBalance(string, string, string, string, float6
 func (noopMetrics) SetContractBalanceWei(string, string, *big.Int)                 {}
 func (noopMetrics) SetContractBalanceEth(string, string, float64)                  {}
 func (noopMetrics) SetContractTokenTotalSupply(string, string, float64)            {}
-func (noopMetrics) SetContractTransferCount(string, string, float64)               {}
+func (noopMetrics) SetContractTransferCount(string, string, uint64, float64)       {}
 func (noopMetrics) ResetAccountSeries(string, string)                              {}
 func (noopMetrics) ResetAccountTokenSeries(string, string, string, string)         {}
 func (noopMetrics) ResetContractSeries(string, string)                             {}
 func (noopMetrics) IncConfigReload()                                               {}
 func (noopMetrics) IncConfigReloadError()                                          {}
 func (noopMetrics) IncReconnects()                                                 {}
-func (noopMetrics) ObserveLoop(time.Duration)                                      {}
+func (noopMetrics) ObservePoll(time.Duration)                                      {}
+func (noopMetrics) SetPollOutcome(bool, time.Time)                                 {}
 func (noopMetrics) SetConsecutiveFailures(int)                                     {}
 func (noopMetrics) SetBackoffSeconds(time.Duration)                                {}
 

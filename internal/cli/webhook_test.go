@@ -167,7 +167,7 @@ func TestWebhookSinkRunForwardsStdin(t *testing.T) {
 [webhook]
 url = "https://hooks.example.com/evm"
 `)
-	out, err := runSink(context.Background(), t, ToolSinkWebhook, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0")
+	out, err := runSink(context.Background(), t, ToolSinkWebhook, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0", "--input", "-")
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
@@ -203,7 +203,7 @@ url = "https://hooks.example.com/evm"
 [webhook.filters]
 include_types = ["event"]
 `)
-	out, err := runSink(context.Background(), t, ToolSinkWebhook, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0")
+	out, err := runSink(context.Background(), t, ToolSinkWebhook, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0", "--input", "-")
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}

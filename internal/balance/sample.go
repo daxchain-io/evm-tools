@@ -204,7 +204,7 @@ func (p *Poller) readContractTransferCount(ctx context.Context, t ContractTarget
 	count := big.NewInt(int64(len(logs)))
 	wb := int(window)
 
-	p.opts.Metrics.SetContractTransferCount(t.Name, lower(t.Address), float64(len(logs)))
+	p.opts.Metrics.SetContractTransferCount(t.Name, lower(t.Address), window, float64(len(logs)))
 
 	data := record.ContractData{
 		Address:      t.Address,

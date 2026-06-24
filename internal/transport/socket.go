@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 )
@@ -66,7 +67,19 @@ func (w *fanoutWriter) acceptLoop() {
 	for {
 		c, err := w.ln.Accept()
 		if err != nil {
-			return // listener closed
+			// A clean teardown (Close / ctx-cancel closed the listener, setting
+			// closed=true first) is expected — exit silently. Any other Accept
+			// failure means the listener can no longer take consumers; surface it
+			// here at Error, since this background goroutine has no error-return path
+			// and the producer would otherwise silently stop accepting new sinks.
+			w.mu.Lock()
+			closed := w.closed
+			w.mu.Unlock()
+			if !closed {
+				slog.Default().Error("record socket accept loop stopped; producer can no longer accept new consumers",
+					"error", err)
+			}
+			return
 		}
 		w.mu.Lock()
 		if w.closed {
@@ -185,9 +198,12 @@ func (w *fanoutWriter) Close() error {
 }
 
 // newReconnectingReader builds a reader that dials via dial, retrying with
-// backoff until it succeeds, and transparently reconnects on disconnect.
-func newReconnectingReader(ctx context.Context, dial dialFunc) (*reconnectingReader, error) {
-	r := &reconnectingReader{ctx: ctx, dial: dial}
+// backoff until it succeeds, and transparently reconnects on disconnect. desc is
+// the human-readable address (e.g. "unix:/run/.../records.sock") used in the
+// waiting/connected log lines so a sink blocked on an absent producer is
+// observable.
+func newReconnectingReader(ctx context.Context, desc string, dial dialFunc) (*reconnectingReader, error) {
+	r := &reconnectingReader{ctx: ctx, desc: desc, dial: dial}
 	if err := r.connect(); err != nil {
 		return nil, err
 	}
@@ -214,6 +230,7 @@ func newReconnectingReader(ctx context.Context, dial dialFunc) (*reconnectingRea
 // goroutine. Like record.Reader, Read must be called from a single goroutine.
 type reconnectingReader struct {
 	ctx  context.Context
+	desc string // address, for the waiting/connected log lines
 	dial dialFunc
 
 	mu     sync.Mutex
@@ -280,8 +297,17 @@ func (r *reconnectingReader) connect() error {
 			r.conn = c
 			r.mu.Unlock()
 			r.br = bufio.NewReader(c)
+			if r.attempt > 0 {
+				slog.Default().Info("connected to producer", "address", r.desc)
+			}
 			r.attempt = 0
 			return nil
+		}
+		// Surface the first failed dial so a sink blocked on an absent producer
+		// (e.g. the default socket with no producer running yet) is observable,
+		// instead of sitting silently between "sink started" and the first record.
+		if r.attempt == 0 {
+			slog.Default().Info("waiting for a producer to listen", "address", r.desc)
 		}
 		r.attempt++
 		if !sleepCtx(r.ctx, backoffFor(r.attempt)) {

@@ -7,10 +7,13 @@ is the short version of how to work here.
 ## What this is
 
 `evm-tools` is a Go monorepo of composable CLIs for observing EVM chains.
-Producers (`evm-stream`, `evm-balance`) emit newline-delimited
-JSON to stdout; downstream sinks (`evm-sink-kafka`, `evm-sink-webhook`,
-`evm-sink-file`, `evm-sink-aws-sqs`, `evm-sink-aws-sns`, `evm-sink-postgres`,
-`evm-sink-redis`) consume it. Module path: `github.com/daxchain-io/evm-tools`.
+Producers (`evm-stream`, `evm-balance`) emit newline-delimited JSON over the
+record transport (a Unix socket via `--output`); downstream sinks
+(`evm-sink-kafka`, `evm-sink-webhook`, `evm-sink-file`, `evm-sink-aws-sqs`,
+`evm-sink-aws-sns`, `evm-sink-postgres`, `evm-sink-redis`, `evm-sink-stdout`) dial
+in and consume it. stdout carries logs, not records (except `evm-sink-stdout`,
+whose job is to write records to stdout — it logs to stderr). Module path:
+`github.com/daxchain-io/evm-tools`.
 Go 1.22+ (toolchain pinned in `go.mod`).
 
 ## Commands
@@ -34,7 +37,7 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 
 - `cmd/<tool>/` — thin entrypoints (`evm-stream`, `evm-balance`,
   `evm-sink-kafka`, `evm-sink-webhook`, `evm-sink-file`, `evm-sink-aws-sqs`,
-  `evm-sink-aws-sns`, `evm-sink-postgres`, `evm-sink-redis`).
+  `evm-sink-aws-sns`, `evm-sink-postgres`, `evm-sink-redis`, `evm-sink-stdout`).
 - `internal/record` — the JSONL contract: envelope + record types + the
   synchronized encoder/reader. **Source of truth.**
 - `internal/config` — Viper/TOML load, precedence, interpolation/`_cmd`,
@@ -50,6 +53,8 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 - `internal/awssink` — shared AWS SQS/SNS sink core (FIFO-aware, 256 KB guard).
 - `internal/pgsink` — Postgres sink core (idempotent `ON CONFLICT` insert via pgx).
 - `internal/redissink` — Redis Streams sink core (dedup-gated `XADD` via go-redis).
+- `internal/stdoutsink` — stdout sink core (verbatim record line → stdout; the
+  composability hatch for `| jq`/piping; logs to stderr).
 - `internal/checkpoint` — durable resume cursor for evm-stream (atomic temp+fsync+rename).
 - `internal/keyperm` — shared private-key file-mode warning.
 - `internal/deadletter` — opt-in poison-record quarantine (file-backed,
@@ -63,9 +68,15 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
   formatted balances, counts, supply) are JSON **strings**; only `decimals`,
   `window_blocks`, and envelope counters are numbers. Each line is written
   atomically through one synchronized writer and flushed per line — never write
-  to stdout directly from a monitor goroutine.
-- **stdout is data, stderr is humans.** Diagnostics use `log/slog` on stderr
-  (`--log-level`, `--log-format`). Never print logs to stdout.
+  records directly to the output from a monitor goroutine.
+- **stdout is logs; records go over the transport.** Records never touch stdout —
+  they travel over the record transport (`internal/transport`). A producer opts in
+  with `--output socket` (the well-known per-host socket via `transport.DefaultSpec`)
+  or `--output unix:/path`; empty `--output` = exporter-only. A sink's `--input`
+  **defaults** to that socket (`-`/`stdin` reads stdin for replay). Logs use
+  `log/slog` split by level: `debug`/`info`/`warn` on stdout, `error` on stderr
+  (`--log-level`, `--log-format`). Never write records to stdout — `evm-sink-stdout`
+  is the lone tool that does (its job), and it logs to stderr.
 - **TLS for HTTPS RPC; mTLS when configured.** Public endpoints use server-auth
   TLS (no client cert); a `client_cert`/`client_key` pair upgrades to mTLS, and
   `require_mtls` (or `--rpc-require-mtls`) makes a missing client cert fail fast

@@ -134,15 +134,15 @@ func (f *sharedFlags) loadConfig(cmd *cobra.Command) (*config.Loader, error) {
 func newRunCommand(tool Tool, f *sharedFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
-		Short: "Run the producer, emitting JSONL records to stdout",
+		Short: "Run the producer (serves /metrics; emits JSONL records to the configured --output)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := f.setupLogging(cmd); err != nil {
 				return err
 			}
-			// Ignore SIGPIPE so a write to a broken stdout (a dead downstream sink)
-			// returns EPIPE to the record writer — which the run loop treats as a
-			// terminal "downstream gone" condition with a clean non-signal exit —
+			// Ignore SIGPIPE so a write to a broken output socket (a dead downstream
+			// sink) returns EPIPE to the record writer — which the run loop treats as
+			// a terminal "downstream gone" condition with a clean non-signal exit —
 			// instead of the default disposition killing the producer with a signal
 			// and bypassing graceful shutdown / the final flush.
 			signal.Ignore(syscall.SIGPIPE)

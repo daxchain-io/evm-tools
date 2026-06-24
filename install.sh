@@ -17,7 +17,7 @@
 #                      suite from one archive, or name one — evm-stream |
 #                      evm-balance | evm-sink-kafka | evm-sink-webhook |
 #                      evm-sink-file | evm-sink-aws-sqs | evm-sink-aws-sns |
-#                      evm-sink-postgres | evm-sink-redis
+#                      evm-sink-postgres | evm-sink-redis | evm-sink-stdout
 #   EVM_TOOLS_VERSION  version tag to install (default: latest)
 #   EVM_TOOLS_INSTALL_DIR  install directory (default: /usr/local/bin)
 #   EVM_TOOLS_BASE_URL     base "releases" URL (default the GitHub repo); set
@@ -32,7 +32,7 @@ set -eu
 
 REPO="daxchain-io/evm-tools"
 BIN="${EVM_TOOLS_BIN:-all}"
-ALL_BINS="evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres evm-sink-redis"
+ALL_BINS="evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres evm-sink-redis evm-sink-stdout"
 VERSION="${EVM_TOOLS_VERSION:-latest}"
 INSTALL_DIR="${EVM_TOOLS_INSTALL_DIR:-/usr/local/bin}"
 BASE_URL="${EVM_TOOLS_BASE_URL:-https://github.com/${REPO}/releases}"
@@ -57,8 +57,8 @@ need() {
 }
 
 case "$BIN" in
-  all | evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook | evm-sink-file | evm-sink-aws-sqs | evm-sink-aws-sns | evm-sink-postgres | evm-sink-redis) ;;
-  *) err "unsupported EVM_TOOLS_BIN '$BIN' (want all or one of: evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook, evm-sink-file, evm-sink-aws-sqs, evm-sink-aws-sns, evm-sink-postgres, evm-sink-redis)" ;;
+  all | evm-stream | evm-balance | evm-sink-kafka | evm-sink-webhook | evm-sink-file | evm-sink-aws-sqs | evm-sink-aws-sns | evm-sink-postgres | evm-sink-redis | evm-sink-stdout) ;;
+  *) err "unsupported EVM_TOOLS_BIN '$BIN' (want all or one of: evm-stream, evm-balance, evm-sink-kafka, evm-sink-webhook, evm-sink-file, evm-sink-aws-sqs, evm-sink-aws-sns, evm-sink-postgres, evm-sink-redis, evm-sink-stdout)" ;;
 esac
 
 # The release bundles every binary in one archive; pick which to install.

@@ -24,6 +24,13 @@ func listenUnix(ctx context.Context, path string, blockUntilConsumer bool) (io.W
 	if path == "" {
 		return nil, errors.New("transport: empty unix socket path in --output")
 	}
+	// The OS bounds sun_path (~104 bytes on macOS, ~108 on Linux); a longer path
+	// makes net.Listen fail with a cryptic "invalid argument". Catch it early with a
+	// clear message — the default socket lives under $TMPDIR on macOS, which can be
+	// long, so an operator may need a short explicit "unix:/tmp/x.sock".
+	if len(path) > 103 {
+		return nil, fmt.Errorf("transport: unix socket path is too long (%d bytes; OS limit ~104): %q — use a shorter --output unix:/path under /tmp or /run", len(path), path)
+	}
 	removeStaleSocket(path)
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		_ = os.MkdirAll(dir, 0o700) // best-effort; a pre-existing dir keeps its mode
@@ -46,7 +53,7 @@ func dialUnix(ctx context.Context, path string) (io.ReadCloser, error) {
 	if path == "" {
 		return nil, errors.New("transport: empty unix socket path in --input")
 	}
-	return newReconnectingReader(ctx, func(c context.Context) (net.Conn, error) {
+	return newReconnectingReader(ctx, unixScheme+path, func(c context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(c, "unix", path)
 	})
 }

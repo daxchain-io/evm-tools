@@ -11,7 +11,7 @@ groups:
     interval: 30s
     rules:
       - record: evm_tools:rpc_errors:rate5m
-        expr: sum by (tool, blockchain, operation, error_type) (rate(blockchain_rpc_error_total[5m]))
+        expr: sum by (tool, blockchain, operation, error_type) (rate(evm_rpc_errors_total[5m]))
       - record: evm_tools:stream_records:rate5m
         expr: sum by (tool, blockchain) (rate(evm_stream_records_emitted_total[5m]))
       - record: evm_tools:balance_records:rate5m
@@ -37,7 +37,7 @@ groups:
         # has stopped updating. Aggregate by chain so a single stalled chain pages
         # once even when both producers watch it. This mirrors the live age
         # computation behind the head_staleness_threshold /readyz check.
-        expr: max by (blockchain, chain_id) (time() - blockchain_chain_head_block_timestamp_seconds) > 300
+        expr: max by (blockchain, chain_id) (time() - evm_chain_head_block_timestamp_seconds) > 300
         for: 2m
         labels:
           severity: warning
@@ -70,8 +70,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Producer stdout blocked on {{ $labels.tool }}"
-          description: "A producer's record emission has been blocked for {{ $value | humanizeDuration }} — the downstream sink (or pipe) is applying backpressure. Lossless by design, but throughput is stalled."
+          summary: "Producer record emission blocked on {{ $labels.tool }}"
+          description: "A producer's record emission has been blocked for {{ $value | humanizeDuration }} — the downstream sink on the output socket is applying backpressure. Lossless by design, but throughput is stalled."
 
       - alert: EvmSinkDeliveryBlocked
         expr: |

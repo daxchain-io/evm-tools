@@ -182,7 +182,24 @@ builds:
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
 
-# One archive bundles all nine binaries, so a single `brew install` / `curl`
+  # evm-sink-stdout writes records to stdout using only the standard library, so
+  # CGO stays disabled and it cross-compiles statically like the rest of the suite.
+  - id: evm-sink-stdout
+    main: ./cmd/evm-sink-stdout
+    binary: evm-sink-stdout
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date={{ .Date }}
+
+# One archive bundles all ten binaries, so a single `brew install` / `curl`
 # install delivers the whole suite (evm-stream, evm-balance, and the sinks).
 archives:
   - id: evm-tools
@@ -196,6 +213,7 @@ archives:
       - evm-sink-aws-sns
       - evm-sink-postgres
       - evm-sink-redis
+      - evm-sink-stdout
     name_template: "evm-tools_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
@@ -267,6 +285,7 @@ homebrew_casks:
       - evm-sink-aws-sns
       - evm-sink-postgres
       - evm-sink-redis
+      - evm-sink-stdout
     hooks:
       post:
         install: |

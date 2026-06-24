@@ -135,7 +135,7 @@ include_types = ["event"]
 	}, "\n") + "\n"
 
 	// --metrics-addr :0 binds an ephemeral port so the test never conflicts.
-	_, err := runSink(context.Background(), t, ToolSinkFile, stdin, "run", "-c", cfg, "--metrics-addr", ":0")
+	_, err := runSink(context.Background(), t, ToolSinkFile, stdin, "run", "-c", cfg, "--metrics-addr", ":0", "--input", "-")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

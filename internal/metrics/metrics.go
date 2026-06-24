@@ -32,6 +32,7 @@ const (
 	labelAccountAddr  = "account_address"
 	labelTokenName    = "token_name"
 	labelTokenAddr    = "token_address"
+	labelWindowBlocks = "window_blocks"
 )
 
 // rpcDurationBuckets cover sub-millisecond health checks through multi-second
@@ -84,10 +85,12 @@ type Stream struct {
 	configReloads           prometheus.Counter
 	configReloadErrors      prometheus.Counter
 
-	// RPC + loop.
+	// RPC + poll cycle.
 	rpcCallDuration *prometheus.HistogramVec
 	rpcError        *prometheus.CounterVec
-	loopDuration    prometheus.Histogram
+	pollDuration    prometheus.Histogram
+	pollSuccess     prometheus.Gauge
+	pollTimestamp   prometheus.Gauge
 	consecutiveFail prometheus.Gauge
 	backoffSeconds  prometheus.Gauge
 
@@ -133,10 +136,10 @@ func NewStream(chainName, chainID string) *Stream {
 	s.configuredNativeTransfer = g("evm_stream_configured_native_transfers", "Whether native transfer monitoring is enabled (1) or not (0).")
 	s.workers = g("evm_stream_workers", "Active stream workers/goroutines owned by monitors.")
 
-	s.headBlock = g("blockchain_chain_head_block_number", "Latest block number reported by RPC.")
-	s.finalizedBlock = g("blockchain_chain_finalized_block_number", "Finalized block number when the RPC endpoint supports it (reserved: populated once finality signaling lands; see design Open Question 4).")
-	s.headBlockTimestamp = g("blockchain_chain_head_block_timestamp_seconds", "Unix timestamp of the latest observed head block.")
-	s.timeSinceLastBlock = g("blockchain_chain_time_since_last_block_seconds", "Wall-clock age of the latest head block, in seconds.")
+	s.headBlock = g("evm_chain_head_block_number", "Latest block number reported by RPC.")
+	s.finalizedBlock = g("evm_chain_finalized_block_number", "Finalized block number when the RPC endpoint supports it (reserved: populated once finality signaling lands; see design Open Question 4).")
+	s.headBlockTimestamp = g("evm_chain_head_block_timestamp_seconds", "Unix timestamp of the latest observed head block.")
+	s.timeSinceLastBlock = g("evm_chain_time_since_last_block_seconds", "Wall-clock age of the latest head block, in seconds.")
 
 	s.lastProcessedBlock = g("evm_stream_last_processed_block_number", "Highest block processed.")
 	s.lastEmittedBlock = g("evm_stream_last_emitted_block_number", "Highest block that produced at least one emitted record.")
@@ -163,7 +166,7 @@ func NewStream(chainName, chainID string) *Stream {
 	reg.MustRegister(s.contractEventRecords)
 
 	s.rpcCallDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:        "blockchain_rpc_call_duration_seconds",
+		Name:        "evm_rpc_call_duration_seconds",
 		Help:        "RPC call duration by operation.",
 		Buckets:     rpcDurationBuckets,
 		ConstLabels: base,
@@ -171,33 +174,35 @@ func NewStream(chainName, chainID string) *Stream {
 	reg.MustRegister(s.rpcCallDuration)
 
 	s.rpcError = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "blockchain_rpc_error_total",
+		Name:        "evm_rpc_errors_total",
 		Help:        "RPC errors by operation and coarse error type.",
 		ConstLabels: base,
 	}, []string{labelOperation, labelErrorType})
 	reg.MustRegister(s.rpcError)
 
-	s.loopDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:        "evm_stream_loop_duration_seconds",
-		Help:        "Duration of each poll loop.",
+	s.pollDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:        "evm_stream_poll_duration_seconds",
+		Help:        "Duration of each poll cycle.",
 		Buckets:     rpcDurationBuckets,
 		ConstLabels: base,
 	})
-	reg.MustRegister(s.loopDuration)
+	reg.MustRegister(s.pollDuration)
 
+	s.pollSuccess = g("evm_stream_poll_success", "Whether the most recent poll cycle succeeded (1) or failed (0).")
+	s.pollTimestamp = g("evm_stream_poll_timestamp_seconds", "Unix timestamp of the most recent successful poll cycle.")
 	s.consecutiveFail = g("evm_stream_consecutive_failures", "Current consecutive failure count.")
 	s.backoffSeconds = g("evm_stream_backoff_duration_seconds", "Retry backoff duration after failures, in seconds.")
 
-	s.logChunksCreated = c("blockchain_log_chunks_created_total", "Log query chunks created.")
+	s.logChunksCreated = c("evm_log_chunks_created_total", "Log query chunks created.")
 	s.logChunkBlocks = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:        "blockchain_log_chunk_blocks",
+		Name:        "evm_log_blocks_queried_per_chunk",
 		Help:        "Histogram of blocks covered per log chunk.",
 		Buckets:     logChunkBlockBuckets,
 		ConstLabels: base,
 	})
 	reg.MustRegister(s.logChunkBlocks)
 	s.logChunkDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:        "blockchain_log_chunk_duration_seconds",
+		Name:        "evm_log_chunk_duration_seconds",
 		Help:        "Duration of each log chunk query.",
 		Buckets:     rpcDurationBuckets,
 		ConstLabels: base,

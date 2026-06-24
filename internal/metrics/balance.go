@@ -51,10 +51,12 @@ type Balance struct {
 	contractTokenSupply   *prometheus.GaugeVec
 	contractTransferCount *prometheus.GaugeVec
 
-	// RPC + loop.
+	// RPC + poll cycle.
 	rpcCallDuration *prometheus.HistogramVec
 	rpcError        *prometheus.CounterVec
-	loopDuration    prometheus.Histogram
+	pollDuration    prometheus.Histogram
+	pollSuccess     prometheus.Gauge
+	pollTimestamp   prometheus.Gauge
 	consecutiveFail prometheus.Gauge
 	backoffSeconds  prometheus.Gauge
 
@@ -98,9 +100,9 @@ func NewBalance(chainName, chainID string) *Balance {
 	b.configuredContract = g("evm_balance_configured_contracts", "Number of configured contract-state entries.")
 	b.workers = g("evm_balance_workers", "Active poller workers/goroutines.")
 
-	b.headBlock = g("blockchain_chain_head_block_number", "Latest block number reported by RPC.")
-	b.headBlockTimestamp = g("blockchain_chain_head_block_timestamp_seconds", "Unix timestamp of the latest observed head block.")
-	b.timeSinceLastBlock = g("blockchain_chain_time_since_last_block_seconds", "Wall-clock age of the latest head block, in seconds.")
+	b.headBlock = g("evm_chain_head_block_number", "Latest block number reported by RPC.")
+	b.headBlockTimestamp = g("evm_chain_head_block_timestamp_seconds", "Unix timestamp of the latest observed head block.")
+	b.timeSinceLastBlock = g("evm_chain_time_since_last_block_seconds", "Wall-clock age of the latest head block, in seconds.")
 
 	b.lastSampledBlock = g("evm_balance_last_sampled_block_number", "Highest block at which a sample was taken.")
 	b.lagBlocks = g("evm_balance_lag_blocks", "Blocks the RPC head has advanced since the last sample (sampling staleness; informational — not a /readyz signal for the poller).")
@@ -115,17 +117,17 @@ func NewBalance(chainName, chainID string) *Balance {
 	tokenLabels := []string{labelAccountName, labelAccountAddr, labelTokenName, labelTokenAddr}
 	contractLabels := []string{labelContractName, labelContractAddr}
 
-	b.accountBalanceWei = gv("blockchain_account_balance_wei", "Native account balance in wei.", accountLabels)
-	b.accountBalanceEth = gv("blockchain_account_balance_eth", "Native account balance in ether.", accountLabels)
-	b.accountTokenBalRaw = gv("blockchain_account_token_balance_raw", "ERC-20 account balance in raw token units.", tokenLabels)
-	b.accountTokenBalance = gv("blockchain_account_token_balance", "ERC-20 account balance in whole tokens (decimals applied).", tokenLabels)
-	b.contractBalanceWei = gv("blockchain_contract_balance_wei", "Native contract balance in wei.", contractLabels)
-	b.contractBalanceEth = gv("blockchain_contract_balance_eth", "Native contract balance in ether.", contractLabels)
-	b.contractTokenSupply = gv("blockchain_contract_token_total_supply", "Token total supply for an ERC-compatible contract.", contractLabels)
-	b.contractTransferCount = gv("blockchain_contract_transfer_count", "Transfers observed in the configured window, by contract.", contractLabels)
+	b.accountBalanceWei = gv("evm_account_balance_wei", "Native account balance in wei.", accountLabels)
+	b.accountBalanceEth = gv("evm_account_balance_eth", "Native account balance in ether.", accountLabels)
+	b.accountTokenBalRaw = gv("evm_account_token_balance_raw", "ERC-20 account balance in raw token units.", tokenLabels)
+	b.accountTokenBalance = gv("evm_account_token_balance", "ERC-20 account balance in whole tokens (decimals applied).", tokenLabels)
+	b.contractBalanceWei = gv("evm_contract_balance_wei", "Native contract balance in wei.", contractLabels)
+	b.contractBalanceEth = gv("evm_contract_balance_eth", "Native contract balance in ether.", contractLabels)
+	b.contractTokenSupply = gv("evm_contract_token_total_supply", "Token total supply for an ERC-compatible contract.", contractLabels)
+	b.contractTransferCount = gv("evm_contract_transfer_count_window", "Transfers observed in the configured block window, by contract.", []string{labelContractName, labelContractAddr, labelWindowBlocks})
 
 	b.rpcCallDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:        "blockchain_rpc_call_duration_seconds",
+		Name:        "evm_rpc_call_duration_seconds",
 		Help:        "RPC call duration by operation.",
 		Buckets:     rpcDurationBuckets,
 		ConstLabels: base,
@@ -133,20 +135,22 @@ func NewBalance(chainName, chainID string) *Balance {
 	reg.MustRegister(b.rpcCallDuration)
 
 	b.rpcError = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "blockchain_rpc_error_total",
+		Name:        "evm_rpc_errors_total",
 		Help:        "RPC errors by operation and coarse error type.",
 		ConstLabels: base,
 	}, []string{labelOperation, labelErrorType})
 	reg.MustRegister(b.rpcError)
 
-	b.loopDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:        "evm_balance_loop_duration_seconds",
-		Help:        "Duration of each sampling loop.",
+	b.pollDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:        "evm_balance_poll_duration_seconds",
+		Help:        "Duration of each sampling poll cycle.",
 		Buckets:     rpcDurationBuckets,
 		ConstLabels: base,
 	})
-	reg.MustRegister(b.loopDuration)
+	reg.MustRegister(b.pollDuration)
 
+	b.pollSuccess = g("evm_balance_poll_success", "Whether the most recent sampling poll cycle succeeded (1) or failed (0).")
+	b.pollTimestamp = g("evm_balance_poll_timestamp_seconds", "Unix timestamp of the most recent successful sampling poll cycle.")
 	b.consecutiveFail = g("evm_balance_consecutive_failures", "Current consecutive failure count.")
 	b.backoffSeconds = g("evm_balance_backoff_duration_seconds", "Retry backoff duration after failures, in seconds.")
 

@@ -78,7 +78,7 @@ func TestSinkRunDeadLetterQuarantines(t *testing.T) {
 brokers = ["localhost:9092"]
 topic = "evm.events"
 `)
-	out, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run",
+	out, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run", "--input", "-",
 		"--config", cfg, "--metrics-addr", ":0", "--dead-letter-file", dlPath)
 	if err != nil {
 		t.Fatalf("run with dead-letter file should not fail: %v\n%s", err, out)
@@ -118,7 +118,7 @@ func TestSinkRunFailsFastWithoutDeadLetter(t *testing.T) {
 brokers = ["localhost:9092"]
 topic = "evm.events"
 `)
-	_, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run",
+	_, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run", "--input", "-",
 		"--config", cfg, "--metrics-addr", ":0")
 	if err == nil {
 		t.Fatal("expected a fail-fast error on a poison line without a dead-letter file")
@@ -141,7 +141,7 @@ dead_letter_file = "`+filepath.ToSlash(cfgPath)+`"
 brokers = ["localhost:9092"]
 topic = "evm.events"
 `)
-	out, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run",
+	out, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run", "--input", "-",
 		"--config", cfg, "--metrics-addr", ":0", "--dead-letter-file", flagPath)
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
@@ -169,7 +169,7 @@ dead_letter_file = "`+filepath.ToSlash(dlPath)+`"
 brokers = ["localhost:9092"]
 topic = "evm.events"
 `)
-	out, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run",
+	out, err := runSink(context.Background(), t, ToolSinkKafka, stream, "run", "--input", "-",
 		"--config", cfg, "--metrics-addr", ":0")
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)

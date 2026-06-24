@@ -65,7 +65,8 @@ type Metrics interface {
 	IncConfigReload()
 	IncConfigReloadError()
 	ResetContractSeries(contractName, contractAddr string)
-	ObserveLoop(d time.Duration)
+	ObservePoll(d time.Duration)
+	SetPollOutcome(ok bool, now time.Time)
 	SetConsecutiveFailures(n int)
 	SetBackoffSeconds(d time.Duration)
 	ObserveLogChunk(blocks uint64, d time.Duration)
@@ -384,7 +385,7 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 		s.applyPendingReload()
 		loopStart := s.now()
 		next, err := s.pollOnce(ctx, nextBlock)
-		s.opts.Metrics.ObserveLoop(s.now().Sub(loopStart))
+		s.opts.Metrics.ObservePoll(s.now().Sub(loopStart))
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil // clean shutdown mid-poll
@@ -398,10 +399,12 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 				// output errors (e.g. a full disk when stdout is a file) fall through
 				// to the transient retry below so a record is never dropped.
 				s.log.Error("output write failed; downstream gone, stopping", "error", ee.err.Error())
+				s.opts.Metrics.SetPollOutcome(false, s.now()) // a dying process did not poll successfully
 				return fmt.Errorf("emit to stdout failed: %w", ee.err)
 			}
 			consecutiveFailures++
 			s.opts.Health.SetRPCReachable(false)
+			s.opts.Metrics.SetPollOutcome(false, s.now())
 			s.opts.Metrics.SetConsecutiveFailures(consecutiveFailures)
 			backoff := s.backoffFor(consecutiveFailures)
 			s.opts.Metrics.SetBackoffSeconds(backoff)
@@ -422,6 +425,7 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 		}
 		consecutiveFailures = 0
 		s.opts.Health.SetRPCReachable(true)
+		s.opts.Metrics.SetPollOutcome(true, s.now())
 		s.opts.Metrics.SetConsecutiveFailures(0)
 		s.opts.Metrics.SetBackoffSeconds(0)
 		nextBlock = next
@@ -471,7 +475,7 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 	// A backward step in head means the endpoint is serving a stale view (a
 	// load balancer routed to a lagging node, or a node rolled back). This is
 	// otherwise silent — nextBlock simply waits — so surface it. (A frozen,
-	// non-advancing head is observable via blockchain_chain_time_since_last_block_seconds,
+	// non-advancing head is observable via evm_chain_time_since_last_block_seconds,
 	// which grows as the served head block ages.)
 	if head < s.lastHead {
 		s.log.Warn("rpc head regressed; endpoint may be stale or load-balanced across lagging nodes",
@@ -532,8 +536,8 @@ func (s *Stream) pollOnce(ctx context.Context, nextBlock uint64) (uint64, error)
 
 // updateHeadBlockTime fetches the head block header and publishes its timestamp
 // and wall-clock age to the chain-health gauges
-// (blockchain_chain_head_block_timestamp_seconds and
-// blockchain_chain_time_since_last_block_seconds), so a stalled chain is
+// (evm_chain_head_block_timestamp_seconds and
+// evm_chain_time_since_last_block_seconds), so a stalled chain is
 // detectable from metrics alone (design.md, "Chain health"). This is a
 // best-effort health signal: a header fetch failure is logged at debug and does
 // not fail the poll, since core progress does not depend on it.
@@ -554,7 +558,7 @@ func (s *Stream) updateHeadBlockTime(ctx context.Context, head uint64) *rpc.Bloc
 }
 
 // updateFinalizedBlock publishes the chain's finalized block height to the
-// blockchain_chain_finalized_block_number gauge (design "Chain health"). It is
+// evm_chain_finalized_block_number gauge (design "Chain health"). It is
 // best-effort: a chain that does not support the "finalized" tag (some L2s, dev
 // nodes) disables further polling for the run so the loop neither wastes a call
 // per poll nor logs noise, leaving the gauge at 0. A transient failure on a

@@ -62,7 +62,7 @@ type Metrics interface {
 	SetContractBalanceWei(contractName, contractAddr string, wei *big.Int)
 	SetContractBalanceEth(contractName, contractAddr string, eth float64)
 	SetContractTokenTotalSupply(contractName, contractAddr string, supply float64)
-	SetContractTransferCount(contractName, contractAddr string, count float64)
+	SetContractTransferCount(contractName, contractAddr string, windowBlocks uint64, count float64)
 
 	// Reset* drop the gauge series for a target a reload removed/disabled, so a
 	// stale value no longer lingers on the endpoint (design "Metrics").
@@ -75,7 +75,8 @@ type Metrics interface {
 	IncConfigReloadError()
 
 	IncReconnects()
-	ObserveLoop(d time.Duration)
+	ObservePoll(d time.Duration)
+	SetPollOutcome(ok bool, now time.Time)
 	SetConsecutiveFailures(n int)
 	SetBackoffSeconds(d time.Duration)
 }
@@ -358,11 +359,13 @@ func (p *Poller) handleError(ctx context.Context, consecutiveFailures *int, err 
 		// recoverable output errors fall through to the transient backoff so a
 		// record is never dropped.
 		p.log.Error("output write failed; downstream gone, stopping", "error", ee.err.Error())
+		p.opts.Metrics.SetPollOutcome(false, p.now()) // a dying process did not poll successfully
 		return true, fmt.Errorf("emit to stdout failed: %w", ee.err)
 	}
 	var pe *permanentErr
 	if errors.As(err, &pe) {
 		p.log.Error("permanent sampling failure; fix configuration and restart", "error", err.Error())
+		p.opts.Metrics.SetPollOutcome(false, p.now())
 		return true, fmt.Errorf("permanent sampling failure: %w", err)
 	}
 	if !p.handleFailure(ctx, consecutiveFailures, err) {
@@ -443,7 +446,7 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 		if due {
 			loopStart := p.now()
 			if err := p.sampleAll(ctx, head); err != nil {
-				p.opts.Metrics.ObserveLoop(p.now().Sub(loopStart))
+				p.opts.Metrics.ObservePoll(p.now().Sub(loopStart))
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -452,7 +455,7 @@ func (p *Poller) runBlockCadence(ctx context.Context) error {
 				}
 				continue
 			}
-			p.opts.Metrics.ObserveLoop(p.now().Sub(loopStart))
+			p.opts.Metrics.ObservePoll(p.now().Sub(loopStart))
 			lastSampled = head
 			haveSampled = true
 			p.onSuccess(&consecutiveFailures)
@@ -478,7 +481,7 @@ func (p *Poller) tick(ctx context.Context, consecutiveFailures *int) (stop bool,
 		p.opts.Metrics.SetHead(head)
 		err = p.sampleAll(ctx, head)
 	}
-	p.opts.Metrics.ObserveLoop(p.now().Sub(loopStart))
+	p.opts.Metrics.ObservePoll(p.now().Sub(loopStart))
 	if err != nil {
 		if ctx.Err() != nil {
 			return true, nil
@@ -496,6 +499,7 @@ func (p *Poller) onSuccess(consecutiveFailures *int) {
 	}
 	*consecutiveFailures = 0
 	p.opts.Health.SetRPCReachable(true)
+	p.opts.Metrics.SetPollOutcome(true, p.now())
 	p.opts.Metrics.SetConsecutiveFailures(0)
 	p.opts.Metrics.SetBackoffSeconds(0)
 }
@@ -505,6 +509,7 @@ func (p *Poller) onSuccess(consecutiveFailures *int) {
 func (p *Poller) handleFailure(ctx context.Context, consecutiveFailures *int, err error) bool {
 	*consecutiveFailures++
 	p.opts.Health.SetRPCReachable(false)
+	p.opts.Metrics.SetPollOutcome(false, p.now())
 	p.opts.Metrics.SetConsecutiveFailures(*consecutiveFailures)
 	backoff := p.backoffFor(*consecutiveFailures)
 	p.opts.Metrics.SetBackoffSeconds(backoff)

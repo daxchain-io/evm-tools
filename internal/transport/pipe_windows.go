@@ -67,7 +67,7 @@ func dialPipe(ctx context.Context, name string) (io.ReadCloser, error) {
 		return nil, errors.New("transport: empty pipe name in --input")
 	}
 	p := pipePath(name)
-	return newReconnectingReader(ctx, func(c context.Context) (net.Conn, error) {
+	return newReconnectingReader(ctx, pipeScheme+name, func(c context.Context) (net.Conn, error) {
 		return winio.DialPipeContext(c, p)
 	})
 }

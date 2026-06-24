@@ -31,6 +31,7 @@ const (
 	ToolSinkAWSSNS   SinkTool = "evm-sink-aws-sns"
 	ToolSinkPostgres SinkTool = "evm-sink-postgres"
 	ToolSinkRedis    SinkTool = "evm-sink-redis"
+	ToolSinkStdout   SinkTool = "evm-sink-stdout"
 )
 
 // sinkFlags holds the values bound to a sink's persistent flag set: the shared
@@ -39,9 +40,10 @@ const (
 type sinkFlags struct {
 	configFile string
 
-	// input is the record transport spec: "" / "-" / "stdin" (default) reads JSONL
-	// from stdin; "unix:/path" dials a producer's socket. Resolved with config
-	// (top-level [input]) by openInput.
+	// input is the record transport spec: unset (default) or "socket" dials the
+	// well-known socket; "unix:/path" dials a specific producer socket; "-"/"stdin"
+	// reads JSONL from stdin (replay). Resolved with config (top-level [input]) by
+	// openInput.
 	input string
 
 	// deadLetterFile, when set, quarantines poison records (unparseable /
@@ -97,6 +99,8 @@ func (t SinkTool) sinkShortDesc() string {
 		return "Insert JSONL records from stdin into a PostgreSQL table (idempotent, exactly-once-in-table)"
 	case ToolSinkRedis:
 		return "Append JSONL records from stdin to a Redis Stream (at-least-once, idempotent via dedup_key)"
+	case ToolSinkStdout:
+		return "Write JSONL records from the input to stdout (the composability hatch for `| jq` and piping)"
 	default:
 		return "An evm-tools sink"
 	}
@@ -150,7 +154,7 @@ func bindSinkSharedFlags(root *cobra.Command, f *sinkFlags) {
 
 	pf.StringVarP(&f.configFile, "config", "c", "", "path to the evm-tools TOML config file")
 
-	pf.StringVar(&f.input, "input", "", `record source: "-"/"stdin" (default) or "unix:/path" to dial a producer`)
+	pf.StringVar(&f.input, "input", "", `record source: "socket" (default — the well-known socket) / "unix:/path" to dial a producer, or "-"/"stdin" to read stdin`)
 
 	pf.StringVar(&f.deadLetterFile, "dead-letter-file", "", "quarantine unparseable records to this file and continue (default: fail fast)")
 
@@ -217,7 +221,7 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 		Short: "Read JSONL from stdin and deliver each record downstream (at-least-once)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(cmd); err != nil {
+			if err := f.setupLogging(cmd, tool); err != nil {
 				return err
 			}
 			// Derive a signal-aware context so SIGINT/SIGTERM trigger a clean
@@ -244,6 +248,8 @@ func newSinkRunCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return postgresRun(cmd, f)
 			case ToolSinkRedis:
 				return redisRun(cmd, f)
+			case ToolSinkStdout:
+				return stdoutRun(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
@@ -257,7 +263,7 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 		Short: "Validate config (and destination/auth material) without connecting",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := f.setupLogging(cmd); err != nil {
+			if err := f.setupLogging(cmd, tool); err != nil {
 				return err
 			}
 			switch tool {
@@ -275,6 +281,8 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 				return postgresValidate(cmd, f)
 			case ToolSinkRedis:
 				return redisValidate(cmd, f)
+			case ToolSinkStdout:
+				return stdoutValidate(cmd, f)
 			default:
 				return fmt.Errorf("unknown sink %q", tool)
 			}
@@ -285,7 +293,12 @@ func newSinkValidateCommand(tool SinkTool, f *sinkFlags) *cobra.Command {
 // setupLogging configures the slog default logger, honoring log.level/log.format
 // from the config file (full precedence + interpolation), falling back to the
 // flag/default values on a config error (which the subcommand then surfaces).
-func (f *sinkFlags) setupLogging(cmd *cobra.Command) error {
+// evm-sink-stdout writes records to stdout, so its logs are routed entirely to
+// stderr to keep the stdout record stream clean.
+func (f *sinkFlags) setupLogging(cmd *cobra.Command, tool SinkTool) error {
+	if tool == ToolSinkStdout {
+		logging.RouteAllToStderr()
+	}
 	level, format := f.logLevel, f.logFormat
 	if l, fm, err := resolvedLog(cmd, f.configFile, f.allowExecEnabled()); err == nil {
 		level, format = l, fm
@@ -305,14 +318,21 @@ func (f *sinkFlags) allowExecEnabled() bool {
 
 // openInput resolves the sink's record source with flag-over-config precedence
 // (--input wins, otherwise the top-level [input] config value, which Viper
-// resolves from env > file > default; empty means stdin via the cobra stream) and
-// opens the transport. The caller must Close the returned reader. It is not in
-// flagBindings because --input maps to the same key for all sinks, so precedence
-// is applied here rather than via Viper.
+// resolves from env > file > default; unset defaults to the well-known socket,
+// "socket" also resolves to it, and "-"/"stdin" read stdin) and opens the
+// transport. The caller must Close the returned reader. It is not in flagBindings
+// because --input maps to the same key for all sinks, so precedence is applied
+// here rather than via Viper.
 func (f *sinkFlags) openInput(cmd *cobra.Command, cfgInput string) (io.ReadCloser, error) {
 	spec := cfgInput
 	if cmd.Flags().Changed("input") {
 		spec = f.input
+	}
+	// A sink with nothing configured defaults to the well-known socket (it has no
+	// useful job reading an empty stdin); pass "-"/"stdin" to read stdin instead
+	// (e.g. replaying a JSONL file: `cat records.jsonl | evm-sink-x run --input -`).
+	if spec == "" {
+		spec = "socket"
 	}
 	return transport.OpenReader(cmd.Context(), spec, cmd.InOrStdin())
 }

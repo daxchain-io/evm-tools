@@ -2,7 +2,10 @@ package metrics
 
 import (
 	"math/big"
+	"strconv"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
@@ -99,9 +102,10 @@ func (b *Balance) SetContractTokenTotalSupply(contractName, contractAddr string,
 	b.contractTokenSupply.WithLabelValues(contractName, contractAddr).Set(supply)
 }
 
-// SetContractTransferCount records the transfers observed in a contract window.
-func (b *Balance) SetContractTransferCount(contractName, contractAddr string, count float64) {
-	b.contractTransferCount.WithLabelValues(contractName, contractAddr).Set(count)
+// SetContractTransferCount records the transfers observed in a contract window of
+// windowBlocks blocks (the window size is a label so a dashboard can read it).
+func (b *Balance) SetContractTransferCount(contractName, contractAddr string, windowBlocks uint64, count float64) {
+	b.contractTransferCount.WithLabelValues(contractName, contractAddr, strconv.FormatUint(windowBlocks, 10)).Set(count)
 }
 
 // ResetAccountSeries drops the native-account balance gauges for a removed target.
@@ -123,7 +127,11 @@ func (b *Balance) ResetContractSeries(contractName, contractAddr string) {
 	b.contractBalanceWei.DeleteLabelValues(contractName, contractAddr)
 	b.contractBalanceEth.DeleteLabelValues(contractName, contractAddr)
 	b.contractTokenSupply.DeleteLabelValues(contractName, contractAddr)
-	b.contractTransferCount.DeleteLabelValues(contractName, contractAddr)
+	// transfer-count carries a window_blocks label too; drop every window variant
+	// for this contract.
+	b.contractTransferCount.DeletePartialMatch(prometheus.Labels{
+		labelContractName: contractName, labelContractAddr: contractAddr,
+	})
 }
 
 // IncConfigReload counts one successful SIGHUP config reload.
@@ -135,8 +143,17 @@ func (b *Balance) IncConfigReloadError() { b.configReloadErrors.Inc() }
 // IncReconnects counts an RPC reconnect after a transport error.
 func (b *Balance) IncReconnects() { b.reconnects.Inc() }
 
-// ObserveLoop records one sampling-loop duration.
-func (b *Balance) ObserveLoop(d time.Duration) { b.loopDuration.Observe(d.Seconds()) }
+// ObservePoll records one sampling poll-cycle duration.
+func (b *Balance) ObservePoll(d time.Duration) { b.pollDuration.Observe(d.Seconds()) }
+
+// SetPollOutcome records whether the most recent poll cycle succeeded; on success
+// it also stamps the success timestamp.
+func (b *Balance) SetPollOutcome(ok bool, now time.Time) {
+	b.pollSuccess.Set(b2f(ok))
+	if ok {
+		b.pollTimestamp.Set(float64(now.Unix()))
+	}
+}
 
 // SetConsecutiveFailures records the current consecutive failure count.
 func (b *Balance) SetConsecutiveFailures(n int) { b.consecutiveFail.Set(float64(n)) }

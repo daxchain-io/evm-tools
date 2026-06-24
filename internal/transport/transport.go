@@ -1,13 +1,14 @@
 // Package transport carries the JSONL record stream between a producer and a
-// sink over a pluggable carrier. The default carrier is stdout/stdin — the shell
-// pipe the tools have always used. A "unix:/path" spec swaps in a Unix-domain
-// socket so a producer and a sink can run as independent processes and connect
-// directly, with no shell pipe between them.
+// sink over a pluggable carrier. stdout never carries records — it is reserved
+// for logs (internal/logging). A producer's output is a "unix:/path" socket (or
+// a Windows "pipe:name"); an empty output means no destination at all
+// (exporter-only: the producer just serves /metrics and discards records). A
+// sink's input is stdin (the default, useful for replaying a JSONL file) or a
+// socket it dials.
 //
 // Transport supplies only the bytes' carrier: a producer still wraps the returned
 // io.Writer in record.Writer and a sink still wraps the returned io.Reader in
 // record.Reader, so the JSONL record contract (internal/record) is unchanged.
-// stdout/stdin remain the default everywhere; the socket carrier is opt-in.
 //
 // Lifecycle, in brief:
 //   - OpenWriter("unix:/p") listens and blocks until the first consumer connects
@@ -37,7 +38,8 @@ const (
 	pipeScheme = "pipe:"
 )
 
-// WriterOptions tunes a "unix:" output. It is ignored for stdout.
+// WriterOptions tunes a "unix:"/"pipe:" output. It is ignored for an empty
+// (exporter-only) output.
 type WriterOptions struct {
 	// BlockUntilConsumer makes the producer wait for the first consumer before
 	// emitting and block (lossless) while no consumer is connected. With it false
@@ -47,30 +49,38 @@ type WriterOptions struct {
 }
 
 // OpenWriter resolves a producer's --output spec to the io.WriteCloser a
-// record.Writer wraps. "", "-", and "stdout" return std (the caller passes
-// cmd.OutOrStdout() so cobra's redirection and the process's stdout are
-// preserved; Close is a no-op so std is never closed). "unix:/path" listens on
-// the socket and fans each record out to every connected consumer (see
-// WriterOptions for the block-until-consumer behavior).
-func OpenWriter(ctx context.Context, spec string, std io.Writer, opts WriterOptions) (io.WriteCloser, error) {
+// record.Writer wraps. An empty spec means no record destination: the producer
+// runs exporter-only and records are discarded (it still serves /metrics).
+// "unix:/path" listens on the socket and fans each record out to every connected
+// consumer (see WriterOptions for the block-until-consumer behavior); "pipe:name"
+// is the Windows equivalent. stdout is not a record destination — it carries logs
+// (internal/logging) — so "-"/"stdout" are rejected.
+func OpenWriter(ctx context.Context, spec string, opts WriterOptions) (io.WriteCloser, error) {
+	spec = resolveSocketKeyword(spec)
 	switch {
-	case isStdAlias(spec, "stdout"):
-		return nopWriteCloser{std}, nil
+	case spec == "":
+		return nopWriteCloser{io.Discard}, nil
 	case strings.HasPrefix(spec, unixScheme):
 		return listenUnix(ctx, strings.TrimPrefix(spec, unixScheme), opts.BlockUntilConsumer)
 	case strings.HasPrefix(spec, pipeScheme):
 		return listenPipe(ctx, strings.TrimPrefix(spec, pipeScheme), opts.BlockUntilConsumer)
+	case spec == "-" || spec == "stdout":
+		return nil, fmt.Errorf("transport: stdout no longer carries records (it carries logs); use %q or %q", "unix:/path", "pipe:name")
 	default:
-		return nil, fmt.Errorf("transport: unsupported --output %q (use %q/%q, %q, or %q)", spec, "-", "stdout", "unix:/path", "pipe:name")
+		return nil, fmt.Errorf("transport: unsupported --output %q (use %q or %q)", spec, "unix:/path", "pipe:name")
 	}
 }
 
 // OpenReader resolves a sink's --input spec to the io.ReadCloser a record.Reader
 // reads. "", "-", and "stdin" return std (the caller passes cmd.InOrStdin() so
-// cobra's redirection is preserved). "unix:/path" dials the socket, retrying with
-// backoff until a producer is listening, and transparently reconnects on
-// disconnect; ctx cancels the wait and unblocks a blocked read.
+// cobra's redirection is preserved) — though the sink CLI resolves an unset input
+// to the well-known socket *before* calling here, so in practice a sink reaches
+// the std branch only for an explicit "-"/"stdin" (replay). "socket" resolves to
+// DefaultSpec; "unix:/path" dials the socket, retrying with backoff until a
+// producer is listening, and transparently reconnects on disconnect; ctx cancels
+// the wait and unblocks a blocked read.
 func OpenReader(ctx context.Context, spec string, std io.Reader) (io.ReadCloser, error) {
+	spec = resolveSocketKeyword(spec)
 	switch {
 	case isStdAlias(spec, "stdin"):
 		return io.NopCloser(std), nil

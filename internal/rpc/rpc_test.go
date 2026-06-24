@@ -324,7 +324,7 @@ func TestClassifyTimeout(t *testing.T) {
 // still classifies as the coarse connection_error category. This pins the
 // redaction-must-preserve-the-error-chain fix: rebuilding the error string with
 // errors.New would strip the wrapped *net.OpError and force ErrorUnknown, so
-// blockchain_rpc_error_total{error_type="connection_error"} would never fire on
+// evm_rpc_errors_total{error_type="connection_error"} would never fire on
 // the most common transport failure.
 func TestConnectionErrorRedactedAndClassified(t *testing.T) {
 	b := genCerts(t)

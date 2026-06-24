@@ -42,7 +42,7 @@ func TestPipeRoundTrip(t *testing.T) {
 
 	werr := make(chan error, 1)
 	go func() {
-		w, err := OpenWriter(ctx, spec, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		w, err := OpenWriter(ctx, spec, WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			werr <- err
 			return
@@ -90,7 +90,7 @@ func TestPipeFanOut(t *testing.T) {
 
 	werr := make(chan error, 1)
 	go func() {
-		w, err := OpenWriter(ctx, spec, os.Stdout, WriterOptions{BlockUntilConsumer: true})
+		w, err := OpenWriter(ctx, spec, WriterOptions{BlockUntilConsumer: true})
 		if err != nil {
 			werr <- err
 			return

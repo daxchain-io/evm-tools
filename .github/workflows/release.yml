@@ -92,7 +92,7 @@ jobs:
 
           brew install --cask daxchain-io/tap/evm-tools
 
-          for bin in evm-stream evm-balance evm-sink-kafka evm-sink-webhook; do
+          for bin in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-stdout; do
             command -v "$bin"
             "$bin" version | grep -q "version: ${version}"
           done

@@ -110,8 +110,17 @@ func (s *Stream) IncReorgsDetected() { s.reorgsDetected.Inc() }
 // IncReconnects counts an RPC reconnect after a transport error.
 func (s *Stream) IncReconnects() { s.reconnects.Inc() }
 
-// ObserveLoop records one poll-loop duration.
-func (s *Stream) ObserveLoop(d time.Duration) { s.loopDuration.Observe(d.Seconds()) }
+// ObservePoll records one poll-cycle duration.
+func (s *Stream) ObservePoll(d time.Duration) { s.pollDuration.Observe(d.Seconds()) }
+
+// SetPollOutcome records whether the most recent poll cycle succeeded; on success
+// it also stamps the success timestamp.
+func (s *Stream) SetPollOutcome(ok bool, now time.Time) {
+	s.pollSuccess.Set(b2f(ok))
+	if ok {
+		s.pollTimestamp.Set(float64(now.Unix()))
+	}
+}
 
 // SetConsecutiveFailures records the current consecutive failure count.
 func (s *Stream) SetConsecutiveFailures(n int) { s.consecutiveFail.Set(float64(n)) }

@@ -1,14 +1,74 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/daxchain-io/evm-tools/internal/transport"
 )
+
+// runBalanceCollect runs `evm-balance run` with --output unix:<sock>, dials the
+// socket as the consumer, and copies every JSONL record the producer emits over a
+// ~150ms window before signalling a clean shutdown. It returns the collected
+// records and the run's exit error. This mirrors real usage (records travel over
+// the socket transport, never stdout, which now carries logs).
+func runBalanceCollect(t *testing.T, cfgPath string) (records string, runErr error) {
+	t.Helper()
+	sock := sinkSocketPath(t)
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	readCtx, cancelRead := context.WithCancel(context.Background())
+	var recBuf bytes.Buffer
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		// Wait for the producer to create the listening socket, then dial — so the
+		// first dial connects immediately (the reconnect backoff base is 500ms, too
+		// coarse for the short window) and unblocks the producer's block-until-consumer
+		// OpenWriter.
+		for {
+			if _, err := os.Stat(sock); err == nil {
+				break
+			}
+			select {
+			case <-readCtx.Done():
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		r, err := transport.OpenReader(readCtx, "unix:"+sock, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = r.Close() }()
+		_, _ = io.Copy(&recBuf, r)
+	}()
+
+	resCh := make(chan error, 1)
+	go func() {
+		_, err := runWithCtx(runCtx, t, ToolBalance, "run", "--config", cfgPath, "--metrics-addr", ":0", "--output", "unix:"+sock)
+		resCh <- err
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	cancelRun() // producer shuts down cleanly and closes the socket
+	select {
+	case runErr = <-resCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("run did not shut down within 3s of context cancel")
+	}
+	cancelRead() // unblock the reader (a UDS reader reconnects on EOF otherwise)
+	<-readDone
+	return recBuf.String(), runErr
+}
 
 // balanceRPCServer is a minimal HTTP JSON-RPC server answering the methods
 // evm-balance uses: chainId, blockNumber, getBalance, getBlockByNumber, call,
@@ -202,8 +262,8 @@ intervial = "1m"
 }
 
 // TestBalanceRunEmitsSamples drives the full run path against an httptest node
-// and verifies it emits balance_sample / contract_sample JSONL on stdout, then
-// shuts down cleanly on context cancel.
+// and verifies it emits balance_sample / contract_sample JSONL over the output
+// socket, then shuts down cleanly on context cancel.
 func TestBalanceRunEmitsSamples(t *testing.T) {
 	srv := balanceRPCServer(t)
 	cfg := writeStreamConfig(t, `
@@ -222,48 +282,26 @@ token_supply = true
 decimals = 6
 `)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	type result struct {
-		out string
-		err error
-	}
-	resCh := make(chan result, 1)
-	go func() {
-		// Bind the health/metrics server to an ephemeral port so parallel tests
-		// never collide on the default :9001.
-		out, err := runWithCtx(ctx, t, ToolBalance, "run", "--config", cfg, "--metrics-addr", ":0")
-		resCh <- result{out, err}
-	}()
-
-	// Let a few 5ms ticks emit, then signal a clean shutdown.
-	time.Sleep(150 * time.Millisecond)
-	cancel()
-
-	var got result
-	select {
-	case got = <-resCh:
-	case <-time.After(3 * time.Second):
-		t.Fatal("run did not shut down within 3s of context cancel")
-	}
-	if got.err != nil {
-		t.Fatalf("run returned error: %v\n%s", got.err, got.out)
+	out, err := runBalanceCollect(t, cfg)
+	if err != nil {
+		t.Fatalf("run returned error: %v\n%s", err, out)
 	}
 
-	if !strings.Contains(got.out, `"type":"balance_sample"`) {
-		t.Errorf("expected a balance_sample record in stdout:\n%s", got.out)
+	if !strings.Contains(out, `"type":"balance_sample"`) {
+		t.Errorf("expected a balance_sample record:\n%s", out)
 	}
-	if !strings.Contains(got.out, `"type":"contract_sample"`) {
-		t.Errorf("expected a contract_sample record in stdout:\n%s", got.out)
+	if !strings.Contains(out, `"type":"contract_sample"`) {
+		t.Errorf("expected a contract_sample record:\n%s", out)
 	}
 	// Records must carry the balance tool name and the chain envelope fields.
-	if !strings.Contains(got.out, `"tool":"evm-balance"`) {
-		t.Errorf("records missing tool name:\n%s", got.out)
+	if !strings.Contains(out, `"tool":"evm-balance"`) {
+		t.Errorf("records missing tool name:\n%s", out)
 	}
 }
 
 // TestBalanceRunEmitsERC721Records drives the full run path against an httptest
 // node and verifies it emits ERC-721 balance_sample (kind erc721) and
-// ownership_sample JSONL on stdout.
+// ownership_sample JSONL over the output socket.
 func TestBalanceRunEmitsERC721Records(t *testing.T) {
 	srv := balanceRPCServer(t)
 	cfg := writeStreamConfig(t, `
@@ -282,37 +320,18 @@ token = "0xnft"
 token_id = "1234"
 `)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	type result struct {
-		out string
-		err error
-	}
-	resCh := make(chan result, 1)
-	go func() {
-		out, err := runWithCtx(ctx, t, ToolBalance, "run", "--config", cfg, "--metrics-addr", ":0")
-		resCh <- result{out, err}
-	}()
-
-	time.Sleep(150 * time.Millisecond)
-	cancel()
-
-	var got result
-	select {
-	case got = <-resCh:
-	case <-time.After(3 * time.Second):
-		t.Fatal("run did not shut down within 3s of context cancel")
-	}
-	if got.err != nil {
-		t.Fatalf("run returned error: %v\n%s", got.err, got.out)
+	out, err := runBalanceCollect(t, cfg)
+	if err != nil {
+		t.Fatalf("run returned error: %v\n%s", err, out)
 	}
 
-	if !strings.Contains(got.out, `"type":"balance_sample"`) || !strings.Contains(got.out, `"kind":"erc721"`) {
-		t.Errorf("expected an erc721 balance_sample record in stdout:\n%s", got.out)
+	if !strings.Contains(out, `"type":"balance_sample"`) || !strings.Contains(out, `"kind":"erc721"`) {
+		t.Errorf("expected an erc721 balance_sample record:\n%s", out)
 	}
-	if !strings.Contains(got.out, `"type":"ownership_sample"`) {
-		t.Errorf("expected an ownership_sample record in stdout:\n%s", got.out)
+	if !strings.Contains(out, `"type":"ownership_sample"`) {
+		t.Errorf("expected an ownership_sample record:\n%s", out)
 	}
-	if !strings.Contains(got.out, `"token_id":"1234"`) {
-		t.Errorf("ownership record should carry the configured token_id:\n%s", got.out)
+	if !strings.Contains(out, `"token_id":"1234"`) {
+		t.Errorf("ownership record should carry the configured token_id:\n%s", out)
 	}
 }

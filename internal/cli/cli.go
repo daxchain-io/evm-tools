@@ -32,8 +32,10 @@ type sharedFlags struct {
 
 	chain string
 
-	// output is the record transport spec: "" / "-" / "stdout" (default) write
-	// JSONL to stdout; "unix:/path" listens on a Unix-domain socket. Resolved with
+	// output is the record transport spec: empty (the default) means no record
+	// destination — exporter-only, records discarded; "socket" listens on the
+	// well-known socket (auto-pairs with a sink's default --input); "unix:/path"
+	// listens on a specific socket. stdout carries logs, not records. Resolved with
 	// config (top-level [output]) by outputSpec.
 	output string
 	// blockUntilConsumer applies to a "unix:" output: wait for a consumer before
@@ -134,7 +136,7 @@ func bindSharedFlags(root *cobra.Command, f *sharedFlags) {
 
 	pf.StringVar(&f.chain, "chain", "", `chain label for records/metrics (default: derived from the resolved chain id, e.g. "ethereum"; the chain id always comes from RPC)`)
 
-	pf.StringVar(&f.output, "output", "", `record destination: "-"/"stdout" (default) or "unix:/path" to listen for a sink to connect`)
+	pf.StringVar(&f.output, "output", "", `record destination: empty (default) = exporter-only (no records); "socket" listens on the well-known socket; "unix:/path" a specific socket (stdout carries logs, not records)`)
 
 	pf.BoolVar(&f.blockUntilConsumer, "block-until-consumer", true, `for a "unix:" --output: wait for a consumer and block (lossless) while none are connected; =false drops records with no consumer (fire-and-forget)`)
 
@@ -184,7 +186,7 @@ func bindBalanceFlags(root *cobra.Command, f *sharedFlags) {
 // outputSpec resolves the producer's record-destination spec with flag-over-config
 // precedence: an explicit --output wins, otherwise the top-level [output] config
 // value (which Viper already resolves from env > file > default). An empty result
-// means stdout. It is not in flagBindings because --output maps to the same key
+// means no record destination (exporter-only). It is not in flagBindings because --output maps to the same key
 // for both producers, so the precedence is applied here rather than via Viper.
 func (f *sharedFlags) outputSpec(cmd *cobra.Command, cfgOutput string) string {
 	if cmd.Flags().Changed("output") {

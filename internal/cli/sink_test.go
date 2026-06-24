@@ -211,7 +211,7 @@ func TestSinkRunPublishesStdin(t *testing.T) {
 brokers = ["localhost:9092"]
 topic = "evm.events"
 `)
-	out, err := runSink(context.Background(), t, ToolSinkKafka, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0")
+	out, err := runSink(context.Background(), t, ToolSinkKafka, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0", "--input", "-")
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
@@ -248,7 +248,7 @@ topic = "evm.default"
 [kafka.topic_by_type]
 event = "evm.events"
 `)
-	out, err := runSink(context.Background(), t, ToolSinkKafka, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0")
+	out, err := runSink(context.Background(), t, ToolSinkKafka, sb.String(), "run", "--config", cfg, "--metrics-addr", ":0", "--input", "-")
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}

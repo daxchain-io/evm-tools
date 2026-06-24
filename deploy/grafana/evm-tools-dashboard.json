@@ -138,7 +138,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (blockchain) (time() - blockchain_chain_head_block_timestamp_seconds)",
+          "expr": "max by (blockchain) (time() - evm_chain_head_block_timestamp_seconds)",
           "legendFormat": "{{blockchain}}",
           "range": true,
           "instant": false,
@@ -186,7 +186,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (blockchain) (blockchain_chain_head_block_number)",
+          "expr": "max by (blockchain) (evm_chain_head_block_number)",
           "legendFormat": "{{blockchain}}",
           "range": true,
           "instant": false,
@@ -234,7 +234,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (blockchain) (blockchain_chain_finalized_block_number)",
+          "expr": "max by (blockchain) (evm_chain_finalized_block_number)",
           "legendFormat": "{{blockchain}}",
           "range": true,
           "instant": false,
@@ -412,7 +412,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, operation, tool) (rate(blockchain_rpc_call_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, operation, tool) (rate(evm_rpc_call_duration_seconds_bucket[5m])))",
           "legendFormat": "{{tool}} {{operation}}",
           "range": true,
           "instant": false,
@@ -463,7 +463,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (tool, operation, error_type) (rate(blockchain_rpc_error_total[5m]))",
+          "expr": "sum by (tool, operation, error_type) (rate(evm_rpc_errors_total[5m]))",
           "legendFormat": "{{tool}} {{operation}} {{error_type}}",
           "range": true,
           "instant": false,

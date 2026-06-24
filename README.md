@@ -2,15 +2,17 @@
 
 Composable command-line tools for observing EVM chains and moving that data into
 downstream systems. Each tool does one job and speaks one data contract —
-newline-delimited JSON (JSONL) on stdout — so they pipe together cleanly:
+newline-delimited JSON (JSONL). Producers emit records over a Unix socket; sinks
+dial in and deliver them. stdout carries logs, not records.
 
 ```text
-producer  →  JSONL on stdout  →  sink
+producer  →  JSONL over a Unix socket  →  sink
 ```
 
-A **producer** reads a chain over RPC and emits records. A **sink** reads those
-records on stdin and delivers them somewhere, at-least-once. Any producer pipes
-into any sink.
+A **producer** reads a chain over RPC, serves Prometheus metrics, and emits
+records over its `--output` socket. A **sink** dials that socket with `--input`,
+reads the records, and delivers them somewhere, at-least-once. Any producer
+connects to any sink.
 
 ## The tools
 
@@ -32,19 +34,20 @@ into any sink.
 | `evm-sink-aws-sns` | an AWS SNS topic | FIFO-aware |
 | `evm-sink-postgres` | a PostgreSQL table | idempotent (`ON CONFLICT`) |
 | `evm-sink-redis` | a Redis Stream (`XADD`) | idempotent via `dedup_key` |
+| `evm-sink-stdout` | stdout | the composability hatch — `… \| jq`, piping; logs to stderr |
 
-All nine live in this repository, share one config file, and speak the same JSONL
+All ten live in this repository, share one config file, and speak the same JSONL
 contract.
 
 ## Install
 
-One command installs the whole suite (all nine CLIs):
+One command installs the whole suite (all ten CLIs):
 
 ```sh
 # Homebrew (macOS / Linux)
 brew install --cask daxchain-io/tap/evm-tools
 
-# Or without Homebrew — detects OS/arch, verifies a signed checksum, installs all nine:
+# Or without Homebrew — detects OS/arch, verifies a signed checksum, installs all ten:
 curl -fsSL https://github.com/daxchain-io/evm-tools/releases/latest/download/install.sh | sh
 ```
 
@@ -75,11 +78,18 @@ checksums before installing — see
    path = "/var/log/evm-tools/events.jsonl"
    ```
 
-2. Pipe a producer into a sink — or just inspect the stream:
+2. Connect a producer to a sink over a socket — or inspect the stream with
+   `evm-sink-stdout`:
 
    ```sh
-   evm-stream run | evm-sink-file run
-   evm-stream run | jq
+   # Records into the file sink. --output socket listens on the well-known socket;
+   # the sink's --input defaults to it, so they auto-pair with no paths to type.
+   evm-stream run --output socket &
+   evm-sink-file run
+
+   # Or just look: evm-sink-stdout prints records to stdout for jq.
+   evm-stream run --output socket &
+   evm-sink-stdout run | jq
    ```
 
 **No config file?** `evm-stream` can run entirely from flags — point it at an RPC
@@ -90,28 +100,31 @@ example, to stream live Tether (USDT) transfers on Ethereum mainnet:
 ```sh
 export RPC_URL="https://eth-mainnet.example/v2/<your-key>"   # the secret lives here, not in the command
 
+# The producer listens on the default socket; evm-sink-stdout prints records for jq.
 evm-stream run \
   --rpc-url "${RPC_URL}" \
   --chain ethereum \
   --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
-  --events Transfer | jq
+  --events Transfer --output socket &
+evm-sink-stdout run | jq
 ```
 
 Each line is one decoded `Transfer` — `from`, `to`, and `value` in the token's
 base units (USDT has 6 decimals). `--contract` is repeatable and `--events`
 defaults to `Transfer`, so for a plain token you can drop `--events` entirely;
-swap in `--native-transfers` to follow native ETH instead:
+swap in `--native-transfers` to follow native ETH instead (pipe each into
+`evm-sink-stdout run | jq`, as above, to view):
 
 ```sh
 # Shorter (Transfer is the default), and the native-ETH variant:
 evm-stream run --rpc-url "${RPC_URL}" \
-  --chain ethereum --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 | jq
+  --chain ethereum --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 --output socket
 
-evm-stream run --rpc-url "${RPC_URL}" --native-transfers | jq
+evm-stream run --rpc-url "${RPC_URL}" --native-transfers --output socket
 
 # Also follow ETH moved *inside* transactions (router/multisig payouts, withdrawals,
 # selfdestruct sweeps) — needs a trace-capable endpoint:
-evm-stream run --rpc-url "${RPC_URL}" --native-transfers --include-internal | jq
+evm-stream run --rpc-url "${RPC_URL}" --native-transfers --include-internal --output socket
 ```
 
 `--native-transfers` emits top-level ETH transfers. `--include-internal` adds
@@ -139,10 +152,11 @@ a specific height and `--poll-interval <dur>` to tune the head-poll cadence — 
 backfilling needs no config file either:
 
 ```sh
-# Backfill USDT transfers from block 19,000,000, polling every second:
+# Backfill USDT transfers from block 19,000,000, polling every second
+# (view with `evm-sink-stdout run | jq`, as above):
 evm-stream run --rpc-url "${RPC_URL}" --chain ethereum \
   --contract 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
-  --from-block 19000000 --poll-interval 1s | jq
+  --from-block 19000000 --poll-interval 1s --output socket
 ```
 
 `evm-balance` is config-free too: name targets with `--native <address>` and
@@ -150,39 +164,45 @@ evm-stream run --rpc-url "${RPC_URL}" --chain ethereum \
 or `--every-blocks`:
 
 ```sh
-# Sample one address's native + USDT balance every 30s, no config file:
+# Sample one address's native + USDT balance every 30s, no config file
+# (view with `evm-sink-stdout run | jq`, as above):
 evm-balance run --rpc-url "${RPC_URL}" --chain ethereum --interval 30s \
   --native 0xADDR \
-  --erc20 0xdAC17F958D2ee523a2206206994597C13D831ec7:0xADDR | jq
+  --erc20 0xdAC17F958D2ee523a2206206994597C13D831ec7:0xADDR --output socket
 ```
 
-> **stdout is data, stderr is diagnostics — never merge them.** `2>&1` would
-> corrupt the JSONL. Keep the producer's stdout flowing straight into the sink.
+> **stdout carries logs; records travel over the socket.** Logs split by level
+> (`debug`/`info`/`warn` → stdout, `error` → stderr); the JSONL record stream goes
+> over the `--output`/`--input` Unix socket, never stdout — so there is nothing on
+> stdout to corrupt.
 
 ## Pipelines
 
-The shape is always producer → sink. A few combinations:
+The shape is always producer → sink, connected by a Unix socket. The producer
+opts into emitting with `--output socket` (it listens on a well-known per-host
+path); a sink's `--input` **defaults** to that same socket, so they auto-pair with
+no paths to type (either order — the sink retries until the producer listens):
 
 ```sh
 # Events straight into Kafka.
-evm-stream run | evm-sink-kafka run
+evm-stream run --output socket &
+evm-sink-kafka run
 
 # Balance changes to an alerting webhook.
-evm-balance run | evm-sink-webhook run
-
-# Override a destination on the command line (no config edit).
-evm-stream run | evm-sink-kafka --brokers broker:9093 --topic evm.events
-evm-stream run | evm-sink-file --path /var/log/evm-tools/events.jsonl
+evm-balance run --output socket &
+evm-sink-webhook run
 ```
 
 Every command also takes `-c`/`--config` to point at an explicit config file
-instead of the auto-discovered one.
+instead of the auto-discovered one. Output/input are also settable via
+`[output]`/`[input]` in config or `EVM_TOOLS_OUTPUT`/`EVM_TOOLS_INPUT` (e.g.
+`socket`, or a specific `unix:/path`).
 
-### Without a shell pipe — Unix socket
+### A fuller example — explicit, separate sockets
 
-A shell pipe ties a producer and a sink to one process tree. To run them as
-**independent processes** that connect directly, give the producer `--output` and
-the sink `--input` a `unix:` socket (default stays stdout/stdin):
+Run more than one pipeline on a host (the default socket is single-pipeline) and
+give each an explicit `unix:` path. Producer and sink are **independent
+processes** connecting directly:
 
 ```sh
 # Start each on its own (any order — the sink retries until the producer listens):
@@ -222,8 +242,9 @@ evm-sink-file run … --input pipe:evm-events
 ```
 
 The pipe's ACL is the access control — full access to the launching user (plus
-SYSTEM and Administrators), the Windows analogue of the `0600` socket.
-stdout/stdin works on every platform.
+SYSTEM and Administrators), the Windows analogue of the `0600` socket. An empty
+`--output` (exporter-only) and stdin (`--input`, for replaying a JSONL file) work
+on every platform.
 
 ### Poison records — dead-letter quarantine
 
@@ -233,7 +254,8 @@ stream is the contract, so it never silently skips a record. To keep a long-live
 sink running past the occasional corrupt line, give it a **dead-letter file**:
 
 ```sh
-evm-stream run | evm-sink-kafka run --dead-letter-file /var/log/evm-tools/dead-letter.jsonl
+evm-stream run --output socket &
+evm-sink-kafka run --dead-letter-file /var/log/evm-tools/dead-letter.jsonl
 ```
 
 Each poison line is appended there as one JSONL entry
@@ -261,6 +283,7 @@ ignores the others:
 | `evm-sink-aws-sqs` / `-sns` | `[aws_sqs]` / `[aws_sns]` |
 | `evm-sink-postgres` | `[postgres]` |
 | `evm-sink-redis` | `[redis]` |
+| `evm-sink-stdout` | *(none — shared `[metrics]`/`[log]`/`[input]` only)* |
 
 Producers take a few extra knobs: `[stream].checkpoint_file` (a durable resume
 cursor — restart resumes gap-free instead of jumping to the head), `reorg_depth`,
@@ -369,7 +392,7 @@ dedup_ttl = "24h"                 # marker lifetime; "0"/"off" = never expire
 
 ## Container image
 
-A multi-stage `Dockerfile` builds an `alpine`-based image with all nine binaries.
+A multi-stage `Dockerfile` builds an `alpine`-based image with all ten binaries.
 The base ships a shell on purpose so config `_cmd` keys keep working; a
 distroless/scratch base has no shell, so use `${VAR}` interpolation or mounted
 secrets there instead.
