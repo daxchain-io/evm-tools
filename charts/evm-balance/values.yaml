@@ -1,8 +1,8 @@
 # Default values for evm-balance.
 
 image:
-  repository: evm-tools
-  # tag defaults to the chart appVersion (2.0.0) when empty.
+  repository: ghcr.io/daxchain-io/evm-tools
+  # tag defaults to the chart appVersion (2.1.0) when empty.
   tag: ""
   pullPolicy: IfNotPresent
 

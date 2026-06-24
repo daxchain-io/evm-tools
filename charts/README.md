@@ -15,13 +15,12 @@ differs (`stream:` vs `balance:`).
 
 ## Install
 
-```sh
-# Build/push an image first (the release ships binaries, not an image):
-docker build -f images/evm-tools/Dockerfile -t evm-tools:2.0.0 .
-#   kind:  kind load docker-image evm-tools:2.0.0
-#   k3d:   k3d image import evm-tools:2.0.0
-#   else:  push to a registry and set --set image.repository=<registry>/evm-tools
+The charts default to the published image `ghcr.io/daxchain-io/evm-tools` (built
+and pushed by the release), so no local build is needed. For a custom image,
+`docker build -f images/evm-tools/Dockerfile -t <ref> .`, push it, and add
+`--set image.repository=<ref> --set image.tag=<tag>`.
 
+```sh
 # Provide the RPC endpoint. Preferred — an existing Secret:
 kubectl create secret generic evm-rpc --from-literal=RPC_URL="$RPC_URL"
 helm install eth-events charts/evm-stream --set rpc.existingSecret=evm-rpc

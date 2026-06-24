@@ -30,12 +30,10 @@ Why it looks like this:
 ## Deploy
 
 ```sh
-# 1. Build/push an image (the release ships binaries, not an image):
-docker build -f images/evm-tools/Dockerfile -t evm-tools:2.0.0 .
-#   kind:  kind load docker-image evm-tools:2.0.0
-#   k3d:   k3d image import evm-tools:2.0.0
-#   else:  docker tag + push to a registry the cluster can pull, and update the
-#          image: refs in evm-tools.yaml.
+# 1. The manifest pulls the published image ghcr.io/daxchain-io/evm-tools:2.1.0
+#    by default — nothing to build. For a custom image, docker build -f
+#    images/evm-tools/Dockerfile -t <ref> ., push it, and update the image: refs
+#    in evm-tools.yaml (or for a local cluster: kind load / k3d image import).
 
 # 2. Set your RPC endpoint in the Secret (it carries an API key — keep it here):
 #    edit stringData.RPC_URL in evm-tools.yaml, or:
