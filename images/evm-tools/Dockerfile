@@ -12,7 +12,7 @@
 # through environment-variable interpolation (${VAR}) or mounted secret files
 # instead (see docs/design.md "Logging in containers" for the same caveat).
 #
-# Build:   docker build -t evm-tools .
+# Build:   docker build -f images/evm-tools/Dockerfile -t evm-tools .
 # Run:     docker run --rm evm-tools evm-stream version
 # Pipeline (records travel over a Unix socket; stdout carries logs):
 #   docker run --rm -v "$PWD/my-chain.toml:/etc/evm-tools/my-chain.toml:ro" \
@@ -20,8 +20,10 @@
 #       evm-sink-kafka run -c /etc/evm-tools/my-chain.toml'
 
 # --- build stage -------------------------------------------------------------
-# Pin the builder to the toolchain the module targets (see go.mod).
-FROM golang:1.25-alpine AS build
+# Pin the builder to the toolchain the module targets (see go.mod). Run the build
+# stage on the BUILD platform and cross-compile to the target — CGO is off, so Go
+# cross-compiles natively (no qemu emulation) for a multi-arch image.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 
 WORKDIR /src
 
@@ -37,6 +39,10 @@ COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
+# TARGETOS/TARGETARCH are auto-populated by BuildKit/buildx (default to the build
+# platform for a single-arch build).
+ARG TARGETOS
+ARG TARGETARCH
 ENV CGO_ENABLED=0
 RUN set -eux; \
     ldflags="-s -w \
@@ -44,7 +50,7 @@ RUN set -eux; \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Commit=${COMMIT} \
       -X github.com/daxchain-io/evm-tools/internal/buildinfo.Date=${DATE}"; \
     for tool in evm-stream evm-balance evm-sink-kafka evm-sink-webhook evm-sink-file evm-sink-aws-sqs evm-sink-aws-sns evm-sink-postgres evm-sink-redis evm-sink-stdout; do \
-      go build -trimpath -ldflags "${ldflags}" -o "/out/${tool}" "./cmd/${tool}"; \
+      GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags "${ldflags}" -o "/out/${tool}" "./cmd/${tool}"; \
     done
 
 # --- runtime stage -----------------------------------------------------------

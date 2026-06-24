@@ -1,0 +1,22 @@
+apiVersion: v2
+name: evm-balance
+description: >-
+  evm-balance producer (with an optional sink sidecar) — sample native/ERC-20/
+  ERC-721 balances and contract state on a cadence, emit JSONL records over a Unix
+  socket to the sink, log to stdout/stderr, and expose Prometheus metrics. The
+  cloud-native sidecar pattern: producer + sink in one pod, records over a
+  shared-volume socket.
+type: application
+version: 0.1.0
+appVersion: "2.0.0"
+keywords:
+  - ethereum
+  - evm
+  - blockchain
+  - prometheus
+  - observability
+home: https://github.com/daxchain-io/evm-tools
+sources:
+  - https://github.com/daxchain-io/evm-tools
+maintainers:
+  - name: daxchain-io

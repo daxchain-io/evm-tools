@@ -1,0 +1,166 @@
+# evm-tools on Kubernetes — the cloud-native sidecar pattern.
+#
+# One pod = one producer (evm-stream) + a sink sidecar, sharing a Unix-domain
+# socket over an `emptyDir` volume. Records travel over that socket; they never
+# touch stdout. stdout/stderr carry only LOGS, which the platform collects
+# (`kubectl logs`). /metrics is scraped on each container's port.
+#
+# Why this shape:
+#   - A producer is a singleton per chain (HA = one active), so replicas: 1 — do
+#     not scale a producer horizontally (it would double-emit).
+#   - The two containers run as the SAME UID so the 0600 socket is mutually
+#     accessible (the producer creates it; the sink dials it).
+#   - block-until-consumer is on by default, so the producer waits for the sink to
+#     connect before emitting (lossless); if the sink dies, the producer's emit
+#     blocks and /readyz flips not-ready, so the platform restarts the pod.
+#
+# The example sink is evm-sink-stdout, so records are visible in
+# `kubectl logs deploy/evm-stream -c sink` — swap it for evm-sink-kafka /
+# evm-sink-postgres / etc. in production (only the sink container's args change).
+#
+#   kubectl apply -f deploy/kubernetes/evm-tools.yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: evm-tools-rpc
+type: Opaque
+stringData:
+  # The RPC endpoint usually carries an API key — keep it in this Secret, not in
+  # the ConfigMap. evm-tools interpolates ${RPC_URL} in the config from this env.
+  RPC_URL: "https://REPLACE-ME.example/v2/KEY"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evm-tools-config
+data:
+  evm-tools.toml: |
+    chain = "ethereum"
+
+    [rpc]
+    url = "${RPC_URL}"        # interpolated from the Secret env at startup
+
+    [stream]
+    poll_interval = "3s"
+
+    [[stream.contracts]]
+    name = "usdt"
+    address = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    events = ["Transfer"]    # resolved from the built-in ERC-20 ABI
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evm-stream
+  labels:
+    app: evm-stream
+spec:
+  replicas: 1                # a producer is a singleton per chain — do NOT scale
+  selector:
+    matchLabels:
+      app: evm-stream
+  template:
+    metadata:
+      labels:
+        app: evm-stream
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"      # producer; the sink (9009) is scraped via the Service
+    spec:
+      # Both containers share this UID/GID so the producer's 0600 socket is
+      # readable/writable by the sink. fsGroup makes the emptyDir group-writable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      volumes:
+        - name: ipc                      # the shared record socket lives here
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: evm-tools-config
+      containers:
+        # ----- producer: evm-stream -----
+        - name: evm-stream
+          image: evm-tools:2.0.0         # build locally / pull from your registry
+          imagePullPolicy: IfNotPresent
+          args:
+            - evm-stream
+            - run
+            - --config=/etc/evm-tools/evm-tools.toml
+            - --output=unix:/run/evm/records.sock   # listen on the shared socket
+            - --metrics
+            - --metrics-addr=:9000
+            - --log-format=json
+          envFrom:
+            - secretRef:
+                name: evm-tools-rpc      # provides RPC_URL for ${RPC_URL}
+          ports:
+            - name: metrics
+              containerPort: 9000
+          volumeMounts:
+            - name: ipc
+              mountPath: /run/evm
+            - name: config
+              mountPath: /etc/evm-tools
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+        # ----- sink sidecar: evm-sink-stdout (records -> its stdout, visible in
+        #       `kubectl logs ... -c sink`). Swap for evm-sink-kafka run / etc. -----
+        - name: sink
+          image: evm-tools:2.0.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - evm-sink-stdout
+            - run
+            - --input=unix:/run/evm/records.sock    # dial the shared socket
+            - --metrics
+            - --metrics-addr=:9009
+          ports:
+            - name: sink-metrics
+              containerPort: 9009
+          volumeMounts:
+            - name: ipc
+              mountPath: /run/evm
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9009
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evm-stream-metrics
+  labels:
+    app: evm-stream
+spec:
+  selector:
+    app: evm-stream
+  ports:
+    - name: producer
+      port: 9000
+      targetPort: 9000
+    - name: sink
+      port: 9009
+      targetPort: 9009

@@ -1,0 +1,24 @@
+evm-balance {{ .Chart.AppVersion }} deployed as "{{ include "evm-balance.fullname" . }}".
+
+Shape: producer{{ if .Values.sink.enabled }} + {{ .Values.sink.tool }} sidecar (records over a shared Unix socket){{ else }} only — exporter mode, no records emitted{{ end }}.
+Records never touch stdout; stdout/stderr are logs.
+
+Follow it:
+  kubectl logs deploy/{{ include "evm-balance.fullname" . }} -c evm-balance -f
+{{- if .Values.sink.enabled }}
+  kubectl logs deploy/{{ include "evm-balance.fullname" . }} -c sink -f
+{{- end }}
+
+{{- if .Values.metrics.enabled }}
+
+Metrics / health:
+  kubectl port-forward svc/{{ include "evm-balance.fullname" . }}-metrics {{ .Values.metrics.port }}:{{ .Values.metrics.port }}
+  curl localhost:{{ .Values.metrics.port }}/metrics
+  curl localhost:{{ .Values.metrics.port }}/readyz
+{{- end }}
+
+{{- if and (not .Values.rpc.existingSecret) .Values.rpc.url }}
+
+NOTE: the RPC URL came from rpc.url and is stored in a chart-managed Secret.
+For production, prefer an existing Secret: --set rpc.existingSecret=<name>.
+{{- end }}

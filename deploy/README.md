@@ -1,11 +1,14 @@
 # Deploying observability for evm-tools
 
-Ready-to-use Prometheus + Grafana assets for the suite. Every tool serves
-`/metrics`, `/healthz`, and `/readyz` on its own port (defaults `:9000`–`:9008`);
-enable the endpoint with `--metrics` or `[<tool>.metrics].enabled = true`.
+Ready-to-use Prometheus + Grafana assets for the suite, plus a Kubernetes recipe.
+Every tool serves `/metrics`, `/healthz`, and `/readyz` on its own port (defaults
+`:9000`–`:9009`); enable the endpoint with `--metrics` or
+`[<tool>.metrics].enabled = true`.
 
 | File | What it is |
 | --- | --- |
+| [`charts/`](../charts/) | **Helm charts** — `evm-stream` and `evm-balance`, each deploying the producer + sink sidecar pattern (parameterized image, RPC secret, config, sink). See [`charts/README.md`](../charts/README.md). |
+| [`kubernetes/evm-tools.yaml`](kubernetes/evm-tools.yaml) | The same as raw YAML (no Helm): a producer + sink **sidecar** sharing a Unix socket over an `emptyDir`, logs on stdout, scraped `/metrics`. See [`kubernetes/README.md`](kubernetes/README.md). |
 | [`prometheus/prometheus.yml`](prometheus/prometheus.yml) | Example Prometheus config: one scrape job covering all ten tools, each target tagged with a `tool` label. |
 | [`prometheus/rules.yml`](prometheus/rules.yml) | Recording rules + alerting rules (referenced by `prometheus.yml`). |
 | [`grafana/evm-tools-dashboard.json`](grafana/evm-tools-dashboard.json) | Grafana dashboard (overview + producers + sinks). Import it and pick your Prometheus datasource. |
@@ -24,13 +27,13 @@ prometheus --config.file=deploy/prometheus/prometheus.yml
 In Grafana: **Dashboards → New → Import**, upload `evm-tools-dashboard.json`, and
 select your Prometheus datasource for the `Prometheus` variable.
 
-The example uses `localhost:9000`–`:9008` static targets. In Kubernetes, drop the
+The example uses `localhost:9000`–`:9009` static targets. In Kubernetes, drop the
 static targets and scrape via pod annotations or a `ServiceMonitor`; keep a `tool`
 label on each target so the dashboard and alerts group correctly.
 
 ### One logical endpoint per pod
 
-The suite runs as separate processes — a `producer | sink` pipeline — so each tool
+The suite runs as separate processes — a producer-to-sink pipeline over a socket — so each tool
 serves its own `/metrics` port; there is no single in-process endpoint to merge
 them. Consolidation belongs at the scrape layer, not the binary:
 
@@ -74,7 +77,7 @@ metric-based. To page on `/readyz` directly, add the Prometheus blackbox exporte
 | **EvmChainHeadStale** | The head block's age has crossed the threshold (default 5m) — the chain or RPC endpoint stopped advancing. Age is computed live (`time() - head_block_timestamp`) so it still fires during an RPC outage. | Check the RPC endpoint (node synced? not load-balanced to a lagging peer?); mirrors the `head_staleness_threshold` `/readyz` check. |
 | **EvmRpcErrorsElevated** | Sustained RPC errors by `operation`/`error_type`. | Inspect the provider (rate limits, auth, outage); check `evm_rpc_call_duration_seconds` for latency and the tool's backoff gauges. |
 | **EvmStreamLagHigh** | evm-stream is >5000 blocks behind head for 10m. | Expected during a deep backfill; otherwise check RPC throughput and whether emission is blocked (next alert). |
-| **EvmProducerEmitBlocked** | A producer's stdout has been blocked >30s — the downstream sink is applying backpressure. | Lossless by design (nothing dropped), but throughput is stalled: look at the *sink* it pipes into (see the next alert). |
+| **EvmProducerEmitBlocked** | A producer's record emission has been blocked >30s — the downstream sink is applying backpressure. | Lossless by design (nothing dropped), but throughput is stalled: look at the *sink* it pipes into (see the next alert). |
 | **EvmSinkDeliveryBlocked** | A sink has been retrying a failing destination for 5m. | Check the destination (broker/endpoint/DB/Redis/AWS) and the sink's `…_records_failed_total` by `error_type`; at-least-once means it's retrying, not dropping. |
 
 Thresholds in `rules.yml` are conservative starting points — tune them to your

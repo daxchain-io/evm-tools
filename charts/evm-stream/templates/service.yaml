@@ -1,0 +1,25 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "evm-stream.fullname" . }}-metrics
+  labels:
+    {{- include "evm-stream.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "evm-stream.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: producer
+      port: {{ .Values.metrics.port }}
+      targetPort: {{ .Values.metrics.port }}
+    {{- if .Values.sink.enabled }}
+    - name: sink
+      port: {{ .Values.sink.metricsPort }}
+      targetPort: {{ .Values.sink.metricsPort }}
+    {{- end }}
+{{- end }}

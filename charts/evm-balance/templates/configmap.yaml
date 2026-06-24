@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "evm-balance.fullname" . }}
+  labels:
+    {{- include "evm-balance.labels" . | nindent 4 }}
+data:
+  evm-tools.toml: |
+    chain = "{{ .Values.chain }}"
+
+    [rpc]
+    url = "${RPC_URL}"
+
+    [balance]
+    {{- if .Values.balance.everyBlocks }}
+    every_blocks = {{ .Values.balance.everyBlocks }}
+    {{- else }}
+    interval = "{{ .Values.balance.interval }}"
+    {{- end }}
+    {{- range .Values.balance.native }}
+
+    [[balance.native]]
+    name = "{{ .name }}"
+    address = "{{ .address }}"
+    {{- end }}
+    {{- range .Values.balance.erc20 }}
+
+    [[balance.erc20]]
+    name = "{{ .name }}"
+    token = "{{ .token }}"
+    address = "{{ .address }}"
+    {{- if .decimals }}
+    decimals = {{ .decimals }}
+    {{- end }}
+    {{- end }}
+    {{- range .Values.balance.contracts }}
+
+    [[balance.contracts]]
+    name = "{{ .name }}"
+    address = "{{ .address }}"
+    {{- if .nativeBalance }}
+    native_balance = true
+    {{- end }}
+    {{- if .tokenSupply }}
+    token_supply = true
+    {{- end }}
+    {{- if .transferCountWindowBlocks }}
+    transfer_count_window_blocks = {{ .transferCountWindowBlocks }}
+    {{- end }}
+    {{- if .decimals }}
+    decimals = {{ .decimals }}
+    {{- end }}
+    {{- end }}
+    {{- with .Values.balance.extraConfig }}
+
+    {{ . | nindent 4 | trim }}
+    {{- end }}
+    {{- with .Values.sink.config }}
+
+    {{ . | nindent 4 | trim }}
+    {{- end }}

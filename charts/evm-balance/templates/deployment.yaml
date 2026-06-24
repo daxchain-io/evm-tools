@@ -1,0 +1,144 @@
+{{- if and (not .Values.rpc.existingSecret) (not .Values.rpc.url) }}
+{{- fail "evm-balance: set rpc.existingSecret (preferred) or rpc.url to provide the RPC endpoint" }}
+{{- end }}
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail "evm-balance: replicaCount must be 1 — a producer is a singleton per chain (a second active replica would double-emit). Run a separate release per chain." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "evm-balance.fullname" . }}
+  labels:
+    {{- include "evm-balance.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "evm-balance.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "evm-balance.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- if .Values.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.metrics.port | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: ipc
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "evm-balance.fullname" . }}
+      containers:
+        - name: evm-balance
+          image: {{ include "evm-balance.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - evm-balance
+            - run
+            - --config=/etc/evm-tools/evm-tools.toml
+            {{- if .Values.sink.enabled }}
+            - --output=unix:/run/evm/records.sock
+            {{- end }}
+            - --log-level={{ .Values.log.level }}
+            - --log-format={{ .Values.log.format }}
+            {{- if .Values.metrics.enabled }}
+            - --metrics
+            - --metrics-addr=:{{ .Values.metrics.port }}
+            {{- end }}
+          env:
+            - name: RPC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "evm-balance.rpcSecretName" . }}
+                  key: {{ include "evm-balance.rpcSecretKey" . }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.metrics.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.metrics.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/evm-tools
+              readOnly: true
+            {{- if .Values.sink.enabled }}
+            - name: ipc
+              mountPath: /run/evm
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.sink.enabled }}
+        - name: sink
+          image: {{ include "evm-balance.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - {{ .Values.sink.tool }}
+            - run
+            - --config=/etc/evm-tools/evm-tools.toml
+            - --input=unix:/run/evm/records.sock
+            - --log-level={{ .Values.log.level }}
+            - --log-format={{ .Values.log.format }}
+            - --metrics
+            - --metrics-addr=:{{ .Values.sink.metricsPort }}
+            {{- range .Values.sink.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: RPC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "evm-balance.rpcSecretName" . }}
+                  key: {{ include "evm-balance.rpcSecretKey" . }}
+          ports:
+            - name: sink-metrics
+              containerPort: {{ .Values.sink.metricsPort }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.sink.metricsPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/evm-tools
+              readOnly: true
+            - name: ipc
+              mountPath: /run/evm
+          resources:
+            {{- toYaml .Values.sink.resources | nindent 12 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

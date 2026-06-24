@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "evm-stream.fullname" . }}
+  labels:
+    {{- include "evm-stream.labels" . | nindent 4 }}
+data:
+  evm-tools.toml: |
+    chain = "{{ .Values.chain }}"
+
+    [rpc]
+    url = "${RPC_URL}"
+
+    [stream]
+    poll_interval = "{{ .Values.stream.pollInterval }}"
+    {{- if .Values.stream.nativeTransfers.enabled }}
+
+    [stream.native_transfers]
+    enabled = true
+    include_internal = {{ .Values.stream.nativeTransfers.includeInternal }}
+    {{- end }}
+    {{- range .Values.stream.contracts }}
+
+    [[stream.contracts]]
+    name = "{{ .name }}"
+    address = "{{ .address }}"
+    events = [{{ range $i, $e := .events }}{{ if $i }}, {{ end }}"{{ $e }}"{{ end }}]
+    {{- end }}
+    {{- with .Values.stream.extraConfig }}
+
+    {{ . | nindent 4 | trim }}
+    {{- end }}
+    {{- with .Values.sink.config }}
+
+    {{ . | nindent 4 | trim }}
+    {{- end }}

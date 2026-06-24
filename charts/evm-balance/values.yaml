@@ -1,0 +1,90 @@
+# Default values for evm-balance.
+
+image:
+  repository: evm-tools
+  # tag defaults to the chart appVersion (2.0.0) when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# A producer is a singleton per chain (HA = exactly one active). Do NOT set > 1.
+replicaCount: 1
+
+# RPC endpoint. It usually carries an API key, so it lives in a Secret.
+rpc:
+  existingSecret: ""
+  existingSecretKey: RPC_URL
+  # Used only when existingSecret is empty; for a quick test:
+  #   helm install evm-balance … --set rpc.url="$RPC_URL"
+  url: ""
+
+# chain is the record/metric label; omit to derive it from the resolved chain id.
+chain: ethereum
+
+# evm-balance configuration (rendered into the pod's evm-tools.toml). Sampling
+# cadence is interval XOR everyBlocks.
+balance:
+  interval: 30s
+  # everyBlocks: 0
+  # Native-balance targets -> [[balance.native]].
+  native:
+    - name: weth
+      address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"   # WETH — the most-held, most-active ETH balance
+  # ERC-20 balance targets -> [[balance.erc20]] (decimals optional).
+  erc20: []
+  #  - { name: usdc-treasury, token: "0xA0b8…", address: "0xABCD…", decimals: 6 }
+  # Contract-state targets -> [[balance.contracts]].
+  contracts: []
+  #  - { name: usdc, address: "0xA0b8…", tokenSupply: true, decimals: 6 }
+  # Raw TOML appended verbatim under [balance].
+  extraConfig: ""
+
+# Producer Prometheus/health endpoint (/metrics, /healthz, /readyz).
+metrics:
+  enabled: true
+  port: 9001
+
+log:
+  level: info
+  format: json
+
+# Sink sidecar. When disabled the producer runs exporter-only.
+sink:
+  enabled: true
+  tool: evm-sink-stdout
+  metricsPort: 9009
+  extraArgs: []
+  config: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# Both containers share this UID/GID so the producer's 0600 socket is reachable
+# by the sink; fsGroup makes the shared emptyDir writable.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+service:
+  type: ClusterIP
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9001"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

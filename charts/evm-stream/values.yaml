@@ -1,0 +1,96 @@
+# Default values for evm-stream.
+
+image:
+  repository: evm-tools
+  # tag defaults to the chart appVersion (2.0.0) when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# A producer is a singleton per chain (HA = exactly one active). Do NOT set > 1 —
+# a second active producer would double-emit. Run a separate release per chain.
+replicaCount: 1
+
+# RPC endpoint. It usually carries an API key, so it lives in a Secret.
+rpc:
+  # Reference an existing Secret holding the URL (preferred). Leave empty to have
+  # the chart create one from `rpc.url` below.
+  existingSecret: ""
+  existingSecretKey: RPC_URL
+  # Used only when existingSecret is empty: the chart creates a Secret from this.
+  # For real deployments prefer existingSecret; for a quick test:
+  #   helm install evm-stream … --set rpc.url="$RPC_URL"
+  url: ""
+
+# chain is the record/metric label; omit to derive it from the resolved chain id.
+chain: ethereum
+
+# evm-stream configuration (rendered into the pod's evm-tools.toml).
+stream:
+  pollInterval: 3s
+  nativeTransfers:
+    enabled: false
+    includeInternal: false
+  # Each entry becomes a [[stream.contracts]] block.
+  contracts:
+    - name: usdt
+      address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+      events: [Transfer]
+  # Raw TOML appended verbatim under [stream] (escape hatch for advanced keys).
+  extraConfig: ""
+
+# Producer Prometheus/health endpoint (/metrics, /healthz, /readyz).
+metrics:
+  enabled: true
+  port: 9000
+
+log:
+  level: info
+  format: json
+
+# Sink sidecar. When disabled the producer runs exporter-only (serves /metrics,
+# emits no records).
+sink:
+  enabled: true
+  # The sink binary. evm-sink-stdout writes records to its stdout (visible via
+  # `kubectl logs … -c sink`); swap for evm-sink-kafka / evm-sink-postgres / etc.
+  tool: evm-sink-stdout
+  metricsPort: 9009
+  # Extra args appended after `<tool> run`. For evm-sink-kafka, e.g. --topic.
+  extraArgs: []
+  # Sink-specific TOML appended to the shared config (e.g. a [kafka] block). The
+  # sink reads its own section and ignores [stream].
+  config: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# Both containers share this UID/GID so the producer's 0600 socket is reachable
+# by the sink; fsGroup makes the shared emptyDir writable.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+service:
+  type: ClusterIP
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9000"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

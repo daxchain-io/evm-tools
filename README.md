@@ -392,13 +392,13 @@ dedup_ttl = "24h"                 # marker lifetime; "0"/"off" = never expire
 
 ## Container image
 
-A multi-stage `Dockerfile` builds an `alpine`-based image with all ten binaries.
+A multi-stage `Dockerfile` (`images/evm-tools/Dockerfile`) builds an `alpine`-based image with all ten binaries.
 The base ships a shell on purpose so config `_cmd` keys keep working; a
 distroless/scratch base has no shell, so use `${VAR}` interpolation or mounted
 secrets there instead.
 
 ```sh
-docker build -t evm-tools .
+docker build -f images/evm-tools/Dockerfile -t evm-tools .
 docker run --rm evm-tools evm-stream version
 ```
 
