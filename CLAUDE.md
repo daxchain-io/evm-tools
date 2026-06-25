@@ -45,6 +45,8 @@ Run a single package's tests: `go test ./internal/record -run TestName -v`.
 - `internal/rpc` — TLS RPC transport + client (server-auth by default, optional mTLS).
 - `internal/metrics` — Prometheus registry + HTTP server + health endpoints.
 - `internal/chain` — chain metadata + block helpers.
+- `internal/backoff` — the shared exponential-backoff retry policy
+  (`Duration`/`Jitter`/`Sleep`) used by producers, transport, and every sink.
 - `internal/buildinfo` — version stamped via `-ldflags`.
 - `internal/cli` — shared Cobra command trees for producers and sinks.
 - `internal/stream`, `internal/balance` — producer core logic.

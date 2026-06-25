@@ -139,6 +139,6 @@ func NewSinkHealth(h *Health) *SinkHealth {
 // SetReachable records the latest destination reachability for /readyz.
 func (s *SinkHealth) SetReachable(v bool) { s.h.SetRPCReachable(v) }
 
-// SetDeliverBlocked records how long delivery has been blocked retrying a failing
+// SetEmitBlocked records how long delivery has been blocked retrying a failing
 // destination; beyond the Health threshold /readyz flips not-ready.
-func (s *SinkHealth) SetDeliverBlocked(d time.Duration) { s.h.SetEmitBlocked(d) }
+func (s *SinkHealth) SetEmitBlocked(d time.Duration) { s.h.SetEmitBlocked(d) }

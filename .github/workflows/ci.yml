@@ -55,6 +55,9 @@ jobs:
         with:
           version: v2.12.2
 
+      - name: Chart templates in lockstep
+        run: ./scripts/check-chart-drift.sh
+
   windows:
     name: Windows build + test
     runs-on: windows-latest

@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/chain"
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
@@ -511,15 +512,15 @@ func (p *Poller) handleFailure(ctx context.Context, consecutiveFailures *int, er
 	p.opts.Health.SetRPCReachable(false)
 	p.opts.Metrics.SetPollOutcome(false, p.now())
 	p.opts.Metrics.SetConsecutiveFailures(*consecutiveFailures)
-	backoff := p.backoffFor(*consecutiveFailures)
-	p.opts.Metrics.SetBackoffSeconds(backoff)
+	delay := p.backoffFor(*consecutiveFailures)
+	p.opts.Metrics.SetBackoffSeconds(delay)
 	p.opts.Metrics.IncReconnects()
 	p.log.Warn("poll failed; backing off",
 		"error_type", string(rpc.Classify(err)),
 		"consecutive_failures", *consecutiveFailures,
-		"backoff", backoff.String(),
+		"backoff", delay.String(),
 	)
-	return sleepCtx(ctx, backoff)
+	return backoff.Sleep(ctx, delay)
 }
 
 // sampleAll samples every configured target at the given head block, emitting a
@@ -827,17 +828,7 @@ func (p *Poller) commitOwner(key, cur string) {
 // backoffFor computes the exponential backoff (base * 2^(n-1), capped) with full
 // jitter for the nth consecutive failure.
 func (p *Poller) backoffFor(n int) time.Duration {
-	if n < 1 {
-		n = 1
-	}
-	d := p.opts.BackoffBase
-	for i := 1; i < n && d < p.opts.BackoffMax; i++ {
-		d *= 2
-	}
-	if d > p.opts.BackoffMax {
-		d = p.opts.BackoffMax
-	}
-	return jitter(d)
+	return backoff.Jitter(backoff.Duration(n, p.opts.BackoffBase, p.opts.BackoffMax))
 }
 
 // lower lowercases an address for metric labels and map keys.

@@ -1002,9 +1002,11 @@ Behavior (`internal/transport`):
 
 - **Producer side** listens and fans each record out to every connected consumer.
   A slow consumer applies lockstep backpressure (the lossless invariant — the
-  producer waits rather than dropping); a consumer whose write fails is dropped
-  without affecting the others; a consumer that connects mid-stream gets the live
-  tail. `--block-until-consumer` (default on) makes the producer wait for the
+  producer waits rather than dropping), so with multiple consumers the slowest one
+  sets the pace for all of them: a slow webhook sink throttles a fast Kafka sink on
+  the same producer, so isolate a latency-sensitive sink on its own producer. A
+  consumer whose write fails is dropped without affecting the others; a consumer
+  that connects mid-stream gets the live tail. `--block-until-consumer` (default on) makes the producer wait for the
   first consumer before emitting and block while none are connected, so a sink
   that starts shortly after the producer loses nothing; `=false` is
   fire-and-forget (drop with no consumer). A stale socket left by an unclean exit

@@ -26,9 +26,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"strings"
 	"time"
+
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 )
 
 // Transport address schemes. unix: is a Unix-domain socket (Linux/macOS); pipe:
@@ -115,37 +116,5 @@ const (
 // backoffFor returns the delay before reconnect attempt n (1-based): base*2^(n-1)
 // capped at backoffMax, with jitter in [d/2, d].
 func backoffFor(n int) time.Duration {
-	if n < 1 {
-		n = 1
-	}
-	d := backoffBase
-	for i := 1; i < n && d < backoffMax; i++ {
-		d *= 2
-	}
-	if d > backoffMax {
-		d = backoffMax
-	}
-	return jitter(d)
-}
-
-// jitter applies jitter to a backoff duration: a uniform value in [d/2, d].
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return 0
-	}
-	half := d / 2
-	return half + time.Duration(rand.Int63n(int64(half)+1))
-}
-
-// sleepCtx sleeps for d unless ctx is cancelled first; it reports false if ctx
-// was cancelled, so a retry loop can stop.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
+	return backoff.Jitter(backoff.Duration(n, backoffBase, backoffMax))
 }

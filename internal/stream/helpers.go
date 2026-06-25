@@ -1,38 +1,10 @@
 package stream
 
 import (
-	"context"
-	"math/rand"
 	"time"
 
 	"github.com/daxchain-io/evm-tools/internal/record"
 )
-
-// jitter applies full jitter to a backoff duration: a uniform random value in
-// [d/2, d]. This spreads retries so a fleet does not thunder a recovering node.
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return 0
-	}
-	half := d / 2
-	return half + time.Duration(rand.Int63n(int64(half)+1))
-}
-
-// sleepCtx sleeps for d unless ctx is cancelled first. It returns false when
-// ctx was cancelled (the caller should stop), true on a full sleep.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
 
 // watchdogInterval is how often the in-flight write watchdog republishes the
 // growing blocked duration. It must be well below the /readyz emit-blocked

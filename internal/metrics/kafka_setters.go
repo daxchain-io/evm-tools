@@ -50,9 +50,9 @@ func NewKafkaHealth(h *Health) *KafkaHealth {
 	return &KafkaHealth{h: h}
 }
 
-// SetPublishBlocked records how long the current/last publish has been blocked
+// SetEmitBlocked records how long the current/last publish has been blocked
 // retrying a failing broker; beyond the Health threshold /readyz flips not-ready.
-func (k *KafkaHealth) SetPublishBlocked(d time.Duration) { k.h.SetEmitBlocked(d) }
+func (k *KafkaHealth) SetEmitBlocked(d time.Duration) { k.h.SetEmitBlocked(d) }
 
 // SetBrokerReachable records the latest broker reachability for /readyz.
 func (k *KafkaHealth) SetBrokerReachable(v bool) { k.h.SetRPCReachable(v) }

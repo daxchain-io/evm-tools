@@ -59,9 +59,9 @@ func NewFileHealth(h *Health) *FileHealth {
 	return &FileHealth{h: h}
 }
 
-// SetWriteBlocked records how long the current/last write has been blocked
+// SetEmitBlocked records how long the current/last write has been blocked
 // retrying a failing disk; beyond the Health threshold /readyz flips not-ready.
-func (f *FileHealth) SetWriteBlocked(d time.Duration) { f.h.SetEmitBlocked(d) }
+func (f *FileHealth) SetEmitBlocked(d time.Duration) { f.h.SetEmitBlocked(d) }
 
 // SetWritable records the latest disk writability for /readyz.
 func (f *FileHealth) SetWritable(v bool) { f.h.SetRPCReachable(v) }

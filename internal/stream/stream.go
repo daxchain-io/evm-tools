@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/chain"
 	"github.com/daxchain-io/evm-tools/internal/checkpoint"
 	"github.com/daxchain-io/evm-tools/internal/record"
@@ -406,15 +407,15 @@ func (s *Stream) Run(ctx context.Context) (err error) {
 			s.opts.Health.SetRPCReachable(false)
 			s.opts.Metrics.SetPollOutcome(false, s.now())
 			s.opts.Metrics.SetConsecutiveFailures(consecutiveFailures)
-			backoff := s.backoffFor(consecutiveFailures)
-			s.opts.Metrics.SetBackoffSeconds(backoff)
+			delay := s.backoffFor(consecutiveFailures)
+			s.opts.Metrics.SetBackoffSeconds(delay)
 			s.opts.Metrics.IncReconnects()
 			s.log.Warn("poll failed; backing off",
 				"error_type", string(rpc.Classify(err)),
 				"consecutive_failures", consecutiveFailures,
-				"backoff", backoff.String(),
+				"backoff", delay.String(),
 			)
-			if !sleepCtx(ctx, backoff) {
+			if !backoff.Sleep(ctx, delay) {
 				return nil
 			}
 			continue
@@ -938,15 +939,5 @@ func (s *Stream) redactedEndpoint() string {
 // backoffFor computes the exponential backoff (base * 2^(n-1), capped) with full
 // jitter for the nth consecutive failure.
 func (s *Stream) backoffFor(n int) time.Duration {
-	if n < 1 {
-		n = 1
-	}
-	d := s.opts.BackoffBase
-	for i := 1; i < n && d < s.opts.BackoffMax; i++ {
-		d *= 2
-	}
-	if d > s.opts.BackoffMax {
-		d = s.opts.BackoffMax
-	}
-	return jitter(d)
+	return backoff.Jitter(backoff.Duration(n, s.opts.BackoffBase, s.opts.BackoffMax))
 }

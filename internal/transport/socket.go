@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 )
 
 // errWriterClosed is returned by a fan-out writer's Write after Close (with no
@@ -310,7 +312,7 @@ func (r *reconnectingReader) connect() error {
 			slog.Default().Info("waiting for a producer to listen", "address", r.desc)
 		}
 		r.attempt++
-		if !sleepCtx(r.ctx, backoffFor(r.attempt)) {
+		if !backoff.Sleep(r.ctx, backoffFor(r.attempt)) {
 			return r.ctx.Err()
 		}
 	}

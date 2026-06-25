@@ -105,6 +105,12 @@ sibling stays up misses that gap. For durable per-sink delivery use a broker/DB
 sink (Kafka/Postgres/Redis), or give that sink its own producer (release). With a
 single sink the producer blocks when it drops, so nothing is lost.
 
+**Sinks share one pace (head-of-line blocking):** the fan-out is lockstep — the
+*slowest* connected sink throttles the producer and therefore every other sink on
+it. A slow webhook will hold back a fast Kafka reading the same producer. If a sink
+is latency-sensitive or prone to stalls, give it its own producer (a separate
+release) rather than sharing the socket.
+
 ## Guardrails built in
 
 - **`replicaCount` must be 1** — a producer is a singleton per chain; a second

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
@@ -112,7 +113,7 @@ func (s *Stream) traceBlockInternal(ctx context.Context, blk *rpc.Block, blkNum 
 				"error_type", string(rpc.Classify(err)), "error", err.Error())
 			return nil, nil
 		}
-		if !sleepCtx(ctx, s.backoffFor(attempt)) {
+		if !backoff.Sleep(ctx, s.backoffFor(attempt)) {
 			return nil, ctx.Err()
 		}
 	}

@@ -370,7 +370,7 @@ type probeHealth struct {
 	sets      int
 }
 
-func (h *probeHealth) SetPublishBlocked(time.Duration) {}
+func (h *probeHealth) SetEmitBlocked(time.Duration) {}
 func (h *probeHealth) SetBrokerReachable(v bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

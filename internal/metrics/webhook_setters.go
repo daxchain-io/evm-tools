@@ -53,9 +53,9 @@ func NewWebhookHealth(h *Health) *WebhookHealth {
 	return &WebhookHealth{h: h}
 }
 
-// SetPostBlocked records how long the current/last POST has been blocked retrying
+// SetEmitBlocked records how long the current/last POST has been blocked retrying
 // a failing endpoint; beyond the Health threshold /readyz flips not-ready.
-func (w *WebhookHealth) SetPostBlocked(d time.Duration) { w.h.SetEmitBlocked(d) }
+func (w *WebhookHealth) SetEmitBlocked(d time.Duration) { w.h.SetEmitBlocked(d) }
 
 // SetEndpointReachable records the latest endpoint reachability for /readyz.
 func (w *WebhookHealth) SetEndpointReachable(v bool) { w.h.SetRPCReachable(v) }

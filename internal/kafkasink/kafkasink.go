@@ -29,6 +29,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
@@ -139,7 +140,7 @@ type Metrics interface {
 // Healther is the readiness surface the loop updates. /readyz flips to not-ready
 // while the sink has been blocked on a failing broker beyond its threshold.
 type Healther interface {
-	SetPublishBlocked(d time.Duration)
+	SetEmitBlocked(d time.Duration)
 	SetBrokerReachable(v bool)
 }
 
@@ -340,18 +341,18 @@ func (s *Sink) publishWithRetry(ctx context.Context, msg Message) (bool, error) 
 		s.opts.Metrics.SetConsecutiveFailures(attempt)
 		s.opts.Metrics.IncRetry()
 		s.opts.Health.SetBrokerReachable(false)
-		s.opts.Health.SetPublishBlocked(blocked)
+		s.opts.Health.SetEmitBlocked(blocked)
 
-		backoff := s.backoffFor(attempt)
-		s.opts.Metrics.SetBackoffSeconds(backoff)
+		delay := s.backoffFor(attempt)
+		s.opts.Metrics.SetBackoffSeconds(delay)
 		s.log.Warn("publish failed; backing off and retrying",
 			"error_type", string(class),
 			"topic", msg.Topic,
 			"attempt", attempt,
-			"backoff", backoff.String(),
+			"backoff", delay.String(),
 			"blocked", blocked.String(),
 		)
-		if !sleepCtx(ctx, backoff) {
+		if !backoff.Sleep(ctx, delay) {
 			return false, nil // ctx cancelled during backoff: clean stop.
 		}
 	}
@@ -361,7 +362,7 @@ func (s *Sink) publishWithRetry(ctx context.Context, msg Message) (bool, error) 
 func (s *Sink) clearBlocked() {
 	s.opts.Metrics.SetBlocked(false)
 	s.opts.Metrics.SetBackoffSeconds(0)
-	s.opts.Health.SetPublishBlocked(0)
+	s.opts.Health.SetEmitBlocked(0)
 }
 
 // probeLoop actively checks broker reachability on ProbeInterval and records the
@@ -406,17 +407,7 @@ func (s *Sink) probeOnce(ctx context.Context) {
 // backoffFor computes base*2^(attempt-1), capped at BackoffMax, with full jitter
 // (a uniform value in [d/2, d]).
 func (s *Sink) backoffFor(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	d := s.opts.BackoffBase
-	for i := 1; i < attempt && d < s.opts.BackoffMax; i++ {
-		d *= 2
-	}
-	if d > s.opts.BackoffMax {
-		d = s.opts.BackoffMax
-	}
-	return s.jitter(d)
+	return s.jitter(backoff.Duration(attempt, s.opts.BackoffBase, s.opts.BackoffMax))
 }
 
 func (s *Sink) jitter(d time.Duration) time.Duration {
@@ -425,21 +416,6 @@ func (s *Sink) jitter(d time.Duration) time.Duration {
 	}
 	half := d / 2
 	return half + time.Duration(s.opts.randInt(int64(half)+1))
-}
-
-// sleepCtx sleeps for d unless ctx is cancelled first; returns false on cancel.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }
 
 // FailureClass categorizes a publish error as transient (retry) or permanent
@@ -511,5 +487,5 @@ func (noopMetrics) SetConsecutiveFailures(int)      {}
 // noopHealth satisfies Healther with no-ops.
 type noopHealth struct{}
 
-func (noopHealth) SetPublishBlocked(time.Duration) {}
-func (noopHealth) SetBrokerReachable(bool)         {}
+func (noopHealth) SetEmitBlocked(time.Duration) {}
+func (noopHealth) SetBrokerReachable(bool)      {}

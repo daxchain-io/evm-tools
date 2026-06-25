@@ -37,6 +37,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/smithy-go"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/record"
 )
 
@@ -95,7 +96,7 @@ type Metrics interface {
 // Healther is the readiness surface the loop updates.
 type Healther interface {
 	SetReachable(v bool)
-	SetDeliverBlocked(d time.Duration)
+	SetEmitBlocked(d time.Duration)
 }
 
 // Options configures a Sink.
@@ -287,18 +288,18 @@ func (s *Sink) deliverWithRetry(ctx context.Context, msg Message) (bool, error) 
 		s.opts.Metrics.SetConsecutiveFailures(attempt)
 		s.opts.Metrics.IncRetry()
 		s.opts.Health.SetReachable(false)
-		s.opts.Health.SetDeliverBlocked(blocked)
+		s.opts.Health.SetEmitBlocked(blocked)
 
-		backoff := s.backoffFor(attempt)
-		s.opts.Metrics.SetBackoffSeconds(backoff)
+		delay := s.backoffFor(attempt)
+		s.opts.Metrics.SetBackoffSeconds(delay)
 		s.log.Warn("delivery failed; backing off and retrying",
 			"error_type", string(class),
 			"target", s.opts.Publisher.Target(),
 			"attempt", attempt,
-			"backoff", backoff.String(),
+			"backoff", delay.String(),
 			"blocked", blocked.String(),
 		)
-		if !sleepCtx(ctx, backoff) {
+		if !backoff.Sleep(ctx, delay) {
 			return false, nil // ctx cancelled during backoff: clean stop
 		}
 	}
@@ -307,7 +308,7 @@ func (s *Sink) deliverWithRetry(ctx context.Context, msg Message) (bool, error) 
 func (s *Sink) clearBlocked() {
 	s.opts.Metrics.SetBlocked(false)
 	s.opts.Metrics.SetBackoffSeconds(0)
-	s.opts.Health.SetDeliverBlocked(0)
+	s.opts.Health.SetEmitBlocked(0)
 }
 
 func (s *Sink) probeLoop(ctx context.Context) {
@@ -342,17 +343,7 @@ func (s *Sink) probeOnce(ctx context.Context) {
 }
 
 func (s *Sink) backoffFor(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	d := s.opts.BackoffBase
-	for i := 1; i < attempt && d < s.opts.BackoffMax; i++ {
-		d *= 2
-	}
-	if d > s.opts.BackoffMax {
-		d = s.opts.BackoffMax
-	}
-	return s.jitter(d)
+	return s.jitter(backoff.Duration(attempt, s.opts.BackoffBase, s.opts.BackoffMax))
 }
 
 func (s *Sink) jitter(d time.Duration) time.Duration {
@@ -361,20 +352,6 @@ func (s *Sink) jitter(d time.Duration) time.Duration {
 	}
 	half := d / 2
 	return half + time.Duration(s.opts.randInt(int64(half)+1))
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }
 
 // FailureClass categorizes a delivery error as transient (retry) or permanent
@@ -436,5 +413,5 @@ func (noopMetrics) SetConsecutiveFailures(int)      {}
 // noopHealth satisfies Healther with no-ops.
 type noopHealth struct{}
 
-func (noopHealth) SetReachable(bool)               {}
-func (noopHealth) SetDeliverBlocked(time.Duration) {}
+func (noopHealth) SetReachable(bool)            {}
+func (noopHealth) SetEmitBlocked(time.Duration) {}

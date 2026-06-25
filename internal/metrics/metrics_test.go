@@ -268,7 +268,7 @@ func TestWebhookHealthReadiness(t *testing.T) {
 	}
 	wh.SetEndpointReachable(true)
 	// Post blocked beyond threshold flips not-ready.
-	wh.SetPostBlocked(time.Minute)
+	wh.SetEmitBlocked(time.Minute)
 	if code, body := get(t, url+"/readyz"); code != http.StatusServiceUnavailable || !strings.Contains(body, "blocked") {
 		t.Errorf("/readyz should report blocked, got %d %s", code, body)
 	}
@@ -293,7 +293,7 @@ func TestKafkaHealthReadiness(t *testing.T) {
 	}
 	kh.SetBrokerReachable(true)
 	// Publish blocked beyond threshold flips not-ready.
-	kh.SetPublishBlocked(time.Minute)
+	kh.SetEmitBlocked(time.Minute)
 	if code, body := get(t, url+"/readyz"); code != http.StatusServiceUnavailable || !strings.Contains(body, "blocked") {
 		t.Errorf("/readyz should report blocked, got %d %s", code, body)
 	}

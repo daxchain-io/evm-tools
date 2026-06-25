@@ -31,6 +31,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/record"
 	"github.com/daxchain-io/evm-tools/internal/rpc"
 )
@@ -52,7 +53,7 @@ type Metrics interface {
 // Healther is the readiness surface the loop updates. /readyz flips to not-ready
 // while the sink has been blocked on a failing endpoint beyond its threshold.
 type Healther interface {
-	SetPostBlocked(d time.Duration)
+	SetEmitBlocked(d time.Duration)
 	SetEndpointReachable(v bool)
 }
 
@@ -254,17 +255,17 @@ func (s *Sink) postWithRetry(ctx context.Context, payload []byte) (posted bool, 
 		s.opts.Metrics.SetConsecutiveFailures(attempt)
 		s.opts.Metrics.IncRetry()
 		s.opts.Health.SetEndpointReachable(false)
-		s.opts.Health.SetPostBlocked(blocked)
+		s.opts.Health.SetEmitBlocked(blocked)
 
-		backoff := s.backoffFor(attempt)
-		s.opts.Metrics.SetBackoffSeconds(backoff)
+		delay := s.backoffFor(attempt)
+		s.opts.Metrics.SetBackoffSeconds(delay)
 		s.log.Warn("POST failed; backing off and retrying",
 			"error_type", string(class),
 			"attempt", attempt,
-			"backoff", backoff.String(),
+			"backoff", delay.String(),
 			"blocked", blocked.String(),
 		)
-		if !sleepCtx(ctx, backoff) {
+		if !backoff.Sleep(ctx, delay) {
 			return false, nil // ctx cancelled during backoff: clean stop, nothing posted.
 		}
 	}
@@ -274,7 +275,7 @@ func (s *Sink) postWithRetry(ctx context.Context, payload []byte) (posted bool, 
 func (s *Sink) clearBlocked() {
 	s.opts.Metrics.SetBlocked(false)
 	s.opts.Metrics.SetBackoffSeconds(0)
-	s.opts.Health.SetPostBlocked(0)
+	s.opts.Health.SetEmitBlocked(0)
 }
 
 // probeLoop actively checks endpoint reachability on ProbeInterval and records
@@ -319,17 +320,7 @@ func (s *Sink) probeOnce(ctx context.Context) {
 // backoffFor computes base*2^(attempt-1), capped at BackoffMax, with full jitter
 // (a uniform value in [d/2, d]).
 func (s *Sink) backoffFor(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	d := s.opts.BackoffBase
-	for i := 1; i < attempt && d < s.opts.BackoffMax; i++ {
-		d *= 2
-	}
-	if d > s.opts.BackoffMax {
-		d = s.opts.BackoffMax
-	}
-	return s.jitter(d)
+	return s.jitter(backoff.Duration(attempt, s.opts.BackoffBase, s.opts.BackoffMax))
 }
 
 func (s *Sink) jitter(d time.Duration) time.Duration {
@@ -338,21 +329,6 @@ func (s *Sink) jitter(d time.Duration) time.Duration {
 	}
 	half := d / 2
 	return half + time.Duration(s.opts.randInt(int64(half)+1))
-}
-
-// sleepCtx sleeps for d unless ctx is cancelled first; returns false on cancel.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }
 
 // FailureClass categorizes a POST error as transient (retry) or permanent
@@ -427,5 +403,5 @@ func (noopMetrics) SetConsecutiveFailures(int)      {}
 // noopHealth satisfies Healther with no-ops.
 type noopHealth struct{}
 
-func (noopHealth) SetPostBlocked(time.Duration) {}
+func (noopHealth) SetEmitBlocked(time.Duration) {}
 func (noopHealth) SetEndpointReachable(bool)    {}

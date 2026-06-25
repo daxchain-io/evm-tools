@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daxchain-io/evm-tools/internal/backoff"
 	"github.com/daxchain-io/evm-tools/internal/record"
 )
 
@@ -68,7 +69,7 @@ type Metrics interface {
 // Healther is the readiness surface the loop updates. /readyz flips to not-ready
 // while the sink has been blocked on a failing disk beyond its threshold.
 type Healther interface {
-	SetWriteBlocked(d time.Duration)
+	SetEmitBlocked(d time.Duration)
 	SetWritable(v bool)
 }
 
@@ -233,17 +234,17 @@ func (s *Sink) writeWithRetry(ctx context.Context, payload []byte) (written bool
 		s.opts.Metrics.SetConsecutiveFailures(attempt)
 		s.opts.Metrics.IncRetry()
 		s.opts.Health.SetWritable(false)
-		s.opts.Health.SetWriteBlocked(blocked)
+		s.opts.Health.SetEmitBlocked(blocked)
 
-		backoff := s.backoffFor(attempt)
-		s.opts.Metrics.SetBackoffSeconds(backoff)
+		delay := s.backoffFor(attempt)
+		s.opts.Metrics.SetBackoffSeconds(delay)
 		s.log.Warn("write failed; backing off and retrying",
 			"error_type", string(class),
 			"attempt", attempt,
-			"backoff", backoff.String(),
+			"backoff", delay.String(),
 			"blocked", blocked.String(),
 		)
-		if !sleepCtx(ctx, backoff) {
+		if !backoff.Sleep(ctx, delay) {
 			return false, nil // ctx cancelled during backoff: clean stop, nothing written.
 		}
 	}
@@ -253,23 +254,13 @@ func (s *Sink) writeWithRetry(ctx context.Context, payload []byte) (written bool
 func (s *Sink) clearBlocked() {
 	s.opts.Metrics.SetBlocked(false)
 	s.opts.Metrics.SetBackoffSeconds(0)
-	s.opts.Health.SetWriteBlocked(0)
+	s.opts.Health.SetEmitBlocked(0)
 }
 
 // backoffFor computes base*2^(attempt-1), capped at BackoffMax, with full jitter
 // (a uniform value in [d/2, d]).
 func (s *Sink) backoffFor(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	d := s.opts.BackoffBase
-	for i := 1; i < attempt && d < s.opts.BackoffMax; i++ {
-		d *= 2
-	}
-	if d > s.opts.BackoffMax {
-		d = s.opts.BackoffMax
-	}
-	return s.jitter(d)
+	return s.jitter(backoff.Duration(attempt, s.opts.BackoffBase, s.opts.BackoffMax))
 }
 
 func (s *Sink) jitter(d time.Duration) time.Duration {
@@ -278,21 +269,6 @@ func (s *Sink) jitter(d time.Duration) time.Duration {
 	}
 	half := d / 2
 	return half + time.Duration(s.opts.randInt(int64(half)+1))
-}
-
-// sleepCtx sleeps for d unless ctx is cancelled first; returns false on cancel.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }
 
 // FailureClass categorizes a write error as transient (retry) or permanent
@@ -362,5 +338,5 @@ func (noopMetrics) SetConsecutiveFailures(int)      {}
 // noopHealth satisfies Healther with no-ops.
 type noopHealth struct{}
 
-func (noopHealth) SetWriteBlocked(time.Duration) {}
-func (noopHealth) SetWritable(bool)              {}
+func (noopHealth) SetEmitBlocked(time.Duration) {}
+func (noopHealth) SetWritable(bool)             {}
