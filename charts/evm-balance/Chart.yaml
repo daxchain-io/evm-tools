@@ -9,8 +9,8 @@ description: >-
 type: application
 # version, appVersion, and the image tag are locked together: the release tag is
 # the source of truth and overrides both at publish time (publish-packages.yml).
-version: 2.4.0
-appVersion: "2.4.0"
+version: 2.4.1
+appVersion: "2.4.1"
 keywords:
   - ethereum
   - evm

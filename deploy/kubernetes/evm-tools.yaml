@@ -90,7 +90,7 @@ spec:
       containers:
         # ----- producer: evm-stream -----
         - name: evm-stream
-          image: ghcr.io/daxchain-io/images/evm-tools:2.4.0         # build locally / pull from your registry
+          image: ghcr.io/daxchain-io/images/evm-tools:2.4.1         # build locally / pull from your registry
           imagePullPolicy: IfNotPresent
           args:
             - evm-stream
@@ -130,7 +130,7 @@ spec:
         # ----- sink sidecar: evm-sink-stdout (records -> its stdout, visible in
         #       `kubectl logs ... -c sink`). Swap for evm-sink-kafka run / etc. -----
         - name: sink
-          image: ghcr.io/daxchain-io/images/evm-tools:2.4.0
+          image: ghcr.io/daxchain-io/images/evm-tools:2.4.1
           imagePullPolicy: IfNotPresent
           args:
             - evm-sink-stdout
