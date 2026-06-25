@@ -1,0 +1,29 @@
+# Dependabot keeps Go module dependencies and the pinned GitHub Actions current.
+# CI (build / vet / -race test / golangci-lint / govulncheck) gates every PR it
+# opens, so updates are safe to review-and-merge. Minor+patch updates are grouped
+# into one PR to cut noise; majors land as their own PR for review. The Go
+# toolchain (the `go` directive in go.mod) is bumped manually — Dependabot's gomod
+# ecosystem does not update it.
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        update-types:
+          - "minor"
+          - "patch"
