@@ -14,7 +14,7 @@ record transport (a Unix socket via `--output`); downstream sinks
 in and consume it. stdout carries logs, not records (except `evm-sink-stdout`,
 whose job is to write records to stdout — it logs to stderr). Module path:
 `github.com/daxchain-io/evm-tools`.
-Go 1.22+ (toolchain pinned in `go.mod`).
+Go 1.26+ (toolchain pinned in `go.mod`).
 
 ## Commands
 

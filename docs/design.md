@@ -1355,7 +1355,7 @@ the `contract_sample`/`contract_change` records.
 
 ## Implementation
 
-The CLIs are written in **Go 1.22+**: long-running commands, single-binary
+The CLIs are written in **Go 1.26+**: long-running commands, single-binary
 distribution, good concurrency for watching many contracts or polling many
 balances, and straightforward stdout streaming. The module path is
 `github.com/daxchain-io/evm-tools`, so internal packages import as

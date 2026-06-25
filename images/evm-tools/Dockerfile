@@ -23,7 +23,7 @@
 # Pin the builder to the toolchain the module targets (see go.mod). Run the build
 # stage on the BUILD platform and cross-compile to the target — CGO is off, so Go
 # cross-compiles natively (no qemu emulation) for a multi-arch image.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 WORKDIR /src
 
