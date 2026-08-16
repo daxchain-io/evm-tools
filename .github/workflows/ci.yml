@@ -159,7 +159,7 @@ jobs:
           check-latest: true
 
       - name: GoReleaser check
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: check
@@ -168,7 +168,7 @@ jobs:
       # keyless OIDC identity in this non-release job and skips signing, so the
       # packaging dry-run stays green without touching Sigstore.
       - name: GoReleaser snapshot (packaging dry-run)
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --snapshot --clean
