@@ -49,7 +49,7 @@ jobs:
 
       # ONE image, multi-arch (CGO-off Go cross-compiles on the native builder).
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/evm-tools/Dockerfile
